@@ -7,14 +7,8 @@
   on:
     release:
       types: [published]
-    workflow_dispatch:
-      inputs:
-        tag:
-          description: 'Release tag to build, such as v1.0.1'
-          required: true
 
   env:
-    RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
     FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     GO_VERSION: '1.26.x'
     NODE_VERSION: '24'
@@ -54,7 +48,7 @@
         - name: Checkout
           uses: actions/checkout@v7
           with:
-            ref: ${{ env.RELEASE_TAG }}
+            ref: ${{ github.event.release.tag_name }}
 
         - name: Test macOS installer file operations
           if: runner.os == 'macOS'
@@ -99,3 +93,255 @@
             node-version: ${{ env.NODE_VERSION }}
             cache: npm
             cache-dependency-path: GO/GuildSync-Frontend-Client/frontend/package-lock.json
+
+        - name: Install Linux Wails dependencies
+          if: runner.os == 'Linux'
+          working-directory: .
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y build-essential pkg-config libgtk-3-dev libx11-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libgl1-mesa-dev xorg-dev zenity zip imagemagick libfuse2
+
+        - uses: actions/setup-python@v5
+          with:
+            python-version: '3.12'
+
+        - name: Install Wails 3 CLI
+          run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
+
+        - name: Build Wails application
+          shell: bash
+          run: |
+            wails3 build ${{ matrix.wails_args }}
+
+        - name: Prepare GuildSync payload
+          shell: bash
+          run: |
+            set -euo pipefail
+
+            rm -rf release
+            mkdir -p release/GuildSync
+
+            cp -a build/bin/. release/GuildSync/
+
+            if [[ -f .env ]]; then cp -a .env release/GuildSync/.env; fi
+            if [[ -f .env.example ]]; then cp -a .env.example release/GuildSync/.env.example; fi
+            cp -a GuildSyncSettings.txt release/GuildSync/GuildSyncSettings.txt
+
+            cp -a ../../ESO release/GuildSync/ESO
+
+        - name: Create payload zip
+          shell: bash
+          run: |
+            set -euo pipefail
+            python - <<'PY'
+            import os
+            import zipfile
+            from pathlib import Path
+
+            version = os.environ['GUILDSYNC_VERSION']
+            artifact = os.environ['MATRIX_ARTIFACT_NAME']
+            root = Path('release/GuildSync')
+            out = Path('release') / f'{artifact}-{version}.zip'
+
+            with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for path in root.rglob('*'):
+                    if path.is_file():
+                        zf.write(path, path.relative_to(root.parent))
+            PY
+          env:
+            MATRIX_ARTIFACT_NAME: ${{ matrix.artifact_name }}
+
+        - name: Install Inno Setup
+          if: runner.os == 'Windows'
+          shell: pwsh
+          working-directory: .
+          run: choco install innosetup --yes --no-progress
+
+        - name: Build Windows installer ZIP
+          if: runner.os == 'Windows'
+          shell: pwsh
+          run: |
+            $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+            if (!(Test-Path $iscc)) {
+              $iscc = Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'
+            }
+
+            & $iscc `
+              "../../Installer/Windows/GuildSyncInstaller.iss" `
+              "/DMyAppVersion=$env:GUILDSYNC_VERSION" `
+              "/DSourceRoot=$((Resolve-Path 'release/GuildSync').Path)" `
+              "/DOutputRoot=$((Resolve-Path 'release').Path)"
+
+            $zipPath = "release/GuildSync-Setup-$env:GUILDSYNC_VERSION-Windows.zip"
+            if (Test-Path $zipPath) {
+              Remove-Item $zipPath -Force
+            }
+
+            $installer = Get-ChildItem "release" -File |
+              Where-Object {
+                $_.Name -like "GuildSync-Setup-*.exe" -or
+                $_.Name -like "GuildSyncInstaller*.exe"
+              } |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+
+            if (-not $installer) {
+              throw "Could not find generated Windows installer EXE in release folder."
+            }
+
+            Compress-Archive `
+              -Path $installer.FullName `
+              -DestinationPath $zipPath `
+              -Force
+
+            Write-Host "Created $zipPath containing $($installer.Name)"
+
+        - name: Build macOS installer ZIP
+          if: runner.os == 'macOS'
+          shell: bash
+          run: |
+            set -euo pipefail
+
+            PKG_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.pkg"
+            ZIP_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.zip"
+
+            bash ../../Installer/Mac/make-macos-installer.sh \
+              "release/GuildSync" \
+              "$PKG_PATH" \
+              "${GUILDSYNC_VERSION}"
+
+            rm -f "$ZIP_PATH"
+
+            python - <<'PY'
+            import os
+            import zipfile
+            from pathlib import Path
+
+            version = os.environ["GUILDSYNC_VERSION"]
+            pkg = Path("release") / f"GuildSync-Setup-{version}-macOS.pkg"
+            zip_path = Path("release") / f"GuildSync-Setup-{version}-macOS.zip"
+
+            if not pkg.exists():
+                raise FileNotFoundError(f"Expected PKG was not created: {pkg}")
+
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(pkg, pkg.name)
+
+            print(f"Created {zip_path}")
+            PY
+
+        - name: Build Linux Fyne installer ZIP
+          if: runner.os == 'Linux'
+          shell: bash
+          run: |
+            set -euo pipefail
+
+            APPIMAGE_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-Linux-x86_64.AppImage"
+            ZIP_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-Linux-x86_64.zip"
+
+            rm -f "$APPIMAGE_PATH" "$ZIP_PATH"
+
+            bash ../../Installer/Linux/make-linux-fyne-appimage.sh \
+              "release/GuildSync" \
+              "$APPIMAGE_PATH" \
+              "${GUILDSYNC_VERSION}"
+
+            python3 - <<'PY'
+            import os
+            import zipfile
+            from pathlib import Path
+
+            version = os.environ["GUILDSYNC_VERSION"]
+
+            appimage = Path("release") / f"GuildSync-Setup-{version}-Linux-x86_64.AppImage"
+            zip_path = Path("release") / f"GuildSync-Setup-{version}-Linux-x86_64.zip"
+
+            if not appimage.exists():
+                raise FileNotFoundError(f"Expected AppImage was not created: {appimage}")
+
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(appimage, appimage.name)
+
+            print(f"Created Linux installer ZIP: {zip_path}")
+            PY
+
+        - name: Upload build artifacts
+          uses: actions/upload-artifact@v7
+          with:
+            name: GuildSync-installers-${{ env.GUILDSYNC_VERSION }}-${{ matrix.installer_kind }}
+            path: |
+              GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Windows.zip
+              GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-macOS.zip
+              GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Linux-x86_64.zip
+            include-hidden-files: true
+            if-no-files-found: ignore
+
+        - name: Upload release assets
+          uses: softprops/action-gh-release@v3
+          with:
+            tag_name: ${{ github.event.release.tag_name }}
+            files: |
+              GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Windows.zip
+              GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-macOS.zip
+              GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Linux-x86_64.zip
+
+
+    server:
+      name: Package server, web and bot
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v7
+          with:
+            ref: ${{ github.event.release.tag_name }}
+        - uses: actions/setup-go@v7
+          with:
+            go-version: ${{ env.GO_VERSION }}
+        - uses: actions/setup-node@v7
+          with:
+            node-version: ${{ env.NODE_VERSION }}
+        - name: Stamp and verify release version
+          env:
+            RELEASE_TAG: ${{ github.event.release.tag_name }}
+          run: |
+            set -euo pipefail
+            [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
+            VERSION="${RELEASE_TAG#v}"
+            echo "GUILDSYNC_VERSION=$VERSION" >> "$GITHUB_ENV"
+            go run tools/update-version.go "$VERSION"
+            go run tools/update-version.go --check "$VERSION"
+        - name: Test version synchronization and runtime packaging
+          run: |
+            node --test tools/update-version.test.mjs NodeJS/GuildSync-Backend-Server/release-version.test.js
+            python3 tools/package-server-release.test.py
+        - name: Build web client
+          working-directory: NodeJS/GuildSync-Backend-Server/web
+          run: |
+            npm ci
+            npm run build
+        - name: Copy compiled web assets
+          run: |
+            node --input-type=module - <<'JS'
+            import fs from 'node:fs';
+            const root='NodeJS/GuildSync-Backend-Server/';
+            fs.rmSync(root+'public/assets',{recursive:true,force:true});
+            fs.cpSync(root+'web/dist',root+'public',{recursive:true});
+            JS
+        - name: Package server runtime
+          run: python3 tools/package-server-release.py --version "$GUILDSYNC_VERSION" --output "release/GuildSync-Server-$GUILDSYNC_VERSION.zip"
+        - uses: actions/upload-artifact@v7
+          with:
+            name: GuildSync-Server-${{ env.GUILDSYNC_VERSION }}
+            path: release/GuildSync-Server-*.zip
+        - uses: softprops/action-gh-release@v3
+          with:
+            tag_name: ${{ github.event.release.tag_name }}
+            files: release/GuildSync-Server-*.zip
+
+
+    publish-downloads:
+      name: Publish installer ZIPs and release versions
+      needs: [build, server]
+      uses: ./.github/workflows/publishguildsyncdownloads.yml
+      with:
+        release_tag: ${{ github.event.release.tag_name }}
+      secrets: inherit
