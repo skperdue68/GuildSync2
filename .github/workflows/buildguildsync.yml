@@ -277,7 +277,7 @@
             if-no-files-found: ignore
 
         - name: Upload release assets
-          uses: softprops/action-gh-release@v2
+          uses: softprops/action-gh-release@v3
           with:
             tag_name: ${{ github.event.release.tag_name }}
             files: |
@@ -332,7 +332,7 @@
           with:
             name: GuildSync-Server-${{ env.GUILDSYNC_VERSION }}
             path: release/GuildSync-Server-*.zip
-        - uses: softprops/action-gh-release@v2
+        - uses: softprops/action-gh-release@v3
           with:
             tag_name: ${{ github.event.release.tag_name }}
             files: release/GuildSync-Server-*.zip
