@@ -119,7 +119,7 @@ document.removeEventListener('keyup', captureUp, true);window.removeEventListene
     save:shortcut=>void (captureTarget === 'unmute' ? saveUnmute(shortcut) : save(settings.enabled,shortcut)),
     cancel:()=>{cancelCapture();message='';notify();},
     error:error=>{message=error;notify();},
-    changed:shortcut=>{message=shortcut+' â€” release all keys to save';notify();}
+    changed:shortcut=>{message=shortcut+' - release all keys to save';notify();}
   });
   function capture(event){shortcutCapture.keydown(event);}
   function captureUp(event){shortcutCapture.keyup(event);}
