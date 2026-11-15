@@ -3,7 +3,7 @@
     "socket.io-client": "^4.8.4"
   },
   "devDependencies": {
-    "vite": "^3.0.7"
+    "vite": "^8.3.8"
   },
   "name": "frontend",
   "private": true,
