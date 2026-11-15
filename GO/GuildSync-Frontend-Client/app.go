@@ -212,8 +212,8 @@ func (a *App) CloseWindow() {
 		return
 	}
 
-	if a.supportsTray() {
-		// Existing tray platforms hide to system tray on close.
+	if a.supportsTray() && a.closeToTrayEnabled() {
+		// Tray platforms hide on close when the preference is enabled.
 		_ = a.saveWindowStateWithHiddenToTray(true)
 		a.window.Hide()
 		return
