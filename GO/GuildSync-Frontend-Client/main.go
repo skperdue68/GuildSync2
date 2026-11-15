@@ -26,6 +26,18 @@ func main() {
 		Assets:   application.AssetOptions{Handler: application.AssetFileServerFS(assets)},
 		Mac:      application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: true},
 		Linux:    application.LinuxOptions{ProgramName: "GuildSync"},
+		// One client per machine: a second copy would fight over the fixed OAuth
+		// callback port and the SavedVariables watchers. Relaunching restores the
+		// running window instead.
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.guildsync.client",
+			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
+				service.ShowFromTray()
+			},
+		},
+		// Used only by server builds (`wails3 build -tags server`), where the app
+		// serves the same services and frontend over HTTP instead of a window.
+		Server: application.ServerOptions{Host: serverHost(), Port: serverPort()},
 	})
 	service.desktop = app
 	service.emitDesktopEvent = func(name string, data any) { app.Event.Emit(name, data) }
@@ -37,16 +49,25 @@ func main() {
 	})
 	// Preserve close-to-tray for both custom and native close requests.
 	service.window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		service.mu.Lock()
+		quitting := service.quiting
+		service.mu.Unlock()
+		if quitting {
+			return
+		}
+		if service.supportsTray() && service.closeToTrayEnabled() {
+			service.HideToTray()
+			event.Cancel()
+			return
+		}
+		_ = service.SaveWindowState()
 		if service.supportsTray() {
+			// Close means quit when the preference is off, so a windowless process
+			// is not left behind behind in the tray.
 			service.mu.Lock()
-			quitting := service.quiting
+			service.quiting = true
 			service.mu.Unlock()
-			if !quitting {
-				service.HideToTray()
-				event.Cancel()
-			}
-		} else {
-			_ = service.SaveWindowState()
+			go service.desktop.Quit()
 		}
 	})
 	if runtime.GOOS == "darwin" {
