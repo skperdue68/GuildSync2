@@ -48,7 +48,10 @@ def main():
     # The binding scanner loads Go's embedded assets before Vite has built them.
     (CLIENT / 'frontend/dist').mkdir(parents=True, exist_ok=True)
     (CLIENT / 'frontend/dist/.gitkeep').touch()
-    run('wails3', 'generate', 'bindings', '-f')
+    # No extra Go build flags: GTK4 is Wails 3's default stack, so the old
+    # '-tags gtk3' forwarding is gone. Note `-f` takes a string of build flags,
+    # not a boolean, so it must be omitted rather than passed bare.
+    run('wails3', 'generate', 'bindings')
     npm = 'npm.cmd' if system == 'Windows' else 'npm'
     # Only install when dependencies are absent. Reinstalling on every build wipes
     # node_modules while a running Vite dev server holds its native binding open,
