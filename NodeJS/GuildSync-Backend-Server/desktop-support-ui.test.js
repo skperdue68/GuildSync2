@@ -6,7 +6,9 @@ import vm from 'node:vm';
 const url=new URL('../../GO/GuildSync-Frontend-Client/frontend/src/desktop-support.js',import.meta.url);
 
 test('unsupported status is terminal for this client process and offers only a safe download target',async()=>{
- const source=fs.readFileSync(url,'utf8');const {createDesktopSupport}=await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+ // The module imports its stylesheet; a data: URL cannot resolve CSS, so drop
+ // style imports before inlining, as the hotkey harness does for its modules.
+ const source=fs.readFileSync(url,'utf8').replace(/^import\s+['"][^'"]+\.css['"];?\s*$/gm,'');const {createDesktopSupport}=await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
  let stopped=0;const support=createDesktopSupport({onBlocked:()=>stopped++});
  assert.equal(support.blocked,false);
  support.receive({supported:false,minimum_desktop_version:'1.5.0',download_url:'https://example.test/latest.zip',message:'Unsupported'});
