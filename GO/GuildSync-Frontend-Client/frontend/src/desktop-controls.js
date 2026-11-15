@@ -34,13 +34,13 @@ export function createDesktopControls({ bridge, changed = () => {} }) {
   }
 
   async function saveCloseToTray(enabled) {
-    try { prefs = await bridge.SetCloseToTray(enabled); message = enabled ? 'Closing GuildSync will keep it running in the tray.' : 'Closing GuildSync will quit it.'; }
+    try { prefs = await bridge.SetCloseToTray(enabled); message = ''; }
     catch (error) { message = String(error); }
     notify();
   }
 
   async function saveStartAtLogin(enabled) {
-    try { prefs = await bridge.SetStartAtLogin(enabled); message = enabled ? 'GuildSync will start when you log in.' : 'GuildSync will no longer start at login.'; }
+    try { prefs = await bridge.SetStartAtLogin(enabled); message = ''; }
     catch (error) { message = String(error); }
     notify();
   }
@@ -66,17 +66,16 @@ export function createDesktopControls({ bridge, changed = () => {} }) {
   function render() {
     if (!supported) return '';
     if (!prefs) { void initialize(); return ''; }
-    const version = prefs.version && prefs.version !== 'dev' ? 'v' + prefs.version : 'development build';
     const trayNote = prefs.trayAvailable ? '' : '<p class="voice-hotkey-help">No system tray is available in this session, so closing quits GuildSync.</p>';
     const available = update?.available === true;
     const updateState = available ? 'Version ' + escapeHtml(update.latest) + ' available' : '';
     const downloadButton = available && update?.assetUrl
-      ? `<button id="desktopDownloadUpdate" type="button" class="voice-hotkey-capture-button" ${busy ? 'disabled' : ''}>${busy === 'download' ? 'Downloading...' : 'Download & install ' + escapeHtml(update.latest)}</button>`
+      ? `<button id="desktopDownloadUpdate" type="button" class="voice-hotkey-capture-button" ${busy ? 'disabled' : ''}>${busy === 'download' ? 'Downloading...' : 'Download ' + escapeHtml(update.latest)}</button>`
       : '';
     const notesButton = available && update?.pageUrl
       ? '<button id="desktopReleaseNotes" type="button" class="voice-hotkey-capture-button">Release notes</button>'
       : '';
-    return `<div id="desktopControlsSection" class="profile-section"><div class="profile-section-header"><span>Desktop</span><span class="profile-section-subtitle">${escapeHtml(version)}</span></div><label class="profile-row voice-hotkey-row">Close button hides to tray <input id="desktopCloseToTray" type="checkbox" ${prefs.closeToTray ? 'checked' : ''} ${prefs.trayAvailable ? '' : 'disabled'}></label>${trayNote}<label class="profile-row voice-hotkey-row">Start GuildSync at login <input id="desktopStartAtLogin" type="checkbox" ${prefs.startAtLogin ? 'checked' : ''} ${prefs.startAtLoginSupported ? '' : 'disabled'}></label><div class="profile-row voice-hotkey-row">Updates <span>${updateState}</span></div><button id="desktopCheckUpdates" type="button" class="voice-hotkey-capture-button" ${busy ? 'disabled' : ''}>${busy === 'check' ? 'Checking...' : 'Check for updates'}</button>${downloadButton}${notesButton}<p id="desktopControlsStatus" class="voice-hotkey-help" role="status"></p></div>`;
+    return `<div id="desktopControlsSection" class="profile-section"><div class="profile-section-header"><span>Desktop</span></div><label class="profile-row voice-hotkey-row"><span>Close button hides to tray <input id="desktopCloseToTray" type="checkbox" ${prefs.closeToTray ? 'checked' : ''} ${prefs.trayAvailable ? '' : 'disabled'}></span></label>${trayNote}<label class="profile-row voice-hotkey-row"><span>Start GuildSync at login <input id="desktopStartAtLogin" type="checkbox" ${prefs.startAtLogin ? 'checked' : ''} ${prefs.startAtLoginSupported ? '' : 'disabled'}></span></label><div class="profile-row voice-hotkey-row"><span>Updates</span><span class="voice-hotkey-keys">${updateState}</span><button id="desktopCheckUpdates" type="button" class="voice-hotkey-capture-button" ${busy ? 'disabled' : ''}>${busy === 'check' ? 'Checking...' : 'Check for updates'}</button></div>${downloadButton}${notesButton}<p id="desktopControlsStatus" class="voice-hotkey-help" role="status"></p></div>`;
   }
 
   async function openNotes() {

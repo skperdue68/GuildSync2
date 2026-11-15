@@ -1,3 +1,7 @@
+// Pulled in here because this module is loaded once by main.js and is not part of
+// the hotkey test harness, which inlines its modules and cannot resolve CSS.
+import './profile-menu.css';
+
 export function createDesktopSupport({onBlocked}) {
  let info=null;
  return {
