@@ -17,7 +17,7 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     env:
-      WAILS_VERSION: v3.0.0
+      WAILS_VERSION: v3.1.0
       MACOSX_DEPLOYMENT_TARGET: '12.0'
       GOFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-tags=gtk3' || '' }}
     steps:
@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
       - name: Test frontend event and hotkey behavior
-        run: node --test GO/GuildSync-Frontend-Client/frontend/src/*.test.mjs
+        run: node --test GO/GuildSync-Frontend-Client/frontend/src/*.test.mjs tools/wails-versions.test.mjs
       - name: Test Windows assembly metadata
         run: python tools/build-desktop.test.py
       - name: Build production desktop (universal on macOS)

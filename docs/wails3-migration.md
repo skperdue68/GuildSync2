@@ -1,13 +1,13 @@
 # GuildSync2: minimal Wails 3 migration
 
-GuildSync2's desktop client targets Wails **v3.0.0**. The original GuildSync repository is independent. This port retains the current UI, authentication, SavedVariables handling, settings paths and platform hotkeys. The subsequent native tray update enables Windows, macOS and supported Linux desktops. Dependabot is configured for weekly updates of both Go modules, all four npm projects and GitHub Actions. General repository improvements remain follow-up work.
+GuildSync2's desktop client targets Wails **v3.1.0**. The original GuildSync repository is independent. This port retains the current UI, authentication, SavedVariables handling, settings paths and platform hotkeys. The subsequent native tray update enables Windows, macOS and supported Linux desktops. Dependabot is configured for weekly updates of both Go modules, all four npm projects and GitHub Actions. General repository improvements remain follow-up work.
 
 ## Build and development
 
 Install Go 1.26+, Node 24 and Python 3, plus the native Wails platform dependencies. Install the pinned CLI:
 
 ```sh
-go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
 cd GO/GuildSync-Frontend-Client
 wails3 build
 # macOS release build (Intel + Apple Silicon):
