@@ -46,7 +46,7 @@
 
       steps:
         - name: Checkout
-          uses: actions/checkout@v4
+          uses: actions/checkout@v7
           with:
             ref: ${{ github.event.release.tag_name }}
 
@@ -60,7 +60,7 @@
             bash Installer/Mac/installer.test.sh
 
         - name: Setup Go
-          uses: actions/setup-go@v5
+          uses: actions/setup-go@v7
           with:
             go-version: ${{ env.GO_VERSION }}
             cache-dependency-path: GO/GuildSync-Frontend-Client/go.sum
@@ -88,7 +88,7 @@
             go run tools/update-version.go --check "${GUILDSYNC_VERSION}"
 
         - name: Setup Node
-          uses: actions/setup-node@v4
+          uses: actions/setup-node@v7
           with:
             node-version: ${{ env.NODE_VERSION }}
             cache: npm
@@ -266,7 +266,7 @@
             PY
 
         - name: Upload build artifacts
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v7
           with:
             name: GuildSync-installers-${{ env.GUILDSYNC_VERSION }}-${{ matrix.installer_kind }}
             path: |
@@ -277,7 +277,7 @@
             if-no-files-found: ignore
 
         - name: Upload release assets
-          uses: softprops/action-gh-release@v2
+          uses: softprops/action-gh-release@v3
           with:
             tag_name: ${{ github.event.release.tag_name }}
             files: |
@@ -290,13 +290,13 @@
       name: Package server, web and bot
       runs-on: ubuntu-latest
       steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v7
           with:
             ref: ${{ github.event.release.tag_name }}
-        - uses: actions/setup-go@v5
+        - uses: actions/setup-go@v7
           with:
             go-version: ${{ env.GO_VERSION }}
-        - uses: actions/setup-node@v4
+        - uses: actions/setup-node@v7
           with:
             node-version: ${{ env.NODE_VERSION }}
         - name: Stamp and verify release version
@@ -328,11 +328,11 @@
             JS
         - name: Package server runtime
           run: python3 tools/package-server-release.py --version "$GUILDSYNC_VERSION" --output "release/GuildSync-Server-$GUILDSYNC_VERSION.zip"
-        - uses: actions/upload-artifact@v4
+        - uses: actions/upload-artifact@v7
           with:
             name: GuildSync-Server-${{ env.GUILDSYNC_VERSION }}
             path: release/GuildSync-Server-*.zip
-        - uses: softprops/action-gh-release@v2
+        - uses: softprops/action-gh-release@v3
           with:
             tag_name: ${{ github.event.release.tag_name }}
             files: release/GuildSync-Server-*.zip
