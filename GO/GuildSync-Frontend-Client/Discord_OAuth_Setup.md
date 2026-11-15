@@ -21,4 +21,4 @@ Use either environment variables:
 $env:GUILDSYNC_DISCORD_CLIENT_ID="your-client-id"
 $env:GUILDSYNC_DISCORD_CLIENT_SECRET="your-client-secret"
 $env:GUILDSYNC_DISCORD_REDIRECT_URI="http://127.0.0.1:53682/callback"
-wails dev
+wails3 dev -config build/config.yml

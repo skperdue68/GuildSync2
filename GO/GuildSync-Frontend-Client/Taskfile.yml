@@ -1,0 +1,10 @@
+version: '3'
+
+tasks:
+  build:
+    desc: Build the Wails 3 desktop client for the host platform
+    cmds:
+      - python ../../tools/build-desktop.py {{if eq .UNIVERSAL "true"}}--universal{{end}} {{if eq .DEV "true"}}--dev{{end}}
+  run:
+    cmds:
+      - python ../../tools/build-desktop.py --run

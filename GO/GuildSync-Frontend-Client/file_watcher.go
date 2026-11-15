@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const savedVarsFileDebounceWindow = 750 * time.Millisecond
@@ -284,7 +283,7 @@ func (a *App) emitGuildSyncSavedVarsFileModified(dir string, watchFile GuildSync
 		return
 	}
 
-	runtime.EventsEmit(a.ctx, "guildsync-savedvars-file-modified", GuildSyncSavedVarsFileModifiedEvent{
+	a.emitDesktopEvent("guildsync-savedvars-file-modified", GuildSyncSavedVarsFileModifiedEvent{
 		Key:        watchFile.Key,
 		Label:      watchFile.Label,
 		Directory:  dir,
@@ -299,7 +298,7 @@ func (a *App) emitGuildSyncFileWatcherError(message string) {
 		return
 	}
 
-	runtime.EventsEmit(a.ctx, "guildsync-file-watcher-error", strings.TrimSpace(message))
+	a.emitDesktopEvent("guildsync-file-watcher-error", strings.TrimSpace(message))
 }
 
 func (a *App) clearGuildSyncFileWatcherState(signature string) {

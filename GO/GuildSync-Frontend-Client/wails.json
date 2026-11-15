@@ -1,13 +1,8 @@
 {
-  "$schema": "https://wails.io/schemas/config.v2.json",
   "author": {
     "email": "skperdue68@gmail.com",
     "name": "Stephanie Perdue"
   },
-  "frontend:build": "npm run build",
-  "frontend:dev:serverUrl": "auto",
-  "frontend:dev:watcher": "npm run dev",
-  "frontend:install": "npm install",
   "info": {
     "productVersion": "1.5.2"
   },

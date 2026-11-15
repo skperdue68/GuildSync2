@@ -21,6 +21,8 @@ yarn-error.log*
 /GO/GuildSync-Frontend-Client/frontend/dist/*
 !/GO/GuildSync-Frontend-Client/frontend/dist/.gitkeep
 /GO/GuildSync-Frontend-Client/frontend/wailsjs/
+/GO/GuildSync-Frontend-Client/frontend/bindings/
+*.syso
 /GO/GuildSync-Frontend-Client/frontend/package.json.md5
 /Installer/Linux/FyneInstaller/payload.tar.gz
 GO/Filewatcher/*.exe

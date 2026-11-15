@@ -10,9 +10,9 @@
 
   env:
     FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    GO_VERSION: '1.23.x'
+    GO_VERSION: '1.26.x'
     NODE_VERSION: '24'
-    WAILS_VERSION: 'v2.12.0'
+    WAILS_VERSION: 'v3.0.0'
     MACOSX_DEPLOYMENT_TARGET: '12.0'
 
   jobs:
@@ -32,12 +32,12 @@
             - name: macos-universal
               os: macos-latest
               artifact_name: GuildSync-macos
-              wails_args: '-platform darwin/universal'
+              wails_args: 'UNIVERSAL=true'
               installer_kind: macos
             - name: linux-amd64
               os: ubuntu-24.04
               artifact_name: GuildSync-linux-amd64
-              wails_args: '-tags webkit2_41'
+              wails_args: ''
               installer_kind: linux
 
       defaults:
@@ -101,20 +101,17 @@
             sudo apt-get update
             sudo apt-get install -y build-essential pkg-config libgtk-3-dev libx11-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libgl1-mesa-dev xorg-dev zenity zip imagemagick libfuse2
 
-        - name: Install Wails CLI
-          run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+        - uses: actions/setup-python@v5
+          with:
+            python-version: '3.12'
 
-        - name: Install frontend dependencies
-          run: npm ci
-          working-directory: GO/GuildSync-Frontend-Client/frontend
-
-        - name: Tidy Go modules
-          run: go mod tidy
+        - name: Install Wails 3 CLI
+          run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
 
         - name: Build Wails application
           shell: bash
           run: |
-            wails build -clean ${{ matrix.wails_args }}
+            wails3 build ${{ matrix.wails_args }}
 
         - name: Prepare GuildSync payload
           shell: bash

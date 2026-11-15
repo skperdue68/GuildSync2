@@ -8,8 +8,8 @@ The cleanup stops tracking these paths:
 
 | Path | Why it is excluded | How it is recreated |
 | --- | --- | --- |
-| `GO/GuildSync-Frontend-Client/frontend/dist/` compiled files | Compiled desktop HTML, JavaScript, CSS and copied images; only an empty `.gitkeep` stays tracked | `wails dev` / `wails build` |
-| `GO/GuildSync-Frontend-Client/frontend/wailsjs/` | Generated Wails Go bindings and runtime wrappers | Wails startup/build, or `wails generate module` |
+| `GO/GuildSync-Frontend-Client/frontend/dist/` compiled files | Compiled desktop HTML, JavaScript, CSS and copied images; only an empty `.gitkeep` stays tracked | `wails3 dev -config build/config.yml` / `wails3 build` |
+| `GO/GuildSync-Frontend-Client/frontend/bindings/` | Generated Wails Go bindings and service bindings | Wails startup/build, or `wails3 generate bindings` |
 | `GO/GuildSync-Frontend-Client/frontend/package.json.md5` | Wails dependency-install checksum | Wails tooling |
 | `NodeJS/GuildSync-Backend-Server/web/dist/` | Vite web build output | Backend `npm run build:web` |
 | `NodeJS/GuildSync-Backend-Server/public/index.html` and `public/assets/` | Deployment copy of the web build | Backend `npm run build:web`, or server release bundle |
@@ -32,7 +32,7 @@ npm run build:web
 
 Run the web build before `node --test`; the existing bundle test verifies the actual files served by the backend. Rebuild after pulling web source changes. A source checkout alone no longer contains a runnable web UI.
 
-For the desktop, install Go, Node and the project-supported Wails CLI/platform dependencies, then run `wails dev` or `wails build` in `GO/GuildSync-Frontend-Client`. For a standalone frontend build, first run `wails generate module`, then `npm ci` and `npm run build` in `frontend`. The tracked empty `frontend/dist/.gitkeep` satisfies Go's embed directive before the first build; its source copy in `frontend/public/.gitkeep` preserves it across Vite builds. A usable desktop app still requires actual generated frontend output.
+For the desktop, install Go, Node and the project-supported Wails CLI/platform dependencies, then run `wails3 dev -config build/config.yml` or `wails3 build` in `GO/GuildSync-Frontend-Client`. For a standalone frontend build, first run `wails3 generate bindings`, then `npm ci` and `npm run build` in `frontend`. The tracked empty `frontend/dist/.gitkeep` satisfies Go's embed directive before the first build; its source copy in `frontend/public/.gitkeep` preserves it across Vite builds. A usable desktop app still requires actual generated frontend output.
 
 For packaged server deployments, use `GuildSync-Server-<version>.zip` from the matching GitHub Release: it still contains freshly compiled web assets. See the release guide for preserving local configuration and installing backend/bot dependencies.
 

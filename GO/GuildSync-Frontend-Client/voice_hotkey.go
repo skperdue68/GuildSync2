@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"os"
 	"path/filepath"
 	"sort"
@@ -158,8 +157,8 @@ func (a *App) voiceState() *voiceRuntime {
 		a.voice = &voiceRuntime{settings: readVoiceSettings(path)}
 		a.voice.settings.Supported = voiceHotkeySupported()
 		a.voice.emit = func(event string, data interface{}) {
-			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, event, data)
+			if a.emitDesktopEvent != nil {
+				a.emitDesktopEvent(event, data)
 			}
 		}
 	}
