@@ -4,13 +4,18 @@ dev_mode:
   log_level: warn
   debounce: 1000
   ignore:
-    dir: [.git, node_modules, build, release, frontend/bindings, frontend/dist]
+    # `frontend` is ignored so browser-side edits reload through Vite's HMR
+    # instead of restarting the Go process (which would also reinstall npm deps
+    # and, on Windows, fail while Vite holds node_modules open).
+    dir: [.git, node_modules, build, release, frontend, frontend/bindings, frontend/dist]
     file: [.gitkeep, '*_test.go']
     watched_extension: ['*.go', '*.js', '*.mjs', '*.css', '*.html']
     git_ignore: true
   executes:
     - cmd: wails3 build DEV=true
       type: blocking
+    - cmd: wails3 task dev:frontend
+      type: background
     - cmd: wails3 task run
       type: primary
       exit_policy: shutdown

@@ -8,3 +8,12 @@ tasks:
   run:
     cmds:
       - python ../../tools/build-desktop.py --run
+  dev:frontend:
+    desc: Run the Vite dev server that wails3 dev proxies to
+    dir: frontend
+    cmds:
+      - npm run dev -- --port {{.VITE_PORT | default 9245}} --strictPort
+  server:
+    desc: Build a headless HTTP server binary (no window, browser clients)
+    cmds:
+      - python ../../tools/build-desktop.py --server
