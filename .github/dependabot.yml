@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - /GO/GuildSync-Frontend-Client
+      - /Installer/Linux/FyneInstaller
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directories:
+      - /GO/GuildSync-Frontend-Client/frontend
+      - /NodeJS/GuildSync-Backend-Server
+      - /NodeJS/GuildSync-Backend-Server/web
+      - /NodeJS/GuildSync-Discord-Bot
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

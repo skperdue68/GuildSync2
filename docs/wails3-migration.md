@@ -1,6 +1,6 @@
 # GuildSync2: minimal Wails 3 migration
 
-GuildSync2's desktop client targets Wails **v3.0.0**. The original GuildSync repository is independent. This port retains the current UI, authentication, SavedVariables handling, settings paths, platform hotkeys and Windows-only tray behavior. Dependabot and general repository improvements are deferred to a separate change.
+GuildSync2's desktop client targets Wails **v3.0.0**. The original GuildSync repository is independent. This port retains the current UI, authentication, SavedVariables handling, settings paths, platform hotkeys and Windows-only tray behavior. Dependabot is configured for weekly updates of both Go modules, all four npm projects and GitHub Actions. General repository improvements remain follow-up work.
 
 ## Build and development
 
@@ -39,6 +39,6 @@ Before publishing, manually check splash/main-window transition, dragging/resizi
 - Evaluate Wails 3 global shortcuts against the current hold-to-mute semantics. A shortcut activation callback alone does not replace key-release handling or permission recovery.
 - Evaluate the integrated updater with signed releases, rollback/recovery and this repository's separate release channel.
 - Consider native menus, notifications, single-instance handling and typed custom events as individually scoped improvements.
-- Add Dependabot for Go, all npm package roots and GitHub Actions; review vulnerability scanning, branch rules and release permissions. Existing frontend dependencies also warrant a separate security update (the migration's npm install reported eight advisories).
+- Review vulnerability scanning, branch rules and release permissions. Dependabot configuration is included in this PR and takes effect when merged into the default branch. Existing frontend dependencies also warrant a separate security update (the migration's npm install reported eight advisories).
 
 Reference: [Wails v2-to-v3 migration guide](https://wails.io/migration/v2-to-v3/).
