@@ -22,7 +22,7 @@ const sourceExtensions = new Set(['.js', '.mjs', '.cjs', '.go']);
 const skippedDirectories = new Set(['node_modules', 'dist', 'release', '.git', 'public']);
 const botIndirectKeys = ['GUILDSYNC_APPLICATION_RESTORE_RANK_ENABLED', 'GUILDSYNC_APPLICATION_OFFICER_ROLE'];
 // Operating-system variables the desktop client inspects; they are not settings.
-const systemVariables = new Set(['DISPLAY', 'SNAP', 'WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'XDG_SESSION_TYPE', 'GUILDSYNC_TEST_X11']);
+const systemVariables = new Set(['DISPLAY', 'SNAP', 'WAYLAND_DISPLAY', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_SESSION_TYPE', 'GUILDSYNC_TEST_X11']);
 
 function readSources(directory) {
  const contents = [];
