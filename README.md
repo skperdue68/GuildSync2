@@ -1,4 +1,4 @@
-# GuildSync2
+# GuildSync2 
 
 This development repository targets **Wails 3**. See [build instructions and migration notes](docs/wails3-migration.md).
 
