@@ -344,7 +344,7 @@ function showMainWindow() {
         <div class="window-buttons">
           <button id="minimizeButton" class="window-button" title="Minimize">−</button>
           <button id="maximizeButton" class="window-button" title="Maximize">□</button>
-          <button id="closeButton" class="window-button close-button" title="Close to tray">×</button>
+          <button id="closeButton" class="window-button close-button" title="Close">×</button>
         </div>
       </header>
 

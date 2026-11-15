@@ -14,6 +14,7 @@ type App struct {
 	ctx              context.Context
 	desktop          *application.App
 	window           *application.WebviewWindow
+	systemTray       *application.SystemTray
 	emitDesktopEvent func(string, any)
 	appIcon          []byte
 	trayIcon         []byte
@@ -47,8 +48,7 @@ func NewApp(appIcon []byte, trayIcon []byte) *App {
 func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.ctx = ctx
 
-	// Start tray support.
-	// System tray support is enabled only on Windows.
+	// Register the native tray when the desktop provides a tray host.
 	a.startTray()
 
 	// Splash screen behavior.
@@ -67,8 +67,8 @@ func (a *App) ServiceShutdown() error {
 
 // ShowMainWindow is called after the splash screen finishes.
 //
-// Windows can restore a previous hidden-to-tray state. macOS and Linux do not
-// support tray behavior, so they always show the main window normally.
+// Restore hidden-to-tray state only when a native tray is available.
+// Linux desktops without a tray host always show the window normally.
 func (a *App) ShowMainWindow() bool {
 	if a.ctx == nil {
 		return false
@@ -86,7 +86,7 @@ func (a *App) ShowMainWindow() bool {
 		a.window.Center()
 	}
 
-	if supportsTray() && state.HiddenToTray {
+	if a.supportsTray() && state.HiddenToTray {
 		a.window.Hide()
 		return false
 	}
@@ -159,7 +159,7 @@ func (a *App) HideToTray() {
 		return
 	}
 
-	if supportsTray() {
+	if a.supportsTray() {
 		a.window.Hide()
 		return
 	}
@@ -183,6 +183,7 @@ func (a *App) ShowFromTray() {
 
 	a.window.Show()
 	a.window.UnMinimise()
+	a.window.Focus()
 	a.window.SetAlwaysOnTop(true)
 	a.window.SetAlwaysOnTop(false)
 }
@@ -201,7 +202,7 @@ func (a *App) MinimizeWindow() {
 	}
 
 	// Minimize should remain a normal window minimize on every platform.
-	// Close-to-tray remains Windows-only through supportsTray().
+	// Closing hides only when a native tray is available.
 	_ = a.saveWindowStateWithHiddenToTray(false)
 	a.window.Minimise()
 }
@@ -211,7 +212,7 @@ func (a *App) CloseWindow() {
 		return
 	}
 
-	if supportsTray() {
+	if a.supportsTray() {
 		// Existing tray platforms hide to system tray on close.
 		_ = a.saveWindowStateWithHiddenToTray(true)
 		a.window.Hide()
@@ -231,7 +232,6 @@ func (a *App) QuitFromTray() {
 
 	// Quitting from the tray preserves the current tray-hidden state.
 	_ = a.SaveWindowState()
-	a.stopTray()
 
 	if a.ctx != nil {
 		a.desktop.Quit()

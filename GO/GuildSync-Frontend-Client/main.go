@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"runtime"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -34,9 +35,9 @@ func main() {
 		Frameless: true, AlwaysOnTop: true,
 		BackgroundColour: application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 255},
 	})
-	// Preserve Windows close-to-tray, including native close requests (Alt+F4).
+	// Preserve close-to-tray for both custom and native close requests.
 	service.window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
-		if supportsTray() {
+		if service.supportsTray() {
 			service.mu.Lock()
 			quitting := service.quiting
 			service.mu.Unlock()
@@ -48,6 +49,11 @@ func main() {
 			_ = service.SaveWindowState()
 		}
 	})
+	if runtime.GOOS == "darwin" {
+		app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, func(*application.ApplicationEvent) {
+			service.ShowFromTray()
+		})
+	}
 	if err := app.Run(); err != nil {
 		println("Error:", err.Error())
 	}

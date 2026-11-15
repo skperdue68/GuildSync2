@@ -7,5 +7,5 @@ This repository's desktop client targets **Wails 3**, not Wails 2.
 - Use `wails3 dev -config build/config.yml` for development. Do not introduce `wails build`, `wails generate module`, v2 runtime imports, `frontend/wailsjs`, or `window.go` calls.
 - Generate bindings using `wails3 generate bindings`. Do not commit bindings or compiled frontend/binary output.
 - Check `go test ./...` from the client, `node --test GO/GuildSync-Frontend-Client/frontend/src/*.test.mjs` from the root, and the production build before proposing desktop changes.
-- Preserve current Windows-only tray and platform hotkey behavior during this migration. Future enhancements are tracked in `docs/wails3-migration.md`.
+- The Windows, macOS and Linux trays use Wails 3's native SystemTray manager. Preserve Show/Hide/Quit, close-to-tray and platform hotkey behavior. Linux without a registered tray host must remain accessible and close normally; panel loss restores the window. macOS Dock reopen restores the window. Do not reintroduce an external tray event loop or attach the main window as a transient tray popup. Further enhancements are tracked in `docs/wails3-migration.md`.
 - GuildSync2 is a separate development repository. Do not change the original GuildSync repository or enable production deployment as part of this port.
