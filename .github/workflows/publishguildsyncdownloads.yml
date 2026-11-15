@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release tools
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: master
           path: release-source
@@ -35,7 +35,7 @@ jobs:
             tools
             .github/workflows
       - name: Checkout downloads directory
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: master
           path: downloads-repository

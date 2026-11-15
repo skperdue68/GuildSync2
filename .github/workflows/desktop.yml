@@ -21,7 +21,7 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: '12.0'
       GOFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-tags=gtk3' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
