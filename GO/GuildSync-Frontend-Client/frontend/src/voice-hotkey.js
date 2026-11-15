@@ -1,10 +1,16 @@
 import {createShortcutCapture} from './shortcut-capture.js';
+import {createDesktopControls} from './desktop-controls.js';
+const minTimeoutSeconds = 3;
+const maxTimeoutSeconds = 120;
 export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authenticated, changed = () => {} }) {
-  let settings = { enabled: false, shortcut: 'Ctrl+M', supported: false };
-  let held = false, sessionId = null, timer = null, capturing = false, message = '', initialized = false;
+  let settings = { enabled: false, shortcut: 'Ctrl+M', unmuteShortcut: 'Ctrl+Shift+M', supported: false, timeoutSeconds: 10 };
+  let held = false, sessionId = null, timer = null, capturing = false, captureTarget = 'mute', message = '', initialized = false;
   let releasePending=Promise.resolve({ok:true});
   let eligible=false, nativeActive=false, nativeFailed=false, accessTimer=null, accessGeneration=0, accessPending=null;
   const notify = () => changed();
+  // The profile menu mounts only this controller, so the desktop section (tray and
+  // login preferences plus updates) is rendered and wired alongside it.
+  const desktopControls = createDesktopControls({bridge, changed: notify});
   const request = (state, id, callback) => {
     const socket = getSocket();
     if (socket?.connected) socket.emit('guildsync:voice-mute-hotkey', { state, sessionId: id }, callback);
@@ -23,8 +29,12 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
     }
     return releasePending;
   }
-  function edge({ state, message: nativeMessage }) {
+  function edge({ state, message: nativeMessage, timeoutSeconds }) {
     if (state === 'configured') { message = nativeMessage || ''; notify(); return; }
+    if (state === 'timeout') { message = nativeMessage || 'Voice mute ended automatically.'; notify(); return; }
+    if (state === 'extended') { message = 'Muted - auto-unmute restarted, ' + (timeoutSeconds || settings.timeoutSeconds) + 's remaining'; notify(); return; }
+    if (state === 'unmuted') { held = false; release(); message = nativeMessage || 'Voice mute ended.'; notify(); return; }
+    if (state === 'idle') { message = nativeMessage || 'No voice mute is active.'; notify(); return; }
     if (state === 'error') {
       nativeFailed = true;
       held = false; release();
@@ -39,7 +49,7 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
     request('pressed', id, response => {
       if (id !== sessionId) return;
       if (!response?.ok) { message = response?.message || 'Voice mute was rejected.'; release(); notify(); return; }
-      message = 'Hold to mute active'; notify();
+      message = 'Muted - auto-unmute in ' + settings.timeoutSeconds + 's'; notify();
     });
     if (sessionId !== id) return;
     timer = setInterval(() => {
@@ -105,7 +115,7 @@ document.removeEventListener('keyup', captureUp, true);window.removeEventListene
     void bridge.SetVoiceHotkeyCapture(false);
   }
   const shortcutCapture=createShortcutCapture({
-    save:shortcut=>void save(settings.enabled,shortcut),
+    save:shortcut=>void (captureTarget === 'unmute' ? saveUnmute(shortcut) : save(settings.enabled,shortcut)),
     cancel:()=>{cancelCapture();message='';notify();},
     error:error=>{message=error;notify();},
     changed:shortcut=>{message=shortcut+' â€” release all keys to save';notify();}
@@ -113,18 +123,37 @@ document.removeEventListener('keyup', captureUp, true);window.removeEventListene
   function capture(event){shortcutCapture.keydown(event);}
   function captureUp(event){shortcutCapture.keyup(event);}
   function captureBlur(){shortcutCapture.cancel();}
+  async function saveTimeout(seconds) {
+    try { settings = await bridge.SetVoiceMuteTimeout(Number(seconds) || 0); }
+    catch (error) { message = String(error); try { settings = await bridge.GetVoiceHotkeySettings(); } catch {} }
+    notify();
+  }
+  async function saveUnmute(shortcut) {
+    nativeFailed = false; message = '';
+    try { settings = await bridge.SetVoiceUnmuteShortcut(shortcut); }
+    catch (error) { message = String(error); try { settings = await bridge.GetVoiceHotkeySettings(); } catch {} }
+    notify();
+  }
+  async function beginCapture(target) {
+    release(); captureTarget = target; capturing = true; shortcutCapture.start();
+    message = 'Press one or more keys, then release all keys to save.';
+    await bridge.SetVoiceHotkeyCapture(true);
+    document.addEventListener('keydown', capture, true);document.addEventListener('keyup', captureUp, true);window.addEventListener('blur',captureBlur);
+    notify();
+  }
   function render() {
-    if(!eligible)return '';
-    if (!settings.supported) return '<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong><p>Global voice hotkeys are unavailable in this desktop session. Linux needs X11 or a Wayland desktop with the Global Shortcuts portal.</p></div>';
+    const desktop = desktopControls.render();
+    if(!eligible)return desktop;
+    if (!settings.supported) return desktop + '<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong><p>Global voice hotkeys are unavailable in this build.</p></div>';
     // Shortcut labels are validated by Go; messages are inserted using textContent below.
-    return `<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong>${nativeFailed ? '<p>Voice mute is unavailable in this desktop session. GuildSync can still be used. Check the message below, then disable and re-enable the hotkey to retry.</p>' : ''}<label class="profile-row voice-hotkey-row">Enable <input id="voiceHotkeyEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}></label><div class="profile-row voice-hotkey-row">Shortcut <span>${settings.shortcut}</span></div><button id="voiceHotkeyCapture" type="button" class="voice-hotkey-capture-button">${capturing ? 'Press shortcut (Escape cancels)' : 'Set Hotkey'}</button><p id="voiceHotkeyStatus" class="voice-hotkey-help" role="status"></p><p class="voice-hotkey-help">Hold the shortcut to mute eligible lower-ranked channel members. Server permission is required.</p></div>`;
+    return desktop + `<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong>${nativeFailed ? '<p>Voice mute is unavailable in this desktop session. GuildSync can still be used. Check the message below, then disable and re-enable the hotkey to retry.</p>' : ''}<label class="profile-row voice-hotkey-row">Enable <input id="voiceHotkeyEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}></label><div class="profile-row voice-hotkey-row">Mute key <span>${settings.shortcut}</span></div><label class="profile-row voice-hotkey-row">Auto-unmute after <input id="voiceHotkeyTimeout" type="number" min="${minTimeoutSeconds}" max="${maxTimeoutSeconds}" step="1" value="${settings.timeoutSeconds}"> seconds</label><button id="voiceHotkeyCapture" type="button" class="voice-hotkey-capture-button">${capturing && captureTarget === 'mute' ? 'Press shortcut (Escape cancels)' : 'Set Mute Key'}</button><div class="profile-row voice-hotkey-row">Unmute key <span>${settings.unmuteShortcut}</span></div><button id="voiceUnmuteCapture" type="button" class="voice-hotkey-capture-button">${capturing && captureTarget === 'unmute' ? 'Press shortcut (Escape cancels)' : 'Set Unmute Key'}</button><p id="voiceHotkeyStatus" class="voice-hotkey-help" role="status"></p><p class="voice-hotkey-help">Press the mute key to mute eligible lower-ranked channel members. Pressing it again restarts the countdown; the mute also clears itself when the timeout runs out. The unmute key ends a mute immediately. Server permission is required.</p></div>`;
   }
   function wire(menu) {
+    desktopControls.wire(menu);
     menu.querySelector('#voiceHotkeyEnabled')?.addEventListener('change', event => void save(event.target.checked, settings.shortcut));
-    menu.querySelector('#voiceHotkeyCapture')?.addEventListener('click', async () => {
-      release(); capturing = true; shortcutCapture.start(); message = 'Press one or more keys, then release all keys to save.'; await bridge.SetVoiceHotkeyCapture(true);
-      document.addEventListener('keydown', capture, true);document.addEventListener('keyup', captureUp, true);window.addEventListener('blur',captureBlur); notify();
-    });
+    menu.querySelector('#voiceHotkeyTimeout')?.addEventListener('change', event => void saveTimeout(event.target.value));
+    menu.querySelector('#voiceHotkeyCapture')?.addEventListener('click', () => void beginCapture('mute'));
+    menu.querySelector('#voiceUnmuteCapture')?.addEventListener('click', () => void beginCapture('unmute'));
     const status = menu.querySelector('#voiceHotkeyStatus'); if (status) status.textContent = message;
   }
   function close() { cancelCapture(); }
