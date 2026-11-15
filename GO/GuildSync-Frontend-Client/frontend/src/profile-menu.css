@@ -55,12 +55,20 @@
 .voice-hotkey-key {
   color: #8FA0BD;
   font-size: 11px;
-  white-space: nowrap;
+  min-width: 0;
 }
 
 .voice-hotkey-key b {
   color: #E5E7EB;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+#voiceHotkeySection .voice-hotkey-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 0 0;
 }
 
 #desktopControlsStatus:empty,
@@ -76,8 +84,53 @@
 
 #desktopControlsSection .voice-hotkey-capture-button,
 #voiceHotkeySection .voice-hotkey-capture-button {
-  min-height: 28px;
+  min-height: 26px;
   padding: 5px 10px;
   margin-inline: 0;
   font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Both shortcut buttons keep one width so the row does not jump while capturing. */
+#voiceHotkeySection .voice-hotkey-capture-button {
+  min-width: 112px;
+}
+
+#desktopControlsSection .voice-hotkey-capture-button:disabled,
+#voiceHotkeySection .voice-hotkey-capture-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Destructive and navigational actions in the profile menu. */
+.discord-profile-menu .profile-logout-button {
+  background: #B91C1C;
+  border-color: #DC2626;
+  color: #FFFFFF;
+}
+
+.discord-profile-menu .profile-logout-button:hover {
+  background: #991B1B;
+}
+
+.discord-profile-menu #returnToMyAccount {
+  background: #C2410C;
+  border-color: #EA580C;
+  color: #FFFFFF;
+}
+
+.discord-profile-menu #returnToMyAccount:hover {
+  background: #9A3412;
+}
+
+/* Acting as another account: everything except "Return to my account" is locked. */
+.profile-read-only button:disabled,
+.profile-read-only input:disabled,
+.profile-read-only select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.profile-read-only .profile-filewatch-item {
+  cursor: not-allowed;
 }
