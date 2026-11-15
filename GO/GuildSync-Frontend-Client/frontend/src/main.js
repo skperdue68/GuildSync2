@@ -59,7 +59,7 @@ import {createEventsOn} from './desktop-events.mjs';
 const EventsOn = createEventsOn(Events);
 const BrowserOpenURL = url => Browser.OpenURL(url);
 
-const GUILDSYNC_APP_VERSION = '2.0.2';
+const GUILDSYNC_APP_VERSION = '2.0.3';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 const PENDING_DEPOSIT_MAIL_STORAGE_KEY = 'guildsync-pending-deposit-mail';
