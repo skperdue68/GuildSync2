@@ -1,3 +1,5 @@
+import './profile-menu-web.css';
+
 window.GUILDSYNC_WEB = true;
 
 const SESSION_STORAGE_KEY = 'guildsync-web-session';
@@ -133,12 +135,17 @@ export async function StopGuildSyncFileWatcher() {
 }
 
 export async function GetGuildSyncFileWatcherStatus() {
+  // The web client has no SavedVariables watcher. The list mirrors the desktop
+  // client's three files so the profile menu can name them for web users, and
+  // every entry says the desktop client is what watches them.
+  const filePath = 'Desktop client only. Drop this file onto the GuildSync web window to upload it.';
   return {
     watching: false,
     directory: 'Web upload mode',
     files: [
-      { key: 'banking', fileName: 'GuildSyncBanking.lua', enabled: true, filePath: 'Drag/drop onto the GuildSync web window' },
-      { key: 'roster', fileName: 'GuildSyncRoster.lua', enabled: true, filePath: 'Drag/drop onto the GuildSync web window' }
+      { key: 'banking', fileName: 'GuildSyncBanking.lua', enabled: true, filePath },
+      { key: 'roster', fileName: 'GuildSyncRoster.lua', enabled: true, filePath },
+      { key: 'applications', fileName: 'GuildSyncApplications.lua', enabled: true, filePath }
     ]
   };
 }
