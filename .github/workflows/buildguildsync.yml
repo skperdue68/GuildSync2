@@ -88,7 +88,7 @@
             go run tools/update-version.go --check "${GUILDSYNC_VERSION}"
 
         - name: Setup Node
-          uses: actions/setup-node@v4
+          uses: actions/setup-node@v7
           with:
             node-version: ${{ env.NODE_VERSION }}
             cache: npm
@@ -296,7 +296,7 @@
         - uses: actions/setup-go@v7
           with:
             go-version: ${{ env.GO_VERSION }}
-        - uses: actions/setup-node@v4
+        - uses: actions/setup-node@v7
           with:
             node-version: ${{ env.NODE_VERSION }}
         - name: Stamp and verify release version
