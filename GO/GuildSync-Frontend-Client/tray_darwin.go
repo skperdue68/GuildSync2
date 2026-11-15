@@ -2,14 +2,7 @@
 
 package main
 
-func supportsTray() bool {
-	return false
-}
+import "context"
 
-func (a *App) startTray() {
-	// System tray is intentionally disabled on macOS.
-}
-
-func (a *App) stopTray() {
-	// No-op on macOS.
-}
+func trayHostAvailable(context.Context) bool { return true }
+func (a *App) watchTrayHost()                {}

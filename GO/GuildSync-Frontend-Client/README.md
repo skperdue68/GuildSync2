@@ -8,11 +8,15 @@ The Wails desktop client authenticates through Discord, displays GuildSync data,
 
 ## Development and builds
 
-This repository uses Wails **v3.0.0**, Go 1.26+, Node 24 and Python 3. Install the CLI with `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0`. See [migration details and future improvements](../../docs/wails3-migration.md).
+This repository uses Wails **v3.1.0**, Go 1.26+, Node 24 and Python 3. Install the CLI with `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0`. See [migration details and future improvements](../../docs/wails3-migration.md).
 
 Run `wails3 dev -config build/config.yml` here for desktop development with automatic rebuild/restart. Run `wails3 build` for a desktop build. The frontend lives in `frontend`; install its locked dependencies with `npm ci` and build using `npm run build` as described in the release guide. Platform installers are prepared through the repository packaging/release workflow.
 
 Generated `frontend/dist`, `frontend/bindings`, `frontend/package.json.md5`, `build/bin`, and `release` files are not committed. The empty `frontend/dist/.gitkeep` lets Go's embed directive compile before the first build; `frontend/public/.gitkeep` preserves it when Vite recreates the output directory. On a fresh checkout use `wails3 dev -config build/config.yml` or `wails3 build` to regenerate the Go/JavaScript bindings and frontend output. A standalone frontend build needs the bindings first (`wails3 generate bindings` from this directory). Direct Go tests can use the placeholder, but runnable desktop applications require the real frontend build. Keep `build` icons, platform manifests and installer templates: those are source inputs, not compiled output.
+
+## Native tray
+
+Windows, macOS and supported Linux desktops offer a native Show/Hide/Quit tray menu. Closing hides to the tray when available; Minimize remains a normal taskbar minimize. On macOS, reopening through the Dock restores the window. On Linux without a registered tray host, closing quits normally; panel loss restores the window so the background app stays accessible. See the migration notes for platform verification and follow-up work.
 
 ## Local settings
 
