@@ -28,3 +28,52 @@
   font-size: 11px;
   line-height: 1.35;
 }
+
+/* Profile menu: one type scale for every section, a scroll fallback so a short
+   viewport cannot hide part of the menu, and the destructive/navigational
+   action colours. These mirror the desktop client's profile-menu.css; keep the
+   shared rules in step when either side changes. */
+
+.discord-profile-wrap .discord-profile-menu {
+  max-height: calc(100vh - 74px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Section headings used to differ: some used <strong>, others the header div,
+   which let the family and weight drift between sections. */
+.discord-profile-menu .profile-section-header {
+  color: #E5E7EB;
+  font-family: inherit;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.3;
+}
+
+.discord-profile-menu .profile-section-subtitle {
+  font-family: inherit;
+  font-style: normal;
+}
+
+/* Destructive and navigational actions in the profile menu. */
+.discord-profile-menu .profile-logout-button {
+  background: #B91C1C;
+  border-color: #DC2626;
+  color: #FFFFFF;
+}
+
+.discord-profile-menu .profile-logout-button:hover {
+  background: #991B1B;
+}
+
+.discord-profile-menu #returnToMyAccount {
+  background: #C2410C;
+  border-color: #EA580C;
+  color: #FFFFFF;
+}
+
+.discord-profile-menu #returnToMyAccount:hover {
+  background: #9A3412;
+}
