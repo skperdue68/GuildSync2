@@ -1,0 +1,30 @@
+/* The web client has no SavedVariables watcher: watching lives in the desktop
+   client, and web-api.js only reports the three file names so web users know
+   what to upload. Hide the watch state and the toggles, which cannot do
+   anything here, and say what the section means instead. */
+
+.profile-filewatch-section .profile-section-subtitle,
+.profile-filewatch-section .profile-filewatch-state,
+.profile-filewatch-section .profile-filewatch-toggle {
+  display: none;
+}
+
+.profile-filewatch-section .profile-filewatch-item {
+  cursor: default;
+}
+
+.profile-filewatch-section .profile-section-header::after {
+  content: 'Desktop client only';
+  color: #94A3B8;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.45px;
+  text-transform: uppercase;
+}
+
+.profile-filewatch-section .profile-filewatch-list::after {
+  content: 'The desktop client watches these files and uploads changes automatically. In the web client, drop the .lua file onto this window to upload it.';
+  color: #B5C3DE;
+  font-size: 11px;
+  line-height: 1.35;
+}
