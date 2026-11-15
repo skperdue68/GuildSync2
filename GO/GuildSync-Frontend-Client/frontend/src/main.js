@@ -51,9 +51,13 @@ import {
   CommitGuildSyncRosterData,
   CollectGuildSyncApplicationsData,
   CommitGuildSyncApplicationsData
-} from '../wailsjs/go/main/App';
+} from '../bindings/GuildSync/app.js';
 
-import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime';
+import * as AppBridge from '../bindings/GuildSync/app.js';
+import {Browser, Events} from '@wailsio/runtime';
+import {createEventsOn} from './desktop-events.mjs';
+const EventsOn = createEventsOn(Events);
+const BrowserOpenURL = url => Browser.OpenURL(url);
 
 const GUILDSYNC_APP_VERSION = '1.5.2';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
@@ -122,7 +126,7 @@ let desktopClientUpdateInfo = {
 
 let socket = null;
 const voiceHotkey = createVoiceHotkeyController({
-  bridge: new Proxy({}, {get: (_, name) => (...args) => window.go.main.App[name](...args)}),
+  bridge: AppBridge,
   eventsOn: EventsOn, getSocket: () => socket, authenticated: () => isAuthenticatedSession() && !userSwitchTransition && !guildSyncSession.user?.user_switch?.active,
   changed: () => {
     if (!profileMenuOpen) return;

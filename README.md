@@ -1,4 +1,6 @@
-# GuildSync
+# GuildSync2
+
+This development repository targets **Wails 3**. See [build instructions and migration notes](docs/wails3-migration.md).
 
 GuildSync connects ESO guild deposits, roster/application activity, Discord members, and raffle spreadsheets through a desktop client, web interface, backend database, and Discord bot.
 

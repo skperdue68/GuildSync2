@@ -1,35 +1,11 @@
-# Build Directory
+# Desktop build assets
 
-The build directory is used to house all the build files and assets for your application. 
+GuildSync2 uses Wails 3. Run `wails3 build` in the parent directory.
+The shared build script is `tools/build-desktop.py` at the repository root.
 
-The structure is:
+- `appicon.png` and `windows/icon.ico` are source icons.
+- `windows/wails.exe.manifest` is embedded using `wails3 generate syso`.
+- `config.yml` configures the Wails 3 development runner.
+- `bin/` is generated output used by the existing installer packaging.
 
-* bin - Output directory
-* darwin - macOS specific files
-* windows - Windows specific files
-
-## Mac
-
-The `darwin` directory holds files specific to Mac builds.
-These may be customised and used as part of the build. To return these files to the default state, simply delete them
-and
-build with `wails build`.
-
-The directory contains the following files:
-
-- `Info.plist` - the main plist file used for Mac builds. It is used when building using `wails build`.
-- `Info.dev.plist` - same as the main plist file but used when building using `wails dev`.
-
-## Windows
-
-The `windows` directory contains the manifest and rc files used when building with `wails build`.
-These may be customised for your application. To return these files to the default state, simply delete them and
-build with `wails build`.
-
-- `icon.ico` - The icon used for the application. This is used when building using `wails build`. If you wish to
-  use a different icon, simply replace this file with your own. If it is missing, a new `icon.ico` file
-  will be created using the `appicon.png` file in the build directory.
-- `installer/*` - The files used to create the Windows installer. These are used when building using `wails build`.
-- `info.json` - Application details used for Windows builds. The data here will be used by the Windows installer,
-  as well as the application itself (right click the exe -> properties -> details)
-- `wails.exe.manifest` - The main application manifest file.
+The old `darwin` plists, Windows `info.json` and NSIS templates are retained as reference inputs from Wails 2. The current build generates version metadata and the macOS bundle directly from `VERSION`; it uses the repository's platform installer scripts rather than NSIS. See `docs/wails3-migration.md` at the repository root.

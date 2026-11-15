@@ -1,0 +1,58 @@
+name: Test and build Wails 3 desktop
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      WAILS_VERSION: v3.0.0
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      GOFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-tags=gtk3' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: GO/GuildSync-Frontend-Client/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: GO/GuildSync-Frontend-Client/frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev
+      - name: Install pinned Wails 3 CLI
+        shell: bash
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
+      - name: Test frontend event and hotkey behavior
+        run: node --test GO/GuildSync-Frontend-Client/frontend/src/*.test.mjs
+      - name: Test Windows assembly metadata
+        run: python tools/build-desktop.test.py
+      - name: Build production desktop (universal on macOS)
+        shell: bash
+        working-directory: GO/GuildSync-Frontend-Client
+        run: |
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            wails3 build UNIVERSAL=true
+          else
+            wails3 build
+          fi
+      - name: Test Go client
+        working-directory: GO/GuildSync-Frontend-Client
+        run: go test ./...

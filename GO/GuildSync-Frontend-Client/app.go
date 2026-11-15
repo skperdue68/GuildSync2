@@ -7,17 +7,20 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 type App struct {
-	ctx      context.Context
-	appIcon  []byte
-	trayIcon []byte
-	mu       sync.Mutex
-	quiting  bool
-	oauth    *oauthRuntimeState
-	voice    *voiceRuntime
+	ctx              context.Context
+	desktop          *application.App
+	window           *application.WebviewWindow
+	emitDesktopEvent func(string, any)
+	appIcon          []byte
+	trayIcon         []byte
+	mu               sync.Mutex
+	quiting          bool
+	oauth            *oauthRuntimeState
+	voice            *voiceRuntime
 
 	fileWatcherMu        sync.Mutex
 	fileWatcherCancel    context.CancelFunc
@@ -41,7 +44,7 @@ func NewApp(appIcon []byte, trayIcon []byte) *App {
 	}
 }
 
-func (a *App) startup(ctx context.Context) {
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.ctx = ctx
 
 	// Start tray support.
@@ -49,15 +52,17 @@ func (a *App) startup(ctx context.Context) {
 	a.startTray()
 
 	// Splash screen behavior.
-	runtime.WindowCenter(ctx)
-	runtime.WindowSetAlwaysOnTop(ctx, true)
+	a.window.Center()
+	a.window.SetAlwaysOnTop(true)
+	return nil
 }
 
-func (a *App) shutdown(ctx context.Context) {
+func (a *App) ServiceShutdown() error {
 	_ = a.SetVoiceHotkeyActive(false)
 	a.StopGuildSyncFileWatcher()
 	_ = a.SaveWindowState()
 	a.stopTray()
+	return nil
 }
 
 // ShowMainWindow is called after the splash screen finishes.
@@ -69,24 +74,24 @@ func (a *App) ShowMainWindow() bool {
 		return false
 	}
 
-	runtime.WindowSetAlwaysOnTop(a.ctx, false)
+	a.window.SetAlwaysOnTop(false)
 
 	state := a.loadWindowState()
 
 	if state.Saved {
-		runtime.WindowSetSize(a.ctx, state.Width, state.Height)
-		runtime.WindowSetPosition(a.ctx, state.X, state.Y)
+		a.window.SetSize(state.Width, state.Height)
+		a.window.SetPosition(state.X, state.Y)
 	} else {
-		runtime.WindowSetSize(a.ctx, 1100, 720)
-		runtime.WindowCenter(a.ctx)
+		a.window.SetSize(1100, 720)
+		a.window.Center()
 	}
 
 	if supportsTray() && state.HiddenToTray {
-		runtime.WindowHide(a.ctx)
+		a.window.Hide()
 		return false
 	}
 
-	runtime.WindowShow(a.ctx)
+	a.window.Show()
 	_ = a.saveWindowStateWithHiddenToTray(false)
 
 	return true
@@ -107,8 +112,8 @@ func (a *App) saveWindowState(hiddenToTrayOverride *bool) error {
 
 	existing := a.loadWindowState()
 
-	x, y := runtime.WindowGetPosition(a.ctx)
-	width, height := runtime.WindowGetSize(a.ctx)
+	x, y := a.window.Position()
+	width, height := a.window.Size()
 	if width < 700 || height < 500 {
 		width = existing.Width
 		height = existing.Height
@@ -155,11 +160,11 @@ func (a *App) HideToTray() {
 	}
 
 	if supportsTray() {
-		runtime.WindowHide(a.ctx)
+		a.window.Hide()
 		return
 	}
 
-	runtime.WindowMinimise(a.ctx)
+	a.window.Minimise()
 }
 
 func (a *App) ShowFromTray() {
@@ -170,16 +175,16 @@ func (a *App) ShowFromTray() {
 	state := a.loadWindowState()
 
 	if state.Saved {
-		runtime.WindowSetSize(a.ctx, state.Width, state.Height)
-		runtime.WindowSetPosition(a.ctx, state.X, state.Y)
+		a.window.SetSize(state.Width, state.Height)
+		a.window.SetPosition(state.X, state.Y)
 	}
 
 	_ = a.saveWindowStateWithHiddenToTray(false)
 
-	runtime.WindowShow(a.ctx)
-	runtime.WindowUnminimise(a.ctx)
-	runtime.WindowSetAlwaysOnTop(a.ctx, true)
-	runtime.WindowSetAlwaysOnTop(a.ctx, false)
+	a.window.Show()
+	a.window.UnMinimise()
+	a.window.SetAlwaysOnTop(true)
+	a.window.SetAlwaysOnTop(false)
 }
 
 func (a *App) MaximizeWindow() {
@@ -187,7 +192,7 @@ func (a *App) MaximizeWindow() {
 		return
 	}
 
-	runtime.WindowToggleMaximise(a.ctx)
+	a.window.ToggleMaximise()
 }
 
 func (a *App) MinimizeWindow() {
@@ -198,7 +203,7 @@ func (a *App) MinimizeWindow() {
 	// Minimize should remain a normal window minimize on every platform.
 	// Close-to-tray remains Windows-only through supportsTray().
 	_ = a.saveWindowStateWithHiddenToTray(false)
-	runtime.WindowMinimise(a.ctx)
+	a.window.Minimise()
 }
 
 func (a *App) CloseWindow() {
@@ -209,14 +214,14 @@ func (a *App) CloseWindow() {
 	if supportsTray() {
 		// Existing tray platforms hide to system tray on close.
 		_ = a.saveWindowStateWithHiddenToTray(true)
-		runtime.WindowHide(a.ctx)
+		a.window.Hide()
 		return
 	}
 
 	_ = a.saveWindowStateWithHiddenToTray(false)
 
 	// Non-tray platforms quit normally.
-	runtime.Quit(a.ctx)
+	a.desktop.Quit()
 }
 
 func (a *App) QuitFromTray() {
@@ -229,7 +234,7 @@ func (a *App) QuitFromTray() {
 	a.stopTray()
 
 	if a.ctx != nil {
-		runtime.Quit(a.ctx)
+		a.desktop.Quit()
 	}
 }
 

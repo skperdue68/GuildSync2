@@ -17,8 +17,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -138,7 +136,10 @@ func (a *App) StartDiscordLogin() (GuildSyncSession, error) {
 	params.Set("state", state)
 	params.Set("prompt", "consent")
 
-	runtime.BrowserOpenURL(a.ctx, discordAuthorizeURL+"?"+params.Encode())
+	if err := a.desktop.Browser.OpenURL(discordAuthorizeURL + "?" + params.Encode()); err != nil {
+		go a.stopDiscordCallbackServerSoon()
+		return GuildSyncSession{}, err
+	}
 
 	return GuildSyncSession{
 		LoggedIn:      false,
@@ -345,13 +346,13 @@ func (a *App) startDiscordCallbackServer(cfg GuildSyncClientConfig, expectedStat
 				"success",
 			),
 		)
-		runtime.EventsEmit(a.ctx, "guildsync-login-complete", session)
+		a.emitDesktopEvent("guildsync-login-complete", session)
 		go a.stopDiscordCallbackServerSoon()
 	})
 
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			runtime.EventsEmit(a.ctx, "guildsync-login-failed", err.Error())
+			a.emitDesktopEvent("guildsync-login-failed", err.Error())
 		}
 	}()
 
@@ -376,7 +377,7 @@ func (a *App) finishOAuthWithError(w http.ResponseWriter, message string) {
 		),
 	)
 
-	runtime.EventsEmit(a.ctx, "guildsync-login-failed", message)
+	a.emitDesktopEvent("guildsync-login-failed", message)
 	go a.stopDiscordCallbackServerSoon()
 }
 
@@ -398,7 +399,7 @@ func (a *App) finishOAuthWithDenied(w http.ResponseWriter, message string) {
 		),
 	)
 
-	runtime.EventsEmit(a.ctx, "guildsync-login-denied", message)
+	a.emitDesktopEvent("guildsync-login-denied", message)
 	go a.stopDiscordCallbackServerSoon()
 }
 

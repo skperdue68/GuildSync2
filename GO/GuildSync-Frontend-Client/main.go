@@ -3,11 +3,8 @@ package main
 import (
 	"embed"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
@@ -21,57 +18,37 @@ var trayIcon []byte
 
 func main() {
 	loadOptionalEnvFile()
-
-	app := NewApp(appIcon, trayIcon)
-
-	err := wails.Run(&options.App{
-		Title:  "GuildSync",
-		Width:  816,
-		Height: 920,
-
-		MinHeight: 800,
-		MinWidth:  900,
-		Frameless: true,
-
-		// Windows hides instead of closing because it still supports tray.
-		// macOS and Linux return false from supportsTray(), so they quit normally.
-		HideWindowOnClose: supportsTray(),
-
-		AlwaysOnTop: true,
-
-		BackgroundColour: &options.RGBA{
-			R: 0,
-			G: 0,
-			B: 0,
-			A: 255,
-		},
-
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-
-		Mac: &mac.Options{
-			About: &mac.AboutInfo{
-				Title:   "GuildSync",
-				Message: "GuildSync desktop helper",
-				Icon:    appIcon,
-			},
-		},
-
-		Linux: &linux.Options{
-			Icon:        appIcon,
-			ProgramName: "GuildSync",
-		},
-
-		OnStartup:  app.startup,
-		OnShutdown: app.shutdown,
-
-		Bind: []interface{}{
-			app,
-		},
+	service := NewApp(appIcon, trayIcon)
+	app := application.New(application.Options{
+		Name: "GuildSync", Description: "GuildSync desktop helper", Icon: appIcon,
+		Services: []application.Service{application.NewService(service)},
+		Assets:   application.AssetOptions{Handler: application.AssetFileServerFS(assets)},
+		Mac:      application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: true},
+		Linux:    application.LinuxOptions{ProgramName: "GuildSync"},
 	})
-
-	if err != nil {
+	service.desktop = app
+	service.emitDesktopEvent = func(name string, data any) { app.Event.Emit(name, data) }
+	service.window = app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name: "main", Title: "GuildSync", URL: "/",
+		Width: 816, Height: 920, MinHeight: 800, MinWidth: 900,
+		Frameless: true, AlwaysOnTop: true,
+		BackgroundColour: application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 255},
+	})
+	// Preserve Windows close-to-tray, including native close requests (Alt+F4).
+	service.window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		if supportsTray() {
+			service.mu.Lock()
+			quitting := service.quiting
+			service.mu.Unlock()
+			if !quitting {
+				service.HideToTray()
+				event.Cancel()
+			}
+		} else {
+			_ = service.SaveWindowState()
+		}
+	})
+	if err := app.Run(); err != nil {
 		println("Error:", err.Error())
 	}
 }

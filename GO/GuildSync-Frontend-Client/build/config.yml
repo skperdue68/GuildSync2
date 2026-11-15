@@ -1,0 +1,16 @@
+version: '3'
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir: [.git, node_modules, build, release, frontend/bindings, frontend/dist]
+    file: [.gitkeep, '*_test.go']
+    watched_extension: ['*.go', '*.js', '*.mjs', '*.css', '*.html']
+    git_ignore: true
+  executes:
+    - cmd: wails3 build DEV=true
+      type: blocking
+    - cmd: wails3 task run
+      type: primary
+      exit_policy: shutdown
