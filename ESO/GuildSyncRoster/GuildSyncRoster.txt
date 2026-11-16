@@ -1,6 +1,6 @@
 ## Title: GuildSyncRoster
 ## APIVersion: 101051
-## Version: 2.0.4
+## Version: 2.0.5
 ## Author: @evainefaye
 ## SavedVariables: GuildSyncRoster GuildSyncRosterState
 ## DependsOn: LibHistoire
