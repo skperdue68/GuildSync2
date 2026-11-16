@@ -24,7 +24,7 @@ Discord `/gsr` is the raffle administration alias; ESO `/gsr` is the roster add-
 
 | Directory | Component |
 | --- | --- |
-| `ESO` | GuildSyncBanking, GuildSyncRoster, GuildSyncApplications add-ons |
+| `ESO` | GuildSyncBanking, GuildSyncRoster, GuildSyncApplications, GuildSyncTrader add-ons |
 | `GO/GuildSync-Frontend-Client` | Desktop app and local file/mail handling |
 | `NodeJS/GuildSync-Backend-Server` | Backend, MariaDB initialization, web app, raffle/sheet coordination |
 | `NodeJS/GuildSync-Discord-Bot` | Discord synchronization, slash commands, announcements, onboarding |
