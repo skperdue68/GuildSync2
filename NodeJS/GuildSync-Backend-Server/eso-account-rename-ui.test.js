@@ -13,9 +13,11 @@ for(const client of ['web/src','../../GO/GuildSync-Frontend-Client/frontend/src'
  }
  test(`${client}: permissions and confirmation require a successful preview`,async()=>{
   const s=setup();s.setTarget({accountName:'@Old',allowed:false,key:'session:old'});
-  assert.equal(s.ui.html(),'');await s.ui.submit();assert.equal(s.calls.length,0);
+  assert.equal(s.ui.html(),'');assert.equal(s.ui.triggerHtml(),'');await s.ui.submit();assert.equal(s.calls.length,0);
   s.setTarget({accountName:'@Old',allowed:true,key:'session:old'});await s.ui.submit(true);assert.equal(s.calls.length,0);
-  s.handlers['#openEsoAccountRenameclick']();s.handlers['#esoAccountRenameInputinput']({target:{value:'@<New>'}});
+  // The trigger lives in the dialog header and uses GuildSync's standard button styling.
+  assert.match(s.ui.triggerHtml(),/refresh-discord-button/);assert.equal(s.ui.html(),'');
+  s.handlers['#openEsoAccountRenameclick']();assert.match(s.ui.html(),/discord-search-input/);assert.match(s.ui.html(),/clear-discord-filters-button/);s.handlers['#esoAccountRenameInputinput']({target:{value:'@<New>'}});
   const preview=s.ui.submit();assert.equal(s.calls[0][0],'guildsync:preview-eso-account-rename');
   s.resolve({ok:true,preview:{accountName:'@Old',newAccountName:'@<New>',token:'proof',counts:{roster:1},aliases:['@<Alias>']}});await preview;
   assert.match(s.ui.html(),/Confirm name change/);assert.match(s.ui.html(),/@&lt;New&gt;/);assert.doesNotMatch(s.ui.html(),/<Alias>/);
