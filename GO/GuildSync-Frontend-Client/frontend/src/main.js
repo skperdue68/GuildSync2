@@ -1650,7 +1650,10 @@ function renderRosterHistoryDialog() {
             <h3 id="rosterHistoryTitle">Roster Rank Historical Data</h3>
             <p>Search prior rank records, including members no longer on the current roster.</p>
           </div>
-          <button id="closeRosterHistoryButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
+          <div class="roster-history-header-actions">
+            ${esoAccountRename.triggerHtml()}
+            <button id="closeRosterHistoryButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
+          </div>
         </div>
 
         <div class="roster-history-search-row">

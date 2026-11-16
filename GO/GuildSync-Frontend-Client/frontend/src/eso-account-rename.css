@@ -1,3 +1,51 @@
-.eso-account-rename { margin: 10px 0; padding: 10px; border: 1px solid var(--border-color, #555); border-radius: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.eso-account-rename-preview, .eso-account-rename .discord-data-error { flex-basis: 100%; overflow-wrap: anywhere; }
+.eso-account-rename-trigger { white-space: nowrap; }
+
+.roster-history-header-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+
+.eso-account-rename {
+  margin: 10px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 9px;
+  background: rgba(7, 16, 38, 0.58);
+  display: grid;
+  gap: 10px;
+}
+
+.eso-account-rename-label {
+  color: #9CAEC8;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.eso-account-rename-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+/* style.css is imported after this file, so match the shared input class with
+   one extra selector to keep the plain text-field metrics rather than the
+   search field's icon indent. */
+.eso-account-rename-controls .eso-account-rename-input {
+  flex: 1 1 260px;
+  min-width: 200px;
+  height: 44px;
+  padding: 0 14px;
+}
+
+.eso-account-rename-preview {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.6);
+  color: #E5E7EB;
+  font-size: 13px;
+}
+
+.eso-account-rename-preview, .eso-account-rename .discord-data-error { overflow-wrap: anywhere; }
+
 .roster-history-recorded-as, .roster-history-rename-details { display: block; font-size: .85em; color: var(--muted-text, #aaa); overflow-wrap: anywhere; }
