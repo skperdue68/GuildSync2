@@ -431,7 +431,10 @@ app.use('/downloads', express.static(GUILDSYNC_DOWNLOADS_DIR, {
 }));
 
 app.use(express.static(WEB_DIST_DIR));
-app.get('*', (req, res, next) => {
+// Express 5 parses paths with path-to-regexp v8, which rejects a bare '*'.
+// '/{*splat}' is the optional named wildcard: it matches '/' as well as deeper
+// paths, so the single-page app still loads from the root.
+app.get('/{*splat}', (req, res, next) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) {
     return next();
   }
