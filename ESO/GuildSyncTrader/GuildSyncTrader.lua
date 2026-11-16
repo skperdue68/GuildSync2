@@ -747,7 +747,7 @@ local function OnAddonLoaded(eventCode, addonName)
   gstSavedVars = ZO_SavedVars:NewAccountWide(
     SAVED_VARS_NAME,
     SAVED_VARS_VERSION,
-    nil,
+    GetWorldName(),
     {
       lastProcessedId = nil,
       debugTrader = false,
