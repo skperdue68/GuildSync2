@@ -52,7 +52,9 @@ import {
   CollectGuildSyncRosterData,
   CommitGuildSyncRosterData,
   CollectGuildSyncApplicationsData,
-  CommitGuildSyncApplicationsData
+  CommitGuildSyncApplicationsData,
+  CollectGuildSyncTraderData,
+  CommitGuildSyncTraderData
 } from '../bindings/GuildSync/app.js';
 
 import * as AppBridge from '../bindings/GuildSync/app.js';
@@ -64,6 +66,7 @@ const BrowserOpenURL = url => Browser.OpenURL(url);
 const GUILDSYNC_APP_VERSION = '2.0.5';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
+const PENDING_TRADER_UPLOADS_STORAGE_KEY = 'guildsync-pending-trader-uploads';
 const PENDING_DEPOSIT_MAIL_STORAGE_KEY = 'guildsync-pending-deposit-mail';
 const ESO_STATUS_POLL_INTERVAL_MS = 5000;
 const DEPOSIT_MAIL_AVAILABILITY_POLL_INTERVAL_MS = 30 * 1000;
@@ -95,6 +98,7 @@ let versionCheckTimer = null;
 let bankingUploadQueueProcessing = false;
 let rosterUploadQueueProcessing = false;
 let applicationsUploadQueueProcessing = false;
+let traderUploadQueueProcessing = false;
 let guildSyncFileWatcherStatus = null;
 let esoRunningStatus = { running: false, message: '' };
 let esoStatusPollTimer = null;
@@ -7404,6 +7408,53 @@ async function collectAndSendGuildSyncBankingData(payload = {}) {
 }
 
 
+async function collectAndSendGuildSyncTraderData(payload = {}) {
+  const nativeGeneration = sessionGeneration;
+  if (userSwitchTransition || guildSyncSession.user?.user_switch?.active) return;
+  if (!canIngestGuildSyncData()) return;
+
+  if (!socket?.connected) {
+    addSystemMessage('trader-data-pending', 'Trader SavedVariables changed, but GuildSync websocket is not connected yet. The file was not cleared.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  try {
+    const result = await CollectGuildSyncTraderData(payload);
+    if (nativeGeneration !== sessionGeneration || userSwitchTransition || guildSyncSession.user?.user_switch?.active) return;
+
+    if (!result?.ok) {
+      addSystemMessage('trader-data-pending', result?.message || 'Trader SavedVariables changed, but no trader data was sent yet.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const traderPayload = {
+      local_upload_id: createLocalTraderUploadId(),
+      authenticated_username: getDisplayName(),
+      authenticated_discord_user_id: guildSyncSession?.user?.discord_user_id || '',
+      source: 'guildsync-frontend-client',
+      file_name: result.fileName || payload.fileName || '',
+      file_path: result.filePath || payload.filePath || '',
+      collected_at: new Date().toISOString(),
+      data: result.data || {}
+    };
+
+    try {
+      await sendQueuedGuildSyncTraderUpload(traderPayload);
+    } catch (sendError) {
+      enqueuePendingGuildSyncTraderUpload(traderPayload);
+      throw sendError;
+    }
+  } catch (error) {
+    addSystemMessage('trader-data-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
 function createLocalDepositMailBatchId() {
   return `deposit-mail-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -7738,6 +7789,106 @@ async function sendQueuedGuildSyncBankingUpload(bankingPayload) {
   }
 
   addSystemMessage('banking-data-sent', response.message || 'Banking data sent to GuildSync backend.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+
+  return response;
+}
+
+function createLocalTraderUploadId() {
+  return `trader-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function loadPendingGuildSyncTraderUploads() {
+  try {
+    const raw = window.localStorage.getItem(PENDING_TRADER_UPLOADS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object') : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingGuildSyncTraderUploads(queue) {
+  window.localStorage.setItem(PENDING_TRADER_UPLOADS_STORAGE_KEY, JSON.stringify(Array.isArray(queue) ? queue : []));
+}
+
+function enqueuePendingGuildSyncTraderUpload(payload) {
+  const uploadId = String(payload?.local_upload_id || createLocalTraderUploadId());
+  const queue = loadPendingGuildSyncTraderUploads().filter((item) => item?.local_upload_id !== uploadId);
+
+  queue.push({
+    ...payload,
+    local_upload_id: uploadId,
+    pending_saved_at: new Date().toISOString()
+  });
+
+  savePendingGuildSyncTraderUploads(queue);
+
+  addSystemMessage('trader-data-pending', 'Trader data is queued and will retry after GuildSync reconnects.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+}
+
+function removePendingGuildSyncTraderUpload(uploadId) {
+  const queue = loadPendingGuildSyncTraderUploads().filter((item) => item?.local_upload_id !== uploadId);
+  savePendingGuildSyncTraderUploads(queue);
+}
+
+async function processPendingGuildSyncTraderUploads() {
+  if (traderUploadQueueProcessing || !socket?.connected || !canIngestGuildSyncData()) {
+    return;
+  }
+
+  const queue = loadPendingGuildSyncTraderUploads();
+  if (queue.length === 0) {
+    return;
+  }
+
+  traderUploadQueueProcessing = true;
+
+  try {
+    for (const pendingPayload of queue) {
+      if (!socket?.connected || !canIngestGuildSyncData()) {
+        return;
+      }
+
+      await sendQueuedGuildSyncTraderUpload(pendingPayload);
+      removePendingGuildSyncTraderUpload(pendingPayload.local_upload_id);
+    }
+  } catch (error) {
+    addSystemMessage('trader-data-pending-error', `Pending trader upload retry failed: ${formatError(error)}`, {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    traderUploadQueueProcessing = false;
+  }
+}
+
+async function sendQueuedGuildSyncTraderUpload(traderPayload) {
+  const nativeGeneration = sessionGeneration;
+  if (userSwitchTransition || guildSyncSession.user?.user_switch?.active) throw new Error('Native uploads are paused while switching accounts.');
+  if (!socket?.connected) {
+    throw new Error('GuildSync websocket is not connected. Trader data was not cleared.');
+  }
+
+  const response = await emitSocketWithAck('guildsync:sending-trader-data', traderPayload, 30000);
+
+  if (!response?.ok) {
+    throw new Error(response?.message || response?.error || 'Backend rejected the trader data payload. Trader data was not cleared.');
+  }
+
+  if (nativeGeneration !== sessionGeneration || userSwitchTransition || guildSyncSession.user?.user_switch?.active) throw new Error('Account session changed before native commit.');
+  const commitResult = await CommitGuildSyncTraderData(
+    traderPayload.file_path || '',
+    traderPayload.file_name || ''
+  );
+
+  if (!commitResult?.ok) {
+    throw new Error(commitResult?.message || 'Backend confirmed trader data, but the SavedVariables file could not be cleared.');
+  }
+
+  addSystemMessage('trader-data-sent', response.message || 'Trader data sent to GuildSync backend.', {
     ttlMs: TRANSIENT_MESSAGE_TTL_MS
   });
 
@@ -8553,7 +8704,7 @@ function handleCurrentAccountProfile(user) {
     if (!canEditGuildSyncRole(user.role)) { bankingMoveDialogOpen=false;manualBiweeklyTicketDialogOpen=false; }
     renderGuildSyncTabLayout();
     void syncGuildSyncFileWatcherWithAuthState({silent:true});
-    if(canIngestGuildSyncRole(user.role)){processPendingGuildSyncBankingUploads();processPendingGuildSyncRosterUploads();processPendingGuildSyncApplicationsUploads();}
+    if(canIngestGuildSyncRole(user.role)){processPendingGuildSyncBankingUploads();processPendingGuildSyncRosterUploads();processPendingGuildSyncApplicationsUploads();processPendingGuildSyncTraderUploads();}
     if(canEditGuildSyncRole(user.role))startDepositMailAvailabilityPolling();
     else stopDepositMailAvailabilityPolling();
   }
@@ -9224,6 +9375,7 @@ function startSupportedDesktopConnection() {
   startDepositMailAvailabilityPolling();
   processPendingGuildSyncRosterUploads();
   processPendingGuildSyncApplicationsUploads();
+  processPendingGuildSyncTraderUploads();
   startVersionCheckTimer();
 }
 
@@ -9853,6 +10005,11 @@ function handleGuildSyncSavedVarsFileModified(payload = {}) {
     logGuildSyncFileWatcher(`Processing applications SavedVariables update from ${fileName}.`);
     handleGuildSyncApplicationsSavedVarsModified(payload);
   }
+
+  if (normalizedKey === 'trader') {
+    logGuildSyncFileWatcher(`Processing trader SavedVariables update from ${fileName}.`);
+    handleGuildSyncTraderSavedVarsModified(payload);
+  }
 }
 
 async function handleGuildSyncBankingSavedVarsModified(payload = {}) {
@@ -9862,6 +10019,10 @@ async function handleGuildSyncBankingSavedVarsModified(payload = {}) {
 
 async function handleGuildSyncRosterSavedVarsModified(payload = {}) {
   await collectAndSendGuildSyncRosterData(payload);
+}
+
+async function handleGuildSyncTraderSavedVarsModified(payload = {}) {
+  await collectAndSendGuildSyncTraderData(payload);
 }
 
 function handleGuildSyncFileWatcherError(message) {

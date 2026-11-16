@@ -621,10 +621,6 @@ local function GST_SelectGuild(query)
     local id = GetGuildId(index)
     local name = GetGuildName(id)
     if query == tostring(id) or query == string.lower(GST_Trim(name)) then
-      if next(trader.trades) then
-        GST_Print("Upload pending trader sales before changing guilds. Nothing was changed.")
-        return
-      end
       if not GST_StopStream() then return end
       state.targetGuildId, state.targetGuildName = tostring(id), name
       trader.guildId, trader.guildName = tostring(id), name
@@ -644,7 +640,7 @@ local function GST_PrintHelp()
   GST_Print("/gst stop - Stop the active trader stream.")
   GST_Print("/gst reset - Stop stream, clear this guild's LastProcessedId, and stream from the beginning.")
   GST_Print("/gst status - Show guild, stream status, LastProcessedId and saved row count.")
-  GST_Print("/gst guild <name or ESO guild ID> - Select the guild after pending trader sales are uploaded.")
+  GST_Print("/gst guild <name or ESO guild ID> - Select the guild. Pending trader sales keep their own guild identity.")
   GST_Print("/gst debug on - Enable detailed trader sale chat output.")
   GST_Print("/gst debug off - Disable detailed trader sale chat output.")
 end

@@ -46,6 +46,7 @@ GetNumGuilds = function() return #guildIds end
 GetGuildId = function(index) return guildIds[index] end
 GetGuildName = function(id) return names[id] end
 GetTimeStamp = function() return 1700000100 end
+GetWorldName = function() return 'NA Megaserver' end
 GUILD_HISTORY_EVENT_CATEGORY_TRADER = 4
 GUILD_HISTORY_TRADER_EVENT_ITEM_SOLD = 60
 GetItemLinkItemId = function(link) return tonumber(link:match('item:(%d+)')) end
@@ -140,13 +141,9 @@ equal(state.lastProcessedIdsByGuild['101'], nil, 'reset clears only this guild c
 
 messages = {}
 SLASH_COMMANDS['/gst']('guild 202')
-equal(state.targetGuildId, nil, 'pending rows block guild changes')
-equal(table.concat(messages, '\n'):find('Upload pending trader sales', 1, true) ~= nil, true,
-  'guild change explains why nothing changed')
-
-data.trades = {}
-SLASH_COMMANDS['/gst']('guild 202')
-equal(state.targetGuildId, '202', 'guild change allowed after rows are uploaded')
+equal(state.targetGuildId, '202', 'pending rows do not block guild changes')
+equal(tradeCount(), 2, 'pending rows survive a guild switch')
+equal(type(data.trades.guild_101_event_4), 'table', 'previous guild rows keep their own identity')
 equal(processors[#processors].cursor, nil, 'new guild starts from its own checkpoint')
 processors[#processors].callback(event(7))
 equal(type(data.trades.guild_202_event_7), 'table', 'new guild sale uses its own key')

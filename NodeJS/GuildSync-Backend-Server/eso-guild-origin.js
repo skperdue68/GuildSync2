@@ -48,7 +48,8 @@ export function validateEsoGuildImport(kind, payload, env = process.env) {
     }
     for (const event of Object.values(data?.rosterEvents || {})) validateOrigin(event, 'Roster event', guildId);
   } else {
-    const records = kind === 'banking' ? data?.entries || [] : Array.isArray(data) ? data : data?.records || [];
-    for (const record of Object.values(records)) validateOrigin(record, kind === 'banking' ? 'Banking entry' : 'Application record', guildId);
+    const records = kind === 'banking' || kind === 'trader' ? data?.entries || [] : Array.isArray(data) ? data : data?.records || [];
+    const label = kind === 'banking' ? 'Banking entry' : kind === 'trader' ? 'Trader sale' : 'Application record';
+    for (const record of Object.values(records)) validateOrigin(record, label, guildId);
   }
 }

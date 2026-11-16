@@ -70,6 +70,7 @@ import {
   markDepositMailWrittenToESO,
   markDepositMailSent,
   insertBankingEntries,
+  insertTraderEntries,
   addManualBiweeklyTicketEntry,
   moveBankingEntry,
   getAssociateTicketReport,
@@ -91,6 +92,7 @@ import {
   getPendingGuildSyncApplicationBroadcasts,
   markGuildSyncApplicationRecordBroadcasted,
   parseGuildSyncBankingSavedVarsLua,
+  parseGuildSyncTraderSavedVarsLua,
   parseGuildSyncRosterSavedVarsLua,
   parseGuildSyncApplicationsSavedVarsLua
 } from './guildsync-database-actions.js';
@@ -401,6 +403,27 @@ app.post('/api/guildsync/upload-savedvars/:kind', requireGuildSyncWebUser, async
       });
     }
 
+    if (kind === 'trader') {
+      const data = parseGuildSyncTraderSavedVarsLua(rawLuaText);
+      validateEsoGuildImport('trader', data);
+      const result = await insertTraderEntries(applicationDB, {
+        source: data.table_name || 'GuildSyncTrader',
+        uploadedBy: req.guildSyncUser.display_name || req.guildSyncUser.username || req.guildSyncUser.sub,
+        world: data.world || null,
+        guildId: data.guildId || null,
+        guildName: data.guildName || null,
+        entries: data.entries || []
+      });
+
+      return res.json({
+        ok: true,
+        message: `Trader SavedVariables uploaded and processed. Sales: ${result.trader_entries_received}.`,
+        file_name: fileName || null,
+        world: data.world || null,
+        ...result
+      });
+    }
+
     if (kind === 'roster') {
       const data = parseGuildSyncRosterSavedVarsLua(rawLuaText);
       const result = await processRosterData(applicationDB, { data });
@@ -703,12 +726,12 @@ function registerGuildSyncConnection(socket) {
       const fileName = path.basename(String(payload.file_name || payload.fileName || '').trim());
       const rawLuaText = String(payload.raw_lua_text || payload.rawLuaText || '').trim();
       const source = String(payload.source || 'web-drag-drop').trim() || 'web-drag-drop';
-      const allowedFiles = new Set(['GuildSyncBanking.lua', 'GuildSyncRoster.lua', 'GuildSyncApplications.lua']);
+      const allowedFiles = new Set(['GuildSyncBanking.lua', 'GuildSyncRoster.lua', 'GuildSyncApplications.lua', 'GuildSyncTrader.lua']);
 
       if (!allowedFiles.has(fileName)) {
         sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
           ok: false,
-          message: `Unsupported file: ${fileName || 'unknown file'}. Drop only GuildSyncBanking.lua, GuildSyncRoster.lua, or GuildSyncApplications.lua.`
+          message: `Unsupported file: ${fileName || 'unknown file'}. Drop only GuildSyncBanking.lua, GuildSyncRoster.lua, GuildSyncApplications.lua, or GuildSyncTrader.lua.`
         });
         return;
       }
@@ -739,6 +762,29 @@ function registerGuildSyncConnection(socket) {
           kind: 'banking',
           file_name: fileName,
           message: `GuildSyncBanking.lua uploaded and processed. Entries: ${result.banking_entries_received}.`,
+          ...result
+        });
+        return;
+      }
+
+      if (fileName === 'GuildSyncTrader.lua') {
+        const data = parseGuildSyncTraderSavedVarsLua(rawLuaText);
+        validateEsoGuildImport('trader', data);
+        const result = await insertTraderEntries(applicationDB, {
+          source: data.table_name || 'GuildSyncTrader',
+          uploadedBy: socket.guildSyncUser.display_name || socket.guildSyncUser.username || socket.guildSyncUser.discord_user_id,
+          world: data.world || null,
+          guildId: data.guildId || null,
+          guildName: data.guildName || null,
+          entries: data.entries || []
+        });
+
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: true,
+          kind: 'trader',
+          file_name: fileName,
+          message: `GuildSyncTrader.lua uploaded and processed. Sales: ${result.trader_entries_received}.`,
+          world: data.world || null,
           ...result
         });
         return;
@@ -1458,6 +1504,74 @@ function registerGuildSyncConnection(socket) {
       };
 
       sendSocketResponse(socket, 'guildsync:banking-data-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:sending-trader-data', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to send trader data.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:trader-data-result', callback, response);
+      return;
+    }
+
+    try {
+      const authenticatedUsername = String(
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.guild_member_name ||
+        socket.guildSyncUser.username ||
+        socket.guildSyncUser.discord_user_id ||
+        ''
+      ).trim();
+
+      const data = payload?.data && typeof payload.data === 'object'
+        ? payload.data
+        : payload;
+
+      validateEsoGuildImport('trader', payload);
+
+      const entries = Array.isArray(data?.entries) ? data.entries : [];
+      const fileName = String(payload.file_name || '').trim();
+      const dataSource = String(data?.table_name || payload.source || 'GuildSyncTrader').trim();
+
+      Log(
+        `Trader data received from ${authenticatedUsername || 'unknown user'}${fileName ? ` for ${fileName}` : ''}. Sales: ${entries.length}.`
+      );
+
+      const result = await insertTraderEntries(applicationDB, {
+        source: dataSource,
+        uploadedBy: authenticatedUsername,
+        world: data?.world || null,
+        guildId: data?.guildId || null,
+        guildName: data?.guildName || null,
+        entries
+      });
+
+      sendSocketResponse(socket, 'guildsync:trader-data-result', callback, {
+        ok: true,
+        message: 'Trader data processed by GuildSync backend.',
+        received: true,
+        received_from: authenticatedUsername,
+        file_name: fileName || null,
+        data_source: dataSource,
+        world: data?.world || null,
+        entries_count: entries.length,
+        ...result,
+        at: new Date().toLocaleString()
+      });
+    } catch (error) {
+      Log(`Trader data processing failed: ${error.message}`);
+
+      sendSocketResponse(socket, 'guildsync:trader-data-result', callback, {
+        ok: false,
+        message: error.code === 'ESO_GUILD_ORIGIN' ? error.message : 'Trader data processing failed.',
+        error: error.message,
+        at: new Date().toLocaleString()
+      });
     }
   });
 

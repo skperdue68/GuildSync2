@@ -551,6 +551,35 @@ async function initializeSchema(db) {
 
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS guildsync_trader_entries (
+      event_id varchar(32) NOT NULL,
+      guild_id varchar(32) NOT NULL,
+      guild_name varchar(255) NOT NULL DEFAULT '',
+      world varchar(64) DEFAULT NULL,
+      seller varchar(255) NOT NULL DEFAULT '',
+      buyer varchar(255) NOT NULL DEFAULT '',
+      item_link text DEFAULT NULL,
+      item_id varchar(32) DEFAULT NULL,
+      item_name varchar(255) DEFAULT NULL,
+      quantity int(10) unsigned NOT NULL DEFAULT 0,
+      price bigint(20) unsigned NOT NULL DEFAULT 0,
+      unit_price bigint(20) unsigned NOT NULL DEFAULT 0,
+      tax bigint(20) unsigned NOT NULL DEFAULT 0,
+      net bigint(20) unsigned NOT NULL DEFAULT 0,
+      event_timestamp varchar(32) NOT NULL,
+      event_datetime datetime NOT NULL,
+      data_source varchar(255) NOT NULL,
+      uploaded_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (guild_id, event_id),
+      INDEX idx_guildsync_trader_event_datetime (event_datetime),
+      INDEX idx_guildsync_trader_seller (seller),
+      INDEX idx_guildsync_trader_buyer (buyer)
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS guildsync_roster_events (
       event_id VARCHAR(32) PRIMARY KEY NOT NULL,
       account_name VARCHAR(64) NOT NULL,
@@ -4079,6 +4108,159 @@ export function parseGuildSyncBankingSavedVarsLua(rawLuaText = '') {
       monthly: monthly.length,
       other: other.length
     }
+  };
+}
+
+export async function insertTraderEntries(db, payload = {}) {
+  validateEsoGuildImport('trader', payload);
+  return insertTraderEntriesUnlocked(db, payload);
+}
+
+async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
+  const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+
+  if (entries.length === 0) {
+    return {
+      trader_entries_received: 0,
+      trader_entries_inserted: 0,
+      trader_entries_ignored: 0
+    };
+  }
+
+  const connection = await applicationDB.getConnection();
+  let insertedCount = 0;
+
+  try {
+    await connection.beginTransaction();
+
+    for (const entry of entries) {
+      const eventId = Number(entry.eventId ?? entry.event_id);
+      const guildId = String(entry.guildId ?? entry.guild_id ?? payload.guildId ?? '').trim();
+      const guildName = String(entry.guildName ?? entry.guild_name ?? payload.guildName ?? '').trim().slice(0, 255);
+      const world = String(entry.world ?? payload.world ?? '').trim().slice(0, 64) || null;
+      const seller = String(entry.seller ?? entry.sellerDisplayName ?? '').trim().slice(0, 255);
+      const buyer = String(entry.buyer ?? entry.buyerDisplayName ?? '').trim().slice(0, 255);
+      const itemLink = String(entry.itemLink ?? entry.item_link ?? '').trim();
+      const itemId = Number(entry.itemId ?? entry.item_id) || 0;
+      const itemName = String(entry.itemName ?? entry.item_name ?? '').trim().slice(0, 255) || null;
+      const quantity = Number(entry.quantity) || 0;
+      const price = Number(entry.price) || 0;
+      const unitPrice = Number(entry.unitPrice ?? entry.unit_price) || (quantity > 0 ? Math.floor(price / quantity) : 0);
+      const tax = Number(entry.tax) || 0;
+      const net = entry.net === undefined || entry.net === null ? price - tax : Number(entry.net) || 0;
+      const eventTimestamp = Number(entry.time ?? entry.eventTimestamp ?? entry.event_timestamp);
+
+      if (!eventId || !guildId || !Number.isFinite(eventTimestamp) || eventTimestamp <= 0) {
+        continue;
+      }
+
+      const [result] = await connection.execute(
+        `
+          INSERT IGNORE INTO guildsync_trader_entries (
+            event_id,
+            guild_id,
+            guild_name,
+            world,
+            seller,
+            buyer,
+            item_link,
+            item_id,
+            item_name,
+            quantity,
+            price,
+            unit_price,
+            tax,
+            net,
+            event_timestamp,
+            event_datetime,
+            data_source
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?)
+        `,
+        [
+          String(eventId),
+          guildId,
+          guildName,
+          world,
+          seller,
+          buyer,
+          itemLink || null,
+          String(itemId),
+          itemName,
+          quantity,
+          price,
+          unitPrice,
+          tax,
+          net,
+          String(eventTimestamp),
+          eventTimestamp,
+          bankingSource(payload?.source || 'GuildSyncTrader', payload.uploadedBy)
+        ]
+      );
+
+      insertedCount += result.affectedRows || 0;
+    }
+
+    await connection.commit();
+  } catch (error) {
+    await safeRollback(connection);
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  return {
+    trader_entries_received: entries.length,
+    trader_entries_inserted: insertedCount,
+    trader_entries_ignored: entries.length - insertedCount
+  };
+}
+
+function findEsoSavedVarsProfile(parsed) {
+  const profiles = parsed && typeof parsed === 'object' ? parsed : {};
+  const ordered = [
+    ...('Default' in profiles ? ['Default'] : []),
+    ...Object.keys(profiles).filter((key) => key !== 'Default').sort()
+  ];
+
+  let fallback = null;
+
+  for (const world of ordered) {
+    const profile = profiles[world];
+    if (!profile || typeof profile !== 'object') continue;
+    const accountName = Object.keys(profile).find((key) => key.startsWith('@'));
+    if (!accountName) continue;
+    const accountWide = profile?.[accountName]?.['$AccountWide'];
+    if (accountWide && typeof accountWide === 'object' && accountWide.trades && Object.keys(accountWide.trades).length) {
+      return { world, profile };
+    }
+    fallback = fallback || { world, profile };
+  }
+
+  return fallback;
+}
+
+export function parseGuildSyncTraderSavedVarsLua(rawLuaText = '') {
+  const tableText = extractLuaAssignmentTable(rawLuaText, 'GuildSyncTrader');
+  const parsed = parseEsoLuaTableForRoster(tableText);
+  const profile = findEsoSavedVarsProfile(parsed);
+  const accountName = profile
+    ? Object.keys(profile.profile).find((key) => key.startsWith('@')) || ''
+    : '';
+  const accountWide = accountName
+    ? profile.profile?.[accountName]?.['$AccountWide'] || {}
+    : {};
+  const tradesSource = accountWide.trades && typeof accountWide.trades === 'object' ? accountWide.trades : {};
+  const entries = Object.values(tradesSource).filter((entry) => entry && typeof entry === 'object');
+
+  return {
+    table_name: 'GuildSyncTrader',
+    account_name: accountName,
+    world: profile && profile.world !== 'Default' ? profile.world : null,
+    guildId: accountWide.guildId || null,
+    guildName: accountWide.guildName || null,
+    entries,
+    entries_count: entries.length
   };
 }
 

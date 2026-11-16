@@ -8,7 +8,7 @@ const adminEvents = new Set([
   'guildsync:save-admin-configuration','guildsync:save-raffle-bonus-settings'
 ]);
 const ingestionEvents = new Set([
-  'guildsync:upload-savedvars-raw','guildsync:sending-banking-data','guildsync:sending-roster-data',
+  'guildsync:upload-savedvars-raw','guildsync:sending-banking-data','guildsync:sending-roster-data','guildsync:sending-trader-data',
   'guildsync:gsa-post-application','guildsync:eso-guild-application-message',
   'guildsync:run-member-auto-linking','guildsync:request-discord-data-refresh'
 ]);
