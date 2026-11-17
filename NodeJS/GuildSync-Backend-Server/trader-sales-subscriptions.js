@@ -257,15 +257,6 @@ export async function loadTraderSalesForTest(db, discordUserId, { limit = TEST_S
   return { names: linkedNames, sales: (Array.isArray(rows) ? rows : []).map((row) => saleForNotice(row)) };
 }
 
-// A test notice is a normal notice with the age filter disabled.
-export function buildTraderTestNotice(discordUserId, sales = []) {
-  const id = normalizeUserId(discordUserId);
-  if (!id) return null;
-
-  const subscribers = [{ discord_user_id: id, subscribed_at: 0 }];
-  return groupTraderSaleNotices(sales, () => subscribers)[0] || null;
-}
-
 // /trader sales <part of an item name> returns the linked account's own sales of
 // every matching item, newest first, for a receipt of that item's history.
 export async function searchTraderSales(db, discordUserId, itemQuery, { limit = TEST_SALE_LIMIT } = {}) {
@@ -367,8 +358,7 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
           return;
         }
 
-        const notice = buildTraderTestNotice(discordUserId, sales);
-        if (!notice) {
+        if (!sales.length) {
           reply({
             ok: false,
             linked: true,
@@ -378,9 +368,16 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
           return;
         }
 
-        notice.latest_entry_time = await newestTraderEntryTime(db);
-        socket.emit('guildsync:trader-sale-notice', notice);
-        reply({ ok: true, linked: true, eso_account_name: names[0], sales: notice.sales.length });
+        // The receipt belongs where the command was typed, so the bot renders it
+        // into the reply (ephemeral in a channel, in place in a DM). Nothing is
+        // emitted as a notice here.
+        reply({
+          ok: true,
+          linked: true,
+          eso_account_name: names[0],
+          sales,
+          latest_entry_time: await newestTraderEntryTime(db)
+        });
         return;
       }
 

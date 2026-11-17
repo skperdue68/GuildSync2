@@ -141,13 +141,32 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
     }
 
     if (action === 'test') {
-      const count = Number(response.sales) || 0;
+      const sales = Array.isArray(response.sales) ? response.sales.filter(Boolean) : [];
+
+      if (!sales.length) {
+        await interaction.editReply({
+          content: `${infoLine}\nNo trader sales are stored for your linked ESO account yet.`,
+          allowedMentions: { parse: [] }
+        });
+        return;
+      }
+
+      const pages = await renderTraderInvoiceImages({
+        sales,
+        kind: sales.length === 1 ? 'sale' : 'invoice'
+      });
+      const names = traderReceiptFileNames(pages.length);
+      const count = sales.length;
+
+      // The receipt goes where the command was typed: this reply is ephemeral in
+      // a channel and is the DM itself when the command was sent in a DM.
       await interaction.editReply({
-        content: `${infoLine}\nSent a test receipt with ${count} sale${count === 1 ? '' : 's'} to your DMs.`,
+        content: `${infoLine}\nTest receipt for your newest ${count} sale${count === 1 ? '' : 's'}.`,
+        files: pages.map((png, index) => new AttachmentBuilder(png, { name: names[index] })),
         allowedMentions: { parse: [] }
       });
 
-      log(`Trader test receipt sent to Discord user ${interaction.user?.id || 'unknown'} with ${count} sale(s).`);
+      log(`Trader test receipt rendered for Discord user ${interaction.user?.id || 'unknown'} with ${count} sale(s).`);
       return;
     }
 
