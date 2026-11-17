@@ -59,8 +59,9 @@ bot's last receipt DM to that member failed, so someone whose DMs are closed is 
 silently missing every receipt. Run the bot's `npm run deploy` once to register the global command
 (the same PUT removes the retired global `/sales` command). The deploy is also the place `/trader
 test` disappears: it deletes a global `/trader` that still lists it, puts the current definition, then
-reads both command sets back and fails if `/trader receipt` is missing, `/trader test` is still offered,
-or a guild-scoped `/trader` remains. A
+reads both command sets back and fails if `/trader receipt` is missing, `/trader test` is still offered, a
+subcommand's options differ from this build (a missing `count`, a different limit or wording), or a
+guild-scoped `/trader` remains. A
 Discord account must have a `linked` row in `guildsync_member_links`; otherwise the bot explains how
 to link the account and who to contact for help. Subscriptions live in
 `guildsync_trader_sales_subscriptions` (one row per Discord user) and the linked ESO name is resolved

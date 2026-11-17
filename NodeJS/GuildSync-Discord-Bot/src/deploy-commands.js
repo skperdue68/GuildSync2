@@ -65,7 +65,7 @@ try {
   const existingGlobalCommands = await rest.get(Routes.applicationCommands(DISCORD_CLIENT_ID));
 
   for (const command of existingGlobalCommands.filter(({ name }) => name === 'trader')) {
-    const reasons = staleTraderReasons(command, traderSubcommands);
+    const reasons = staleTraderReasons(command, traderDefinition);
     if (!reasons.length) continue;
 
     await rest.delete(Routes.applicationCommand(DISCORD_CLIENT_ID, command.id));
@@ -86,11 +86,12 @@ try {
   );
 
   // Read both sets back, so a put that did not land, a definition that still
-  // offers /trader test, or a leftover guild copy is reported here instead of
-  // being discovered by typing the command.
+  // offers /trader test, a subcommand whose options drifted (the count option
+  // being the case that prompted this), or a leftover guild copy is reported
+  // here instead of being discovered by typing the command.
   const registeredGlobal = await rest.get(Routes.applicationCommands(DISCORD_CLIENT_ID));
   const registeredTrader = registeredGlobal.find(({ name }) => name === 'trader');
-  const staleReasons = staleTraderReasons(registeredTrader, traderSubcommands);
+  const staleReasons = staleTraderReasons(registeredTrader, traderDefinition);
 
   const registeredGuild = await rest.get(
     Routes.applicationGuildCommands(DISCORD_CLIENT_ID, DISCORD_GUILD_ID)
