@@ -1,0 +1,8 @@
+## Title: GuildSyncTrader
+## APIVersion: 101051
+## Version: 2.0.5
+## Author: @evainefaye
+## SavedVariables: GuildSyncTrader GuildSyncTraderState
+## DependsOn: LibHistoire
+
+GuildSyncTrader.lua

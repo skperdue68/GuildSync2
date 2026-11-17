@@ -396,9 +396,11 @@ Desktop files load in order: executable-directory `.env`, executable-directory `
 | `SAVED_VARS_BANKING_FILE_NAME` | Optional; `GuildSyncBanking.lua` | Banking export filename. |
 | `SAVED_VARS_ROSTER_FILE_NAME` | Optional; `GuildSyncRoster.lua` | Roster export filename. |
 | `SAVED_VARS_APPLICATIONS_FILE_NAME` | Optional; `GuildSyncApplications.lua` | Application export filename. |
+| `SAVED_VARS_TRADER_FILE_NAME` | Optional; `GuildSyncTrader.lua` | Trader export filename. |
 | `SAVED_VARS_BANKING_TABLE_NAME` | Optional; `GuildSyncBanking` | Top-level banking Lua table name for parsing. |
 | `SAVED_VARS_ROSTER_TABLE_NAME` | Optional; `GuildSyncRoster` | Top-level roster Lua table name for parsing. |
 | `SAVED_VARS_APPLICATIONS_TABLE_NAME` | Optional; `GuildSyncApplications` | Top-level application Lua table name for parsing. |
+| `SAVED_VARS_TRADER_TABLE_NAME` | Optional; `GuildSyncTrader` | Top-level trader Lua table name for parsing. |
 | `GUILDSYNC_DISCORD_CLIENT_ID` | Optional; packaged default | Desktop OAuth application ID override. |
 | `GUILDSYNC_DISCORD_REDIRECT_URI` | Optional; `http://127.0.0.1:53682/callback` | Local desktop OAuth listener/redirect. |
 | `GUILDSYNC_AUTH_SERVER_URL` | Optional; packaged deployment URL | Backend authentication origin. |

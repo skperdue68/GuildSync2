@@ -16,11 +16,13 @@ const references=[
  ['notes','guildsync_roster_member_notes','account_name','account_name_original'],
  ['links','guildsync_member_links','eso_account_name'],
  ['banking','guildsync_banking_entries','account_name','account_name_original'],
+ ['trader','guildsync_trader_entries','seller','seller_original'],
  ['applications','guildsync_applications','applicant_account','applicant_account_original'],
  ['users','guildsync_users','guild_member_name']
 ];
 const secondary=[['guildsync_roster_events','officer_account_name','officer_account_name_original'],
- ['guildsync_applications','officer_processing','officer_processing_original']];
+ ['guildsync_applications','officer_processing','officer_processing_original'],
+ ['guildsync_trader_entries','buyer','buyer_original']];
 
 export async function initializeEsoAccountIdentity(db){
  await db.query(`CREATE TABLE IF NOT EXISTS guildsync_eso_members (
