@@ -28,7 +28,10 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const joinCoverage=`${missingJoins} of ${current.length} current members have no recorded join date. Import dates are excluded.`;
  add('longest-member','Longest membership with a known join date','Days since the latest recorded join. '+joinCoverage,'days',[...tenure].sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name)).slice(0,LEADERBOARD_LIMIT));
  add('newest-member','Newest recorded current members','Current ESO members with a recorded join. '+joinCoverage,'days',[...tenure].sort((a,b)=>a.value-b.value||b.detail.localeCompare(a.detail)||a.name.localeCompare(b.name)).slice(0,LEADERBOARD_LIMIT));
- const recordedActivity=activity.filter(r=>['post','reaction'].includes(r.activity_type)&&Number(r.activity_timestamp)>=now-30*86400&&Number(r.activity_timestamp)<=now);
+ // Show each actor's current server nickname; names recorded with the event are the fallback.
+ const currentNames=new Map(discordMembers.map(m=>[String(m.discord_id),m]));
+ const namedActivity=activity.map(r=>{const m=currentNames.get(String(r.discord_id));return m?{...r,server_nickname:m.server_nickname||r.server_nickname,global_name:m.global_name||r.global_name,username:m.username||r.username}:r;});
+ const recordedActivity=namedActivity.filter(r=>['post','reaction'].includes(r.activity_type)&&Number(r.activity_timestamp)>=now-30*86400&&Number(r.activity_timestamp)<=now);
  add('discord-busiest','Busiest Discord Users','Recorded posts plus emoji reactions given in the last 30 days. Bots excluded; offline or missed events are not backfilled.','actions',leaders(recordedActivity,r=>r.discord_id,r=>positive(r.activity_count)));
  add('discord-posts','Most Posts','New Discord posts recorded in the last 30 days; bots and system messages excluded.','posts',leaders(recordedActivity.filter(r=>r.activity_type==='post'),r=>r.discord_id,r=>positive(r.activity_count)));
  add('discord-reactions','Most Reactions Given','Emoji reactions given in the last 30 days, including likes. Each member/message/emoji counts once; removing a reaction does not subtract it.','reactions',leaders(recordedActivity.filter(r=>r.activity_type==='reaction'),r=>r.discord_id,r=>positive(r.activity_count)));
@@ -66,7 +69,7 @@ export function registerCommunityStatisticsSocket(socket, {
       const selections = [
         'account_name,in_roster FROM guildsync_roster_members',
         'account_name,event_type,event_timestamp FROM guildsync_roster_events',
-        'discord_id FROM discord_members',
+        'discord_id,username,global_name,server_nickname FROM discord_members',
         'discord_id,username,event_type,source FROM discord_member_history'
       ];
       const [roster, rosterEvents, discordMembers, discordHistory] = await Promise.all(

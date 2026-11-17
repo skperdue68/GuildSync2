@@ -1,5 +1,10 @@
 import {createHash} from 'node:crypto';
 
+// Server nickname first, then Discord display name, then username; the same order the backend labels use.
+function memberLabel(member, user) {
+  return member?.nickname || user?.globalName || member?.displayName || user?.username || user?.id;
+}
+
 // Count metadata only; do not read message bodies, attachments, or reaction values.
 function send(socket, guildId, user, displayName, type, identity, {log = console.warn} = {}) {
   if (!socket?.connected || !guildId || !user?.id || user.bot) return;
@@ -27,13 +32,13 @@ function send(socket, guildId, user, displayName, type, identity, {log = console
 
 export function recordDiscordPost(socket, message, guildId, options) {
   if (!message?.id || message.guildId !== guildId || message.system) return;
-  send(socket, guildId, message.author, message.member?.displayName, 'post', ['post', message.id], options);
+  send(socket, guildId, message.author, memberLabel(message.member, message.author), 'post', ['post', message.id], options);
 }
 
-export function recordDiscordReaction(socket, reaction, user, guildId, options) {
+export function recordDiscordReaction(socket, reaction, user, guildId, options, member = null) {
   const message = reaction?.message;
   const emoji = reaction?.emoji?.id || reaction?.emoji?.name;
   if (!message?.id || message.guildId !== guildId || !emoji) return;
   // One reaction per actor/message/emoji, even if Discord delivers it twice or it is re-added.
-  send(socket, guildId, user, null, 'reaction', ['reaction', message.id, user?.id, emoji], options);
+  send(socket, guildId, user, memberLabel(member, user), 'reaction', ['reaction', message.id, user?.id, emoji], options);
 }

@@ -20,6 +20,15 @@ test('reaction deduplication distinguishes actor and emoji but not delivery repe
  assert.notEqual(calls[0][1].eventKey,calls[2][1].eventKey);assert.notEqual(calls[0][1].eventKey,calls[3][1].eventKey);
  assert.equal(calls[0][1].userId,'123');assert.ok(!JSON.stringify(calls).includes('private'));
 });
+test('posts and reactions both prefer the server nickname, then the Discord display name',()=>{
+ const {calls,socket}=fixture();const named={...user,globalName:'Display Name'};
+ const member={displayName:'Display Name',nickname:'Server Nick'};
+ recordDiscordPost(socket,{...message,author:named,member},'789');
+ recordDiscordReaction(socket,{message,emoji:{name:'👍'}},named,'789',undefined,member);
+ recordDiscordReaction(socket,{message,emoji:{name:'👍'}},named,'789');
+ recordDiscordReaction(socket,{message,emoji:{name:'👍'}},user,'789',undefined,{displayName:'Actor'});
+ assert.deepEqual(calls.map(call=>call[1].displayName),['Server Nick','Server Nick','Display Name','Actor']);
+});
 test('bots, system posts, DMs, other guilds, and disconnected sockets are excluded',()=>{
  const {calls,socket}=fixture();
  for(const modified of [{author:{...user,bot:true}},{system:true},{guildId:null},{guildId:'999'}])recordDiscordPost(socket,{...message,...modified},'789');
