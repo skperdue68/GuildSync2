@@ -49,7 +49,7 @@ try {
     { body: [trader.data.toJSON()] }
   );
 
-  console.log('Slash commands registered successfully. Global /trader is available in servers and DMs.');
+  console.log('Slash commands registered successfully. /trader is registered in the guild and globally, so it works in server channels and DMs.');
 } catch (error) {
   console.error('Failed to register slash commands:');
   console.error(error);
