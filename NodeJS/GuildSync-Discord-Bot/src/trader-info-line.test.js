@@ -9,10 +9,26 @@ test('the info line stamps both times, so each reader sees them locally', () => 
   );
 });
 
-test('without a stored entry the line says so instead of stamping zero', () => {
+test('an empty trader entries table says nothing is stored', () => {
   assert.equal(
     traderInfoLine({ now: 100, latestEntryTime: 0 }),
     'As of <t:100:f> — no GuildSync trader info is stored yet.'
+  );
+});
+
+test('a missing timestamp is unknown, not an empty table', () => {
+  for (const missing of [undefined, null, '', 'not a time']) {
+    assert.equal(
+      traderInfoLine({ now: 100, latestEntryTime: missing }),
+      'As of <t:100:f> — the time of the most recent GuildSync info is unknown.',
+      `${String(missing)} is an older backend, not an empty table`
+    );
+  }
+
+  assert.equal(
+    traderInfoLine({ now: 100 }),
+    'As of <t:100:f> — the time of the most recent GuildSync info is unknown.',
+    'a payload without the field at all is unknown too'
   );
 });
 

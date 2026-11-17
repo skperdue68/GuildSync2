@@ -280,7 +280,7 @@ test('a receipt DM says how fresh the data is, then the images', async () => {
   assert.equal(sent[0].files.length, 1, 'the receipt still follows the line');
   assert.equal(sent[0].embeds, undefined);
 
-  assert.match(sent[1].content, /no GuildSync trader info is stored yet/, 'an unknown time is said plainly');
+  assert.match(sent[1].content, /the time of the most recent GuildSync info is unknown/, 'a notice without the field is not called empty');
 });
 
 test('the socket listener sends only the receipt image and deletes the temp file', async () => {

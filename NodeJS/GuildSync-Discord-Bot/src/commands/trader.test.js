@@ -152,7 +152,7 @@ test('/trader sales reports an item that has no entries', async () => {
   await execute(f.interaction, f.socket);
 
   assert.equal(f.replies[0].content.split('\n').at(-1), 'There are no sales entries for an item named dreugh wax.');
-  assert.match(f.replies[0].content, /^As of <t:\d+:f> — no GuildSync trader info is stored yet\./);
+  assert.match(f.replies[0].content, /^As of <t:\d+:f> — the time of the most recent GuildSync info is unknown\./);
   assert.equal(f.replies[0].files, undefined);
 });
 

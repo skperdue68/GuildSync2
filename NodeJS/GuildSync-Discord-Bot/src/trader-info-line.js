@@ -6,17 +6,32 @@ const stamp = (value) => {
   return seconds > 0 ? `<t:${seconds}:f>` : '';
 };
 
+// A backend that predates the feature sends no timestamp at all. That is not
+// the same as an empty table, so it gets its own answer instead of claiming
+// nothing is stored while sales are on screen.
+const hasLatest = (value) => value !== undefined
+  && value !== null
+  && String(value).trim() !== ''
+  && Number.isFinite(Number(value));
+
 /**
  * "As of <now> — most recent GuildSync info at <newest trader entry>."
  *
- * `latestEntryTime` is the newest event_timestamp in guildsync_trader_entries,
- * so the reader can judge how up to date the sales below it are.
+ * `latestEntryTime` is the newest event_timestamp in guildsync_trader_entries:
+ * a positive stamp is shown as a local time, a real zero means the table is
+ * empty, and a missing value means the sender did not say.
  */
-export function traderInfoLine({ now = Math.floor(Date.now() / 1000), latestEntryTime = 0 } = {}) {
+export function traderInfoLine({ now = Math.floor(Date.now() / 1000), latestEntryTime } = {}) {
   const asOf = stamp(now) || 'now';
-  const latest = stamp(latestEntryTime);
 
-  return latest
-    ? `As of ${asOf} — most recent GuildSync info at ${latest}.`
-    : `As of ${asOf} — no GuildSync trader info is stored yet.`;
+  if (!hasLatest(latestEntryTime)) {
+    return `As of ${asOf} — the time of the most recent GuildSync info is unknown.`;
+  }
+
+  const latest = Number(latestEntryTime);
+  if (latest <= 0) {
+    return `As of ${asOf} — no GuildSync trader info is stored yet.`;
+  }
+
+  return `As of ${asOf} — most recent GuildSync info at <t:${Math.round(latest)}:f>.`;
 }
