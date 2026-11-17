@@ -241,7 +241,7 @@ local function GST_EventPassesTraderFilter(event)
   return true
 end
 
-local function GST_BuildTradeEntry(event, guildId, guildName)
+local function GST_BuildTradeEntry(event, guildId, guildName, catchUp)
   local info = event:GetEventInfo() or {}
   local eventId = tonumber(event:GetEventId()) or tonumber(info.eventId)
 
@@ -258,6 +258,7 @@ local function GST_BuildTradeEntry(event, guildId, guildName)
     eventId = eventId,
     guildId = tostring(guildId),
     guildName = guildName,
+    catchUp = catchUp == true,
     time = tonumber(event:GetEventTimestampS()) or tonumber(info.timestampS),
     seller = GST_Trim(info.sellerDisplayName),
     buyer = GST_Trim(info.buyerDisplayName),
@@ -296,12 +297,12 @@ local function GST_PrintTradeEntry(source, entry)
   GST_Print(line)
 end
 
-local function GST_ProcessTradeEvent(event, shouldSave, guildId, guildName)
+local function GST_ProcessTradeEvent(event, shouldSave, guildId, guildName, catchUp)
   if not GST_EventPassesTraderFilter(event) then
     return false
   end
 
-  local entry = GST_BuildTradeEntry(event, guildId, guildName)
+  local entry = GST_BuildTradeEntry(event, guildId, guildName, catchUp)
 
   if not entry then
     return false
@@ -537,7 +538,7 @@ local function GST_CatchUpTraderHistory()
 
       seenCount = seenCount + 1
 
-      if GST_ProcessTradeEvent(event, true, guildId, guildName) then
+      if GST_ProcessTradeEvent(event, true, guildId, guildName, true) then
         savedCount = savedCount + 1
       end
     end,

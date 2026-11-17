@@ -74,7 +74,7 @@ test('trader insert dedupes by guild and event and derives unit price and net', 
     guildName: 'Example Guild',
     entries: [
       { eventId: 123, guildId: '761817', guildName: 'Example Guild', seller: '@Seller', buyer: '@Buyer', itemLink: 'link', itemId: 12345, itemName: 'Dreugh Wax', quantity: 10, price: 100000, tax: 7000, time: 1780000000 },
-      { eventId: 124, guildId: '761817', guildName: 'Example Guild', seller: '@Seller', buyer: '@Buyer', quantity: 1, price: 500, tax: 35, time: 1780000001 }
+      { eventId: 124, guildId: '761817', guildName: 'Example Guild', seller: '@Seller', buyer: '@Buyer', quantity: 1, price: 500, tax: 35, time: 1780000001, catchUp: true }
     ]
   };
 
@@ -85,6 +85,11 @@ test('trader insert dedupes by guild and event and derives unit price and net', 
   assert.equal(first.trader_entries_inserted, 2);
   assert.equal(retry.trader_entries_inserted, 0);
   assert.equal(retry.trader_entries_ignored, 2);
+  assert.equal(first.insertedEntries.length, 2);
+  assert.equal(first.insertedEntries[0].catchUp, false);
+  assert.equal(first.insertedEntries[1].catchUp, true);
+  assert.equal(first.insertedEntries[0].net, 93000);
+  assert.equal(retry.insertedEntries.length, 0);
   assert.equal(calls[0][3], 'EU Megaserver');
   assert.equal(calls[0][5], '@Seller', 'stored seller original');
   assert.equal(calls[0][7], '@Buyer', 'stored buyer original');

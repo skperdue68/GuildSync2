@@ -136,16 +136,18 @@ export async function StopGuildSyncFileWatcher() {
 
 export async function GetGuildSyncFileWatcherStatus() {
   // The web client has no SavedVariables watcher. The list mirrors the desktop
-  // client's three files so the profile menu can name them for web users, and
-  // every entry says the desktop client is what watches them.
+  // client's four files so the profile menu can name them for web users, and
+  // every entry is read-only because only the desktop client can watch them.
   const filePath = 'Desktop client only. Drop this file onto the GuildSync web window to upload it.';
   return {
     watching: false,
+    read_only: true,
     directory: 'Web upload mode',
     files: [
       { key: 'banking', fileName: 'GuildSyncBanking.lua', enabled: true, filePath },
       { key: 'roster', fileName: 'GuildSyncRoster.lua', enabled: true, filePath },
-      { key: 'applications', fileName: 'GuildSyncApplications.lua', enabled: true, filePath }
+      { key: 'applications', fileName: 'GuildSyncApplications.lua', enabled: true, filePath },
+      { key: 'trader', fileName: 'GuildSyncTrader.lua', enabled: true, filePath }
     ]
   };
 }

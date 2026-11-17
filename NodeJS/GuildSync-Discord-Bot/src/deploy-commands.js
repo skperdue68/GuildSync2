@@ -4,6 +4,7 @@ import { REST, Routes } from 'discord.js';
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
 import * as tickets from './commands/tickets.js';
+import * as sales from './commands/sales.js';
 import { createGsaCommandData, createGsrCommandData, createGsrAliasCommandData } from './commands/gsa-raffle.js';
 
 const commands = [
@@ -36,7 +37,14 @@ try {
     { body: commands }
   );
 
-  console.log('Slash commands registered successfully.');
+  // Register /sales globally so it also works in DMs. Existing guild commands
+  // stay guild-scoped and keep appearing immediately after deployment.
+  await rest.put(
+    Routes.applicationCommands(DISCORD_CLIENT_ID),
+    { body: [sales.data.toJSON()] }
+  );
+
+  console.log('Slash commands registered successfully. Global /sales is available in servers and DMs.');
 } catch (error) {
   console.error('Failed to register slash commands:');
   console.error(error);

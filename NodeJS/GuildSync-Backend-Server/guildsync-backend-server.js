@@ -1,4 +1,5 @@
 import {createEsoAccountRenames,registerEsoAccountRenameSocket} from './eso-account-identity.js';
+import {registerTraderSalesSubscriptionSocket, planTraderSaleNotices} from './trader-sales-subscriptions.js';
 import {createUserSwitches,initializeUserSwitchSchema,registerUserSwitchSocket,registerUserSwitchGuard} from './user-switch.js';
 import {registerApplicationHistorySocket} from './application-history.js';
 import {createRosterNoteAccess} from './roster-note-access.js';
@@ -406,7 +407,7 @@ app.post('/api/guildsync/upload-savedvars/:kind', requireGuildSyncWebUser, async
     if (kind === 'trader') {
       const data = parseGuildSyncTraderSavedVarsLua(rawLuaText);
       validateEsoGuildImport('trader', data);
-      const result = await insertTraderEntries(applicationDB, {
+      const { insertedEntries, ...result } = await insertTraderEntries(applicationDB, {
         source: data.table_name || 'GuildSyncTrader',
         uploadedBy: req.guildSyncUser.display_name || req.guildSyncUser.username || req.guildSyncUser.sub,
         world: data.world || null,
@@ -414,6 +415,8 @@ app.post('/api/guildsync/upload-savedvars/:kind', requireGuildSyncWebUser, async
         guildName: data.guildName || null,
         entries: data.entries || []
       });
+
+      void notifyTraderSaleSubscribers(insertedEntries);
 
       return res.json({
         ok: true,
@@ -647,6 +650,7 @@ function registerGuildSyncConnection(socket) {
       await Promise.allSettled([broadcastRosterDataUpdate(),broadcastMemberLinksUpdate(),broadcastBankingDataUpdate()]);
     }
   });
+  registerTraderSalesSubscriptionSocket(socket,{db:applicationDB});
   registerRolePermissions(socket,loginDB,roleViews,{authorizeUserSwitch:async current=>{
     if(!current.guildSyncAuthenticated||current.guildSyncAuthType!=='GuildSync user')return false;
     return userSwitches.authorize(current.guildSyncActorId);
@@ -1542,7 +1546,7 @@ function registerGuildSyncConnection(socket) {
         `Trader data received from ${authenticatedUsername || 'unknown user'}${fileName ? ` for ${fileName}` : ''}. Sales: ${entries.length}.`
       );
 
-      const result = await insertTraderEntries(applicationDB, {
+      const { insertedEntries, ...result } = await insertTraderEntries(applicationDB, {
         source: dataSource,
         uploadedBy: authenticatedUsername,
         world: data?.world || null,
@@ -1550,6 +1554,8 @@ function registerGuildSyncConnection(socket) {
         guildName: data?.guildName || null,
         entries
       });
+
+      void notifyTraderSaleSubscribers(insertedEntries);
 
       sendSocketResponse(socket, 'guildsync:trader-data-result', callback, {
         ok: true,
@@ -2856,6 +2862,26 @@ function registerGuildSyncConnection(socket) {
 
     Log(`Disconnected: ${socket.id} => ${name} ${reason}`);
   });
+}
+
+async function notifyTraderSaleSubscribers(entries = []) {
+  try {
+    if (!entries.length) return;
+
+    const notices = await planTraderSaleNotices(applicationDB, entries);
+    if (!notices.length) return;
+
+    const botSocket = discordBotSocketId ? io.sockets.sockets.get(discordBotSocketId) : null;
+    if (!botSocket?.connected) {
+      Log(`Trader sales: ${notices.length} notification(s) skipped because the Discord bot is offline.`);
+      return;
+    }
+
+    for (const notice of notices) botSocket.emit('guildsync:trader-sale-notice', notice);
+    Log(`Trader sales: sent ${notices.length} Discord notification(s).`);
+  } catch (error) {
+    Log(`Trader sale notifications failed: ${error.message}`);
+  }
 }
 
 server.listen(PORT, HOST, () => {

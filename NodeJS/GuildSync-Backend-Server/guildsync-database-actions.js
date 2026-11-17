@@ -7,6 +7,7 @@ import { notifyDiscordConfirmedLink } from './discord-onboarding.js';
 import {validateEsoGuildImport} from './eso-guild-origin.js';
 import { normalizeRaffleDate } from './raffle-date.js';
 import { initializeDiscordOnboardingSchema } from './discord-onboarding-schema.js';
+import { initializeTraderSalesSubscriptions } from './trader-sales-subscriptions.js';
 import { initializeVoiceMuteSchema } from './voice-mute-schema.js';
 import { ARCHIVE_CELLS_SCHEMA } from './raffle-archive-cells.js';
 import { RAFFLE_RESULTS_SCHEMA, RAFFLE_FORMULAS_SCHEMA } from './raffle-results.js';
@@ -656,6 +657,7 @@ async function initializeSchema(db) {
     COLLATE utf8mb4_unicode_ci
   `);
 
+  await initializeTraderSalesSubscriptions(db);
   await initializeEsoAccountIdentity(db);
 }
 
@@ -4131,6 +4133,7 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
 
   const connection = await applicationDB.getConnection();
   let insertedCount = 0;
+  const insertedEntries = [];
 
   try {
     await connection.beginTransaction();
@@ -4151,6 +4154,7 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
       const tax = Number(entry.tax) || 0;
       const net = entry.net === undefined || entry.net === null ? price - tax : Number(entry.net) || 0;
       const eventTimestamp = Number(entry.time ?? entry.eventTimestamp ?? entry.event_timestamp);
+      const catchUp = entry.catchUp === true || entry.catchUp === 1 || String(entry.catchUp ?? '').toLowerCase() === 'true';
 
       if (!eventId || !guildId || !Number.isFinite(eventTimestamp) || eventTimestamp <= 0) {
         continue;
@@ -4204,7 +4208,25 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
         ]
       );
 
-      insertedCount += result.affectedRows || 0;
+      if ((result.affectedRows || 0) > 0) {
+        insertedCount += 1;
+        insertedEntries.push({
+          eventId: Number(eventId),
+          guildId,
+          guildName,
+          world,
+          seller,
+          buyer,
+          itemName,
+          quantity,
+          price,
+          unitPrice,
+          tax,
+          net,
+          time: eventTimestamp,
+          catchUp
+        });
+      }
     }
 
     await connection.commit();
@@ -4218,7 +4240,8 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
   return {
     trader_entries_received: entries.length,
     trader_entries_inserted: insertedCount,
-    trader_entries_ignored: entries.length - insertedCount
+    trader_entries_ignored: entries.length - insertedCount,
+    insertedEntries
   };
 }
 

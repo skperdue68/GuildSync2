@@ -9019,6 +9019,7 @@ function renderProfileFileWatcherSection(status = guildSyncFileWatcherStatus) {
   const files = Array.isArray(status?.files) ? status.files : [];
   const directory = String(status?.directory || '').trim();
   const watching = Boolean(status?.watching);
+  const readOnly = status?.read_only === true;
 
   if (files.length === 0) {
     return `
@@ -9040,16 +9041,16 @@ function renderProfileFileWatcherSection(status = guildSyncFileWatcherStatus) {
           <label class="profile-filewatch-item ${enabled ? 'enabled' : 'disabled'}" title="${escapeAttribute(filePath)}">
             <span class="profile-filewatch-main">
               <span class="profile-filewatch-name">${escapeHtml(fileName)}</span>
-              <span class="profile-filewatch-state">${active ? 'Watching' : enabled ? 'On' : 'Off'}</span>
+              <span class="profile-filewatch-state">${readOnly ? 'Desktop only' : active ? 'Watching' : enabled ? 'On' : 'Off'}</span>
             </span>
-            <input
+            ${readOnly ? '' : `<input
               id="${escapeAttribute(toggleID)}"
               class="profile-filewatch-toggle"
               type="checkbox"
               data-filewatch-key="${escapeAttribute(key)}"
               ${enabled ? 'checked' : ''}
               aria-label="Turn file watch ${enabled ? 'off' : 'on'} for ${escapeAttribute(fileName)}"
-            />
+            />`}
           </label>
         `;
   }).join('')}
