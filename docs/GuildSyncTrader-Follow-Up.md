@@ -35,6 +35,9 @@ GuildSyncBanking is untouched.
 
 `/trader on` and `/trader off` are global Discord commands, so they work in the guild and in DMs;
 `/trader register` and `/trader unregister` are accepted as aliases for the same two actions.
+`/trader sales <item>` searches the linked account's own sales for any part of an item name (spaces
+allowed) and answers with the same receipt, or `There are no sales entries for an item named <item>.`
+It replies privately to the caller and never enters the DM queue.
 `/trader test` sends the same receipt straight away for the newest stored sales of the linked account
 and ignores the subscription cutoff below, so the DM can be checked without waiting for a live sale.
 It is a temporary testing aid and can be removed once the trader path is settled. Run the

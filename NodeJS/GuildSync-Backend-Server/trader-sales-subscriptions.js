@@ -200,14 +200,13 @@ const TEST_SALE_LIMIT = 50;
 // /trader test replays the newest sales already stored for the linked account so
 // the DM can be checked without waiting for a live sale. It deliberately skips
 // the subscription cutoff that hides sales older than /trader on.
-export async function loadTraderSalesForTest(db, discordUserId, { limit = TEST_SALE_LIMIT } = {}) {
-  const id = normalizeUserId(discordUserId);
-  if (!id) return { sales: [], names: [] };
+const saleColumns = 'event_id, guild_name, world, seller, buyer, item_name, quantity, price, unit_price, tax, net, event_timestamp';
 
-  const linkedNames = await getLinkedEsoNames(db, id);
-  if (!linkedNames.length) return { sales: [], names: [] };
-
+// Every name and rename the linked account is known by, so a sale recorded
+// before a rename still matches.
+async function linkedSaleKeys(db, linkedNames) {
   const keys = new Set();
+
   for (const name of linkedNames) {
     for (const alias of await loadEsoAccountAliases(db, name)) {
       const key = String(alias || '').trim().replace(/^@+/, '').toLowerCase();
@@ -215,9 +214,21 @@ export async function loadTraderSalesForTest(db, discordUserId, { limit = TEST_S
     }
   }
 
-  if (!keys.size) return { sales: [], names: linkedNames };
+  return [...keys];
+}
 
-  const list = [...keys];
+const escapeLike = (value) => String(value ?? '').replace(/[\\%_]/g, (char) => `\\${char}`);
+
+export async function loadTraderSalesForTest(db, discordUserId, { limit = TEST_SALE_LIMIT } = {}) {
+  const id = normalizeUserId(discordUserId);
+  if (!id) return { sales: [], names: [] };
+
+  const linkedNames = await getLinkedEsoNames(db, id);
+  if (!linkedNames.length) return { sales: [], names: [] };
+
+  const list = await linkedSaleKeys(db, linkedNames);
+  if (!list.length) return { sales: [], names: linkedNames };
+
   const placeholders = list.map(() => '?').join(',');
   const [rows] = await db.execute(
     `SELECT event_id, guild_name, world, seller, buyer, item_name, quantity, price, unit_price, tax, net, event_timestamp
@@ -257,6 +268,37 @@ export function buildTraderTestNotice(discordUserId, sales = []) {
   return groupTraderSaleNotices(sales, () => subscribers)[0] || null;
 }
 
+// /trader sales <part of an item name> returns the linked account's own sales of
+// every matching item, newest first, for a receipt of that item's history.
+export async function searchTraderSales(db, discordUserId, itemQuery, { limit = TEST_SALE_LIMIT } = {}) {
+  const id = normalizeUserId(discordUserId);
+  const term = String(itemQuery ?? '').trim();
+  if (!id || !term) return { sales: [], names: [] };
+
+  const linkedNames = await getLinkedEsoNames(db, id);
+  if (!linkedNames.length) return { sales: [], names: [] };
+
+  const list = await linkedSaleKeys(db, linkedNames);
+  if (!list.length) return { sales: [], names: linkedNames };
+
+  const placeholders = list.map(() => '?').join(',');
+  const [rows] = await db.execute(
+    `SELECT ${saleColumns}
+       FROM guildsync_trader_entries
+      WHERE (LOWER(TRIM(LEADING '@' FROM seller)) IN (${placeholders})
+          OR LOWER(TRIM(LEADING '@' FROM seller_original)) IN (${placeholders}))
+        AND item_name LIKE ?
+      ORDER BY event_timestamp DESC
+      LIMIT ${Number(limit) || TEST_SALE_LIMIT}`,
+    [...list, ...list, `%${escapeLike(term)}%`]
+  );
+
+  return {
+    names: linkedNames,
+    sales: (Array.isArray(rows) ? rows : []).map((row) => saleForNotice(row))
+  };
+}
+
 export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
   socket.on('guildsync:trader-sales-subscription', async (payload = {}, callback) => {
     const reply = (response) => {
@@ -285,6 +327,23 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
           eso_account_name: linked[0] || null,
           ...(await getTraderSalesSubscription(db, discordUserId))
         });
+        return;
+      }
+
+      if (action === 'sales') {
+        const item = String(payload?.item || '').trim();
+        if (!item) {
+          reply({ ok: false, message: 'Include part of an item name.' });
+          return;
+        }
+
+        const { sales, names } = await searchTraderSales(db, discordUserId, item);
+        if (!names.length) {
+          reply({ ok: false, linked: false });
+          return;
+        }
+
+        reply({ ok: true, linked: true, eso_account_name: names[0], item, sales });
         return;
       }
 

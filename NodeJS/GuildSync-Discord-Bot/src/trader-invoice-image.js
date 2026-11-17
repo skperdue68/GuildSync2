@@ -19,6 +19,7 @@ const CONGRATS_LINE_H = 24;
 const META_H = 62;
 const TABLE_HEADER_H = 34;
 const SECTION_H = 26;
+const TIME_COLUMN_W = 132;
 const MAX_INVOICE_ROWS = 16;
 
 const C = {
@@ -91,6 +92,18 @@ function traderSaleDate(seconds) {
     hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC'
   });
   return `${date}, ${time} UTC`;
+}
+
+// A row-sized stamp for multi-sale receipts, in the bot host's local time so a
+// row reads like the moment the item sold rather than a UTC conversion.
+function shortSaleDate(seconds) {
+  const value = num(seconds);
+  if (value <= 0) return '';
+
+  const when = new Date(value * 1000);
+  const date = when.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  const time = when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${date} · ${time}`;
 }
 
 // Buyers are grouped alphabetically and each buyer's sales are ordered by time,
@@ -275,8 +288,10 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   const headerY = tableTop + 22;
   ctx.font = font(700, 11);
   ctx.fillStyle = C.muted;
+  const itemX = single ? INNER_X + 16 : INNER_X + 16 + TIME_COLUMN_W;
   ctx.textAlign = 'left';
-  ctx.fillText('ITEM', INNER_X + 16, headerY);
+  ctx.fillText(single ? 'ITEM' : 'SOLD', INNER_X + 16, headerY);
+  if (!single) ctx.fillText('ITEM', itemX, headerY);
   ctx.textAlign = 'right';
   ctx.fillText('QTY', colQty, headerY);
   ctx.fillText('UNIT', colUnit, headerY);
@@ -304,9 +319,14 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
     const textY = cursor + rowH / 2 + 5;
 
     ctx.textAlign = 'left';
-    ctx.font = font(500, 15);
+    if (!single) {
+      ctx.font = font(500, 13);
+      ctx.fillStyle = C.muted;
+      ctx.fillText(clipLine(ctx, shortSaleDate(sale.time), TIME_COLUMN_W - 14), INNER_X + 16, textY);
+    }
+    ctx.font = font(500, single ? 15 : 14);
     ctx.fillStyle = C.ink;
-    ctx.fillText(clipLine(ctx, sale.itemName || 'Item', colQty - 60 - (INNER_X + 16)), INNER_X + 16, textY);
+    ctx.fillText(clipLine(ctx, sale.itemName || 'Item', colQty - 60 - itemX), itemX, textY);
 
     ctx.textAlign = 'right';
     ctx.fillStyle = C.ink;

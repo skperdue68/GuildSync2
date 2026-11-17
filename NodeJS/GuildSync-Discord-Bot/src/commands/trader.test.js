@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { data, execute, LINK_REQUIRED_MESSAGE } from './trader.js';
 
-function fixture({ response, option = 'on', connected = true } = {}) {
+function fixture({ response, option = 'on', connected = true, item = null } = {}) {
   const replies = [];
   const calls = [];
   const interaction = {
     user: { id: '42' },
     guildId: null,
-    options: { getSubcommand: () => option },
+    options: {
+      getSubcommand: () => option,
+      getString: (name) => (name === 'item' ? item : null)
+    },
     async deferReply() {},
     async editReply(payload) { replies.push(payload); }
   };
@@ -23,11 +26,14 @@ function fixture({ response, option = 'on', connected = true } = {}) {
   return { interaction, socket, replies, calls };
 }
 
-test('the global /trader command exposes on, register, off, unregister and test', () => {
+test('the global /trader command exposes on, register, off, unregister, sales and test', () => {
   assert.equal(data.name, 'trader');
-  assert.deepEqual(data.options.map((option) => option.name), ['on', 'register', 'off', 'unregister', 'test']);
+  assert.deepEqual(data.options.map((option) => option.name), ['on', 'register', 'off', 'unregister', 'sales', 'test']);
   assert.equal(data.dm_permission, true);
-  assert.ok(!JSON.stringify(data.toJSON()).includes('"sales"'), 'the retired /sales command is gone');
+  assert.ok(
+    JSON.stringify(data.toJSON()).includes('"name":"sales"'),
+    'the retired /sales command survives only as a /trader subcommand'
+  );
 });
 
 test('register and unregister map onto the on/off subscription actions', async () => {
@@ -79,6 +85,47 @@ test('a test with nothing stored or no link explains why no DM arrived', async (
   const unlinked = fixture({ response: { ok: false, linked: false }, option: 'test' });
   await execute(unlinked.interaction, unlinked.socket);
   assert.equal(unlinked.replies[0].content, LINK_REQUIRED_MESSAGE);
+});
+
+const soldSale = {
+  eventId: 501,
+  guildName: 'Alphabet Mafia',
+  world: 'NA Megaserver',
+  seller: '@Seller',
+  buyer: 'random8642',
+  itemName: 'Soul Gem',
+  quantity: 1,
+  price: 15,
+  unitPrice: 15,
+  tax: 0,
+  net: 15,
+  time: 1794910515
+};
+
+test('/trader sales sends the partial item name and returns a receipt image', async () => {
+  const f = fixture({
+    option: 'sales',
+    item: 'soul gem',
+    response: { ok: true, linked: true, eso_account_name: '@Seller', sales: [soldSale] }
+  });
+  await execute(f.interaction, f.socket);
+
+  assert.deepEqual(f.calls[0].payload, { discord_user_id: '42', action: 'sales', item: 'soul gem' });
+  assert.match(f.replies[0].content, /1 sale matching “soul gem”/);
+  assert.equal(f.replies[0].files.length, 1);
+  assert.equal(f.replies[0].files[0].name, 'trader-sales-receipt.png');
+});
+
+test('/trader sales reports an item that has no entries', async () => {
+  const f = fixture({
+    option: 'sales',
+    item: 'dreugh wax',
+    response: { ok: true, linked: true, eso_account_name: '@Seller', sales: [] }
+  });
+  await execute(f.interaction, f.socket);
+
+  assert.equal(f.replies[0].content, 'There are no sales entries for an item named dreugh wax.');
+  assert.equal(f.replies[0].files, undefined);
 });
 
 test('a disconnected GuildSync backend is reported instead of crashing', async () => {

@@ -1,5 +1,6 @@
-import { SlashCommandBuilder, MessageFlags } from 'discord.js';
+import { AttachmentBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { Log } from '../helper.js';
+import { TRADER_INVOICE_FILE_NAME, renderTraderInvoiceImage } from '../trader-invoice-image.js';
 
 export const LINK_REQUIRED_MESSAGE = [
   'I cannot send trader sale invoices until your Discord account is linked to an ESO account.',
@@ -25,12 +26,20 @@ export const data = new SlashCommandBuilder()
     .setName('unregister')
     .setDescription('Same as /trader off: stop sending me trader sale invoices.'))
   .addSubcommand((subcommand) => subcommand
+    .setName('sales')
+    .setDescription('Show every trader sale of an item.')
+    .addStringOption((option) => option
+      .setName('item')
+      .setDescription('Any part of the item name, spaces allowed.')
+      .setRequired(true)
+      .setMaxLength(100)))
+  .addSubcommand((subcommand) => subcommand
     .setName('test')
     .setDescription('Temporary: DM me a receipt for my newest stored trader sales.'))
   .setDMPermission(true);
 
 // register/unregister are aliases so either wording works.
-const ACTION_BY_OPTION = { on: 'on', register: 'on', off: 'off', unregister: 'off', test: 'test' };
+const ACTION_BY_OPTION = { on: 'on', register: 'on', off: 'off', unregister: 'off', sales: 'sales', test: 'test' };
 
 function request(socket, payload) {
   return new Promise((resolve, reject) => {
@@ -52,13 +61,17 @@ function request(socket, payload) {
 export async function execute(interaction, guildSyncSocket, log = Log) {
   const option = interaction.options.getSubcommand(true);
   const action = ACTION_BY_OPTION[option];
+  const item = action === 'sales'
+    ? String(interaction.options.getString('item') || '').trim()
+    : '';
 
   await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
   try {
     const response = await request(guildSyncSocket, {
       discord_user_id: interaction.user?.id,
-      action
+      action,
+      ...(item ? { item } : {})
     });
 
     if (!response?.ok) {
@@ -66,6 +79,28 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
         ? LINK_REQUIRED_MESSAGE
         : response?.message || 'Could not update trader sale invoices.';
       await interaction.editReply({ content, allowedMentions: { parse: [] } });
+      return;
+    }
+
+    if (action === 'sales') {
+      const sales = Array.isArray(response.sales) ? response.sales.filter(Boolean) : [];
+
+      if (!sales.length) {
+        await interaction.editReply({
+          content: `There are no sales entries for an item named ${item}.`,
+          allowedMentions: { parse: [] }
+        });
+        return;
+      }
+
+      const png = await renderTraderInvoiceImage({ sales, kind: sales.length === 1 ? 'sale' : 'invoice' });
+      await interaction.editReply({
+        content: `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`,
+        files: [new AttachmentBuilder(png, { name: TRADER_INVOICE_FILE_NAME })],
+        allowedMentions: { parse: [] }
+      });
+
+      log(`Trader sales search for “${item}” returned ${sales.length} sale(s) for Discord user ${interaction.user?.id || 'unknown'}.`);
       return;
     }
 
