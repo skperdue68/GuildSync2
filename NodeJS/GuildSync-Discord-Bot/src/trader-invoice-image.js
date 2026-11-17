@@ -1,9 +1,12 @@
 import { createCanvas } from '@napi-rs/canvas';
 
-// The DM invoice is rendered as a PNG so Discord shows a single, tidy document
+// The DM receipt is rendered as a PNG so Discord shows a single, tidy document
 // instead of a wall of embed fields.
-export const TRADER_INVOICE_FILE_NAME = 'trader-invoice.png';
+export const TRADER_INVOICE_FILE_NAME = 'trader-sales-receipt.png';
 
+// Drawn at 2x so the receipt stays sharp when opened full size. Discord still
+// shows its own modest preview inline; the extra pixels are for the zoomed view.
+const SCALE = 2;
 const WIDTH = 960;
 const CARD_X = 24;
 const CARD_W = WIDTH - CARD_X * 2;
@@ -181,13 +184,13 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   const bodyHeight = itemRowCount * rowH + sectionCount * SECTION_H + (hidden ? 26 : 0);
   const rowsBottom = rowsTop + bodyHeight;
   const totalsTop = rowsBottom + 18;
-  const mathTop = totalsTop + TOTALS_ROW_H * 3 + 16;
-  const footerRule = mathTop + 36;
+  const footerRule = totalsTop + TOTALS_ROW_H * 3 + 30;
   const footerBaseline = footerRule + 26;
   const height = footerBaseline + 28;
 
-  const canvas = createCanvas(WIDTH, height);
+  const canvas = createCanvas(WIDTH * SCALE, height * SCALE);
   const ctx = canvas.getContext('2d');
+  ctx.scale(SCALE, SCALE);
 
   ctx.fillStyle = C.backdrop;
   ctx.fillRect(0, 0, WIDTH, height);
@@ -221,7 +224,7 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
 
   ctx.font = font(700, 27);
   ctx.fillStyle = C.white;
-  ctx.fillText(single ? 'TRADER SALE INVOICE' : 'TRADER SALES INVOICE', INNER_X, bandTop + 80);
+  ctx.fillText('TRADER SALES RECEIPT', INNER_X, bandTop + 80);
 
   ctx.textAlign = 'right';
   ctx.font = font(600, 11);
@@ -369,16 +372,6 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
     ctx.textAlign = 'left';
     ctx.fillText(clipLine(ctx, `Paid to ${first.seller}`, RIGHT - 320 - INNER_X), INNER_X, netY);
   }
-
-  // The arithmetic behind the net figure
-  const math = single
-    ? `${num(first.quantity)} × ${gold(first.unitPrice)} = ${gold(gross)} − ${gold(tax)} tax = ${gold(net)} net profit`
-    : `${num(quantity)} items across ${list.length} sales: ${gold(gross)} − ${gold(tax)} tax = ${gold(net)} net profit`;
-
-  ctx.font = font(500, 12.5);
-  ctx.fillStyle = C.muted;
-  ctx.textAlign = 'right';
-  ctx.fillText(clipLine(ctx, math, INNER_W), RIGHT, mathTop + 8);
 
   // Footer
   ctx.strokeStyle = C.rule;

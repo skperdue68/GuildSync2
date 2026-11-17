@@ -43,16 +43,17 @@ to link the account and who to contact for help. Subscriptions live in
 when each sale is sent, so renames and re-links keep working.
 
 Trader data arrives as one SavedVars batch, so each subscriber gets at most one DM per import. Every
-DM is a short congratulations caption (guild, item or sale count, and the arithmetic
-`unit × quantity − tax = net`) with the full invoice attached as a rendered PNG
-(`trader-invoice.png`): date, transaction ID, buyer, item, quantity, unit price, amount, subtotal, tax
-and net payout. The bot writes that PNG to the OS temp directory, attaches it with `attachment://`,
-and deletes the file as soon as Discord has the message. Notices are queued instead of sent in a
+DM is the receipt image alone (`trader-sales-receipt.png`, headed **TRADER SALES RECEIPT**) with no
+caption text beside it: date, transaction ID, buyer, item, quantity, unit price, amount, subtotal,
+tax and net payout, plus the guild name and NET PAYOUT total in the header band. The PNG is drawn at
+2× resolution, so the inline preview stays modest while opening the image shows a full-size, sharp
+receipt. The bot writes that PNG to the OS temp directory, attaches it with `attachment://`, and
+deletes the file as soon as Discord has the message. Notices are queued instead of sent in a
 burst: about two seconds between DMs, then a one to two minute pause after every five, so a
 catch-up import is never mistaken for spam. If rendering fails, the DM falls back to a
 details embed carrying every field (and, for several sales, the buyer-grouped item list), so the
 information is never lost. Two or more matching sales become one
-combined invoice, grouped by buyer and then by sale time, with one row per item and a grand total for
+combined receipt, grouped by buyer and then by sale time, with one row per item and a grand total for
 sales, quantity, gross, tax and net. This applies to live uploads and `/gst catchup` alike. Sales
 older than the subscription are skipped, so enabling notifications never floods someone with old
 history.

@@ -94,8 +94,8 @@ export async function writeTraderInvoiceTempImage(png) {
   };
 }
 
-// The attached invoice image carries the details, so the DM itself stays a
-// short caption plus the arithmetic behind the net payout.
+// The attached receipt image carries the details, so these embeds are only the
+// fallback used when the image cannot be rendered.
 export function buildTraderSaleEmbed(sale = {}) {
   const quantity = Number(sale.quantity) || 0;
   const gross = Number(sale.price) || 0;
@@ -104,7 +104,7 @@ export function buildTraderSaleEmbed(sale = {}) {
 
   return {
     color: 0x2f855a,
-    title: 'Trader sale complete',
+    title: 'Trader sale receipt',
     description: [
       `**Congratulations!** You sold **${sale.itemName || 'an item'}** on your **${guildLabel(sale)}** Trader.`,
       `${quantity} × ${gold(sale.unitPrice)} = ${gold(gross)} − ${gold(tax)} tax = **${gold(net)}** net profit`
@@ -142,7 +142,7 @@ export function buildTraderInvoiceEmbed(sales = []) {
 
   return {
     color: 0x2f855a,
-    title: 'Trader sales invoice',
+    title: 'Trader sales receipt',
     description: [
       `**Congratulations!** You made **${list.length}** sale${list.length === 1 ? '' : 's'} on your **${guildLabel(list[0])}** Trader.`,
       `${quantity} item${quantity === 1 ? '' : 's'} across ${list.length} sale${list.length === 1 ? '' : 's'}: ${gold(gross)} − ${gold(tax)} tax = **${gold(net)}** net profit`
@@ -218,13 +218,10 @@ export function startTraderSaleNotifications(client, socket, log = console.log, 
         const png = await renderInvoiceImage({ sales, kind });
         tempImage = await writeTraderInvoiceTempImage(png);
 
-        const embed = kind === 'invoice' ? buildTraderInvoiceEmbed(sales) : buildTraderSaleEmbed(sales[0]);
-        embed.image = { url: `attachment://${TRADER_INVOICE_FILE_NAME}` };
-
-        message.embeds = [embed];
+        // The receipt carries every detail, so the DM itself is just the image.
         message.files = [new AttachmentBuilder(tempImage.path, {
           name: TRADER_INVOICE_FILE_NAME,
-          description: 'GuildSync trader sale invoice'
+          description: 'GuildSync trader sales receipt'
         })];
       } catch (imageError) {
         log(`Trader invoice image failed for ${discordUserId}: ${imageError.message}. Sending the details embed instead.`);
