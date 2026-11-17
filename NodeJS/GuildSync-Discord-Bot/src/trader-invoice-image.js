@@ -184,7 +184,7 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   const paidBaseline = rowsBottom + 34;
   const footerRule = rowsBottom + 60;
   const footerBaseline = footerRule + 26;
-  const height = footerBaseline + 30;
+  const height = footerBaseline + 96;
 
   const canvas = createCanvas(WIDTH * SCALE, height * SCALE);
   const ctx = canvas.getContext('2d');
@@ -347,22 +347,42 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   ctx.font = font(500, 12);
   ctx.fillStyle = C.muted;
   ctx.textAlign = 'left';
-  // The bottom line is the quick view: guild, sales total, guild tax, net profit.
-  const summary = [
-    'GuildSync',
-    guildName,
-    `${gold(gross)} sales`,
-    `${gold(tax)} guild tax`,
-    `${gold(net)} net`
-  ].join(' · ');
-  ctx.fillText(clipLine(ctx, summary, INNER_W - 260), INNER_X, footerBaseline);
-
-  ctx.textAlign = 'right';
+  ctx.fillText(clipLine(ctx, ['GuildSync', guildName].filter(Boolean).join(' · '), INNER_W - 380), INNER_X, footerBaseline);
   ctx.fillText(
     single ? `Transaction #${first.eventId || 'unknown'}` : `${list.length} sales · ${groups.length} buyers`,
-    RIGHT,
-    footerBaseline
+    INNER_X,
+    footerBaseline + 20
   );
+
+  // The totals sit at the bottom right, one amount under the other the way the
+  // arithmetic would be written: gross, less the guild tax, then the net.
+  const totalsLabelRight = RIGHT - 160;
+  const totalRows = [
+    { label: 'Gross sales', value: gold(gross), color: C.ink, size: 13, weight: 600 },
+    { label: 'Guild tax', value: tax > 0 ? `−${gold(tax)}` : gold(0), color: C.ink, size: 13, weight: 600 },
+    { label: 'Net profit', value: gold(net), color: C.band, size: 16, weight: 700 }
+  ];
+
+  totalRows.forEach((row, index) => {
+    const y = footerBaseline + index * 22;
+
+    ctx.textAlign = 'right';
+    ctx.font = font(500, 12);
+    ctx.fillStyle = C.muted;
+    ctx.fillText(row.label, totalsLabelRight, y);
+
+    ctx.font = font(row.weight, row.size);
+    ctx.fillStyle = row.color;
+    ctx.fillText(row.value, RIGHT, y);
+
+    if (index === 1) {
+      ctx.strokeStyle = C.rule;
+      ctx.beginPath();
+      ctx.moveTo(RIGHT - 340, y + 9);
+      ctx.lineTo(RIGHT, y + 9);
+      ctx.stroke();
+    }
+  });
 
   return canvas.encode('png');
 }
