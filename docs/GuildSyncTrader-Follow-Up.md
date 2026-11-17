@@ -20,6 +20,9 @@ GuildSyncBanking is untouched.
    `(guild_id, event_id)`.
 4. `/gst guild <name or ESO guild ID>` no longer blocks while rows are pending. Rows carry their own
    `guildId` / `guildName`, so a switch cannot mix guilds and per-guild checkpoints stay separate.
+5. ESO account renames propagate to trader rows: `seller` is a primary identity reference and `buyer`
+   a secondary one, with the imported name preserved in `seller_original` / `buyer_original`. Renamed
+   members keep their sale history on both sides.
 
 ## Table
 
@@ -34,6 +37,9 @@ GuildSyncBanking is untouched.
   and per-guild checkpoints.
 - `GO/GuildSync-Frontend-Client/trader_export_test.go` covers world/legacy profiles and commit cleanup.
 - `NodeJS/GuildSync-Backend-Server/trader-import.test.js` covers SavedVars parsing and deduped inserts.
+- A MariaDB 11.4.5 run confirmed the created schema, duplicate re-imports being ignored, the same
+  eventId inserting once per guild, and `@OldName` renames updating trader seller and buyer while
+  retaining the imported names in `seller_original` / `buyer_original`.
 
 ## Still separate
 

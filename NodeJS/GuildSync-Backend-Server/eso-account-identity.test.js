@@ -17,6 +17,7 @@ function fixture(){
  CREATE TABLE guildsync_banking_entries(event_id TEXT PRIMARY KEY,account_name TEXT,account_name_original TEXT,deposit_amount INTEGER,mail_status TEXT,
  transaction_type TEXT,event_timestamp TEXT,event_datetime TEXT,ticket_quantity INTEGER,data_source TEXT,note TEXT,mail_request_id TEXT,mail_batch_id TEXT,checked_out_by TEXT,checked_out_at TEXT,written_to_eso_at TEXT,sent_at TEXT,failed_reason TEXT);
  CREATE TABLE guildsync_applications(applicant_account TEXT,applicant_account_original TEXT,application_timestamp TEXT,application_text TEXT,officer_processing TEXT,officer_processing_original TEXT,discord_broadcast INTEGER,application_action TEXT,decline_message TEXT,blacklist_message TEXT,submitted_by_discord_id TEXT,PRIMARY KEY(applicant_account,application_timestamp));
+ CREATE TABLE guildsync_trader_entries(event_id TEXT,guild_id TEXT,guild_name TEXT,seller TEXT,seller_original TEXT,buyer TEXT,buyer_original TEXT,event_timestamp TEXT,event_datetime TEXT,data_source TEXT,PRIMARY KEY(guild_id,event_id));
  CREATE TABLE guildsync_settings(setting_key TEXT PRIMARY KEY,value TEXT);
  CREATE TABLE guildsync_users(discord_user_id TEXT PRIMARY KEY,guild_member_name TEXT,username TEXT,role TEXT,allowed INTEGER);
  INSERT INTO guildsync_eso_members VALUES('member-a','OldName','oldname');
@@ -27,6 +28,8 @@ function fixture(){
  INSERT INTO guildsync_roster_member_notes VALUES(1,'OldName',NULL,'Officer','Keep this note','102');
  INSERT INTO guildsync_member_links VALUES('OldName','200','linked');
  INSERT INTO guildsync_banking_entries(event_id,account_name,account_name_original,deposit_amount,mail_status) VALUES('456','@OldName',NULL,500,'sent');
+ INSERT INTO guildsync_trader_entries(event_id,guild_id,guild_name,seller,buyer,event_timestamp,event_datetime,data_source) VALUES('900','761817','Guild','@OldName','@Buyer','150','d','test');
+ INSERT INTO guildsync_trader_entries(event_id,guild_id,guild_name,seller,buyer,event_timestamp,event_datetime,data_source) VALUES('901','761817','Guild','@Seller','@OldName','151','d','test');
  INSERT INTO guildsync_applications(applicant_account,applicant_account_original,application_timestamp,application_text,officer_processing,officer_processing_original,discord_broadcast) VALUES('@OldName',NULL,'99','Original application', 'Officer',NULL,1);
  INSERT INTO guildsync_users VALUES('200','@OldName','Member','user',1);`);
  sql.function('CHAR_LENGTH',value=>String(value).length);
@@ -57,13 +60,16 @@ function fixture(){
 test('preview then rename preserves identity, historical names, dates, bank and application status, and writes history',async()=>{
  const f=fixture(),input={accountName:'@OldName',newAccountName:'@NewName'};
  const preview=await f.service.preview(input,f.actor);
- assert.equal(preview.conflict,false);assert.equal(preview.counts.banking,1);assert.equal(preview.counts.events,1);
+ assert.equal(preview.conflict,false);assert.equal(preview.counts.banking,1);assert.equal(preview.counts.events,1);assert.equal(preview.counts.trader,1);
  await f.service.rename({...input,token:preview.token},f.actor);
  assert.equal(await resolveEsoAccountName(f.db,'@OLDNAME'),'@NewName');
  assert.equal(await resolveEsoAccountName(f.db,'OldName'),'NewName');
  assert.equal(f.sql.prepare('SELECT member_id FROM guildsync_eso_members').get().member_id,'member-a');
  const bank=f.sql.prepare('SELECT * FROM guildsync_banking_entries').get();
  assert.equal(bank.account_name,'@NewName');assert.equal(bank.account_name_original,'@OldName');assert.equal(bank.deposit_amount,500);assert.equal(bank.mail_status,'sent');
+ const trader=f.sql.prepare('SELECT * FROM guildsync_trader_entries ORDER BY event_id').all();
+ assert.equal(trader[0].seller,'@NewName');assert.equal(trader[0].seller_original,'@OldName');
+ assert.equal(trader[1].buyer,'@NewName');assert.equal(trader[1].buyer_original,'@OldName');
  const event=f.sql.prepare('SELECT * FROM guildsync_roster_events').get();assert.equal(event.account_name_original,'OldName');assert.equal(event.event_id,'123');assert.equal(event.event_timestamp,'101');
  assert.equal(f.sql.prepare('SELECT discord_broadcast FROM guildsync_applications').get().discord_broadcast,1);
  assert.equal(f.sql.prepare('SELECT joined_timestamp FROM guildsync_roster_members').get().joined_timestamp,'100');

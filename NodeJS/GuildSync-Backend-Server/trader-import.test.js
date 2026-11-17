@@ -86,8 +86,10 @@ test('trader insert dedupes by guild and event and derives unit price and net', 
   assert.equal(retry.trader_entries_inserted, 0);
   assert.equal(retry.trader_entries_ignored, 2);
   assert.equal(calls[0][3], 'EU Megaserver');
-  assert.equal(calls[0][11], 10000, 'derived unit price');
-  assert.equal(calls[0][13], 93000, 'derived net after tax');
-  assert.equal(calls[1][13], 465, 'derived net for a small sale');
-  assert.equal(calls[0][16], 'GuildSyncTrader (Tester)');
+  assert.equal(calls[0][5], '@Seller', 'stored seller original');
+  assert.equal(calls[0][7], '@Buyer', 'stored buyer original');
+  assert.equal(calls[0][13], 10000, 'derived unit price');
+  assert.equal(calls[0][15], 93000, 'derived net after tax');
+  assert.equal(calls[1][15], 465, 'derived net for a small sale');
+  assert.equal(calls[0][18], 'GuildSyncTrader (Tester)');
 });

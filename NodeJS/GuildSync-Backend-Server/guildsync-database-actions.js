@@ -557,7 +557,9 @@ async function initializeSchema(db) {
       guild_name varchar(255) NOT NULL DEFAULT '',
       world varchar(64) DEFAULT NULL,
       seller varchar(255) NOT NULL DEFAULT '',
+      seller_original varchar(255) DEFAULT NULL,
       buyer varchar(255) NOT NULL DEFAULT '',
+      buyer_original varchar(255) DEFAULT NULL,
       item_link text DEFAULT NULL,
       item_id varchar(32) DEFAULT NULL,
       item_name varchar(255) DEFAULT NULL,
@@ -4162,7 +4164,9 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
             guild_name,
             world,
             seller,
+            seller_original,
             buyer,
+            buyer_original,
             item_link,
             item_id,
             item_name,
@@ -4175,7 +4179,7 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
             event_datetime,
             data_source
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?)
         `,
         [
           String(eventId),
@@ -4183,6 +4187,8 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
           guildName,
           world,
           seller,
+          seller,
+          buyer,
           buyer,
           itemLink || null,
           String(itemId),
