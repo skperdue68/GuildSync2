@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MessageFlags } from 'discord.js';
-import { data, execute, searchReceiptCaption, LINK_REQUIRED_MESSAGE } from './trader.js';
+import { data, execute, searchReceiptCaption, testReceiptOptions, LINK_REQUIRED_MESSAGE } from './trader.js';
 
 function fixture({ response, option = 'on', connected = true, item = null, guildId = null } = {}) {
   const replies = [];
@@ -81,6 +81,20 @@ test('/trader test renders the receipt into the reply instead of sending a DM', 
   assert.match(f.replies[0].content, /Test receipt for your newest 1 sale\./);
   assert.equal(f.replies[0].files.length, 1);
   assert.equal(f.replies[0].files[0].name, 'trader-sales-receipt.png');
+});
+
+test('a test receipt never congratulates, even for a single sale', () => {
+  assert.deepEqual(testReceiptOptions([soldSale]), {
+    sales: [soldSale],
+    kind: 'sale',
+    caption: 'Last 1 sale.'
+  });
+
+  assert.deepEqual(testReceiptOptions([soldSale, { ...soldSale, eventId: 502 }]), {
+    sales: [soldSale, { ...soldSale, eventId: 502 }],
+    kind: 'invoice',
+    caption: 'Last 2 sales.'
+  });
 });
 
 test('a test with nothing stored or no link explains why there is nothing to show', async () => {

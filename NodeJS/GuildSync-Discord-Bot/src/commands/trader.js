@@ -1,6 +1,6 @@
 import { AttachmentBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { Log } from '../helper.js';
-import { renderTraderInvoiceImages, traderReceiptFileNames } from '../trader-invoice-image.js';
+import { defaultInvoiceHeadline, renderTraderInvoiceImages, traderReceiptFileNames } from '../trader-invoice-image.js';
 import { traderInfoLine } from '../trader-info-line.js';
 
 export const LINK_REQUIRED_MESSAGE = [
@@ -52,6 +52,18 @@ export function searchReceiptCaption(sales = [], item = '') {
   }
 
   return `Your ${list.length} sales matching “${term}”.`;
+}
+
+// A test replay is not a fresh sale, so its receipt never congratulates: even a
+// single stored sale reads "Last 1 sale." like a list receipt does.
+export function testReceiptOptions(sales = []) {
+  const list = Array.isArray(sales) ? sales.filter(Boolean) : [];
+
+  return {
+    sales: list,
+    kind: list.length === 1 ? 'sale' : 'invoice',
+    caption: defaultInvoiceHeadline(list.length)
+  };
 }
 
 // register/unregister are aliases so either wording works.
@@ -151,10 +163,7 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
         return;
       }
 
-      const pages = await renderTraderInvoiceImages({
-        sales,
-        kind: sales.length === 1 ? 'sale' : 'invoice'
-      });
+      const pages = await renderTraderInvoiceImages(testReceiptOptions(sales));
       const names = traderReceiptFileNames(pages.length);
       const count = sales.length;
 
