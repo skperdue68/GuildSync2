@@ -8,6 +8,7 @@ import {
   planTraderSaleNotices,
   saleForNotice,
   loadTraderSalesForReceipt,
+  recentTraderSales,
   searchTraderSales,
   newestTraderEntryTime,
   announceTraderSaleNotices,
@@ -308,6 +309,95 @@ test('/trader sales says when only the newest matches were searched', async () =
 
   const call = db.calls.find((entry) => entry.sql.includes('FROM guildsync_trader_entries'));
   assert.ok(call.sql.includes('LIMIT 2'), 'one extra row is fetched to detect the cut');
+});
+
+test('/trader sales without an item lists the newest sales of anything', async () => {
+  const db = database();
+  const execute = db.execute;
+  db.execute = async (sql, args = []) => {
+    if (sql.includes('MAX(event_timestamp)')) return [[{ latest: 901 }]];
+    if (sql.includes('FROM guildsync_trader_entries')) {
+      db.calls.push({ sql, args });
+      return [[
+        { event_id: 9, guild_id: '761817', item_name: 'Soul Gem', seller: '@Seller', buyer: '@Buyer', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 900 },
+        { event_id: 8, guild_id: '761817', item_name: 'Ruby', seller: '@Seller', buyer: '@Buyer', quantity: 2, price: 20000, unit_price: 10000, tax: 1400, net: 18600, event_timestamp: 800 }
+      ]];
+    }
+    return execute.call(db, sql, args);
+  };
+
+  const handlers = new Map();
+  const emitted = [];
+  const socket = {
+    guildSyncAuthType: 'discord-bot',
+    on(event, handler) { handlers.set(event, handler); },
+    emit(event, payload) { emitted.push({ event, payload }); }
+  };
+  registerTraderSalesSubscriptionSocket(socket, { db });
+  const ask = (payload) => new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')(payload, resolve));
+
+  const result = await ask({ action: 'sales', discord_user_id: '42' });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.item, undefined, 'no item filter is applied');
+  assert.deepEqual(result.sales.map((sale) => sale.eventId), [9, 8]);
+  assert.equal(result.sales[0].itemName, 'Soul Gem');
+  assert.equal(result.sales[0].guildId, '761817');
+  assert.equal(result.limit, 10, 'ten sales by default');
+  assert.equal(result.truncated, false);
+  assert.equal(result.latest_entry_time, 901);
+  assert.deepEqual(emitted, [], 'a list never sends a DM');
+
+  const query = db.calls.find((call) => call.sql.includes('FROM guildsync_trader_entries'));
+  assert.equal(query.sql.includes('LIKE'), false, 'nothing is filtered by an item name');
+  assert.match(query.sql, /ORDER BY event_timestamp DESC/);
+  assert.match(query.sql, /LIMIT 11/, 'one extra row detects the cut');
+  assert.ok(query.sql.includes('guild_id'), 'the guild travels with every sale');
+});
+
+test('/trader sales clamps the requested count and defaults to ten', async () => {
+  const db = database();
+  const execute = db.execute;
+  const rows = Array.from({ length: 12 }, (_, index) => ({
+    event_id: 100 - index,
+    guild_id: '761817',
+    item_name: `Item ${index}`,
+    seller: '@Seller',
+    buyer: '@Buyer',
+    quantity: 1,
+    price: 10,
+    unit_price: 10,
+    tax: 0,
+    net: 10,
+    event_timestamp: 900 - index
+  }));
+  db.execute = async (sql, args = []) => {
+    if (sql.includes('MAX(event_timestamp)')) return [[{ latest: 900 }]];
+    if (sql.includes('FROM guildsync_trader_entries')) {
+      db.calls.push({ sql, args });
+      return [rows];
+    }
+    return execute.call(db, sql, args);
+  };
+
+  const handlers = new Map();
+  const socket = { guildSyncAuthType: 'discord-bot', on: (event, handler) => handlers.set(event, handler) };
+  registerTraderSalesSubscriptionSocket(socket, { db });
+  const ask = (payload) => new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')(payload, resolve));
+
+  const five = await ask({ action: 'sales', discord_user_id: '42', limit: 5 });
+  assert.equal(five.limit, 5);
+  assert.equal(five.sales.length, 5, 'only the requested number is returned');
+  assert.equal(five.truncated, true);
+
+  const huge = await ask({ action: 'sales', discord_user_id: '42', limit: 500 });
+  assert.equal(huge.limit, 50, 'the ceiling is 50');
+
+  const zero = await ask({ action: 'sales', discord_user_id: '42', limit: 0 });
+  assert.equal(zero.limit, 10, 'a missing or zero count falls back to ten');
+
+  const itemLimited = await ask({ action: 'sales', item: 'item', discord_user_id: '42', limit: 3 });
+  assert.equal(itemLimited.limit, 3, 'an item search honours the count too');
 });
 
 test('/trader sales returns the matches without sending a DM', async () => {

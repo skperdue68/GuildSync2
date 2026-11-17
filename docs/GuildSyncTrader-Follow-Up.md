@@ -35,14 +35,17 @@ GuildSyncBanking is untouched.
 
 `/trader on` and `/trader off` are global Discord commands, so they work in the guild and in DMs;
 `/trader register` and `/trader unregister` are accepted as aliases for the same two actions.
-`/trader sales <item>` searches the linked account's own sales for any part of an item name (spaces
-allowed) and answers with the same receipt, or `There are no sales entries for an item named <item>.`
-Its receipt opens with a neutral caption (`Your sale of Soul Gem.` or `Your 2 sales matching “blueprint”.`)
-rather than the congratulations line, since a search result is not a fresh sale. The item match runs
-through `LOWER(item_name) LIKE LOWER(?)`, so it is case-insensitive whatever the column collation is.
-It replies privately to the caller and never enters the DM queue. Only the newest 50 matching sales are
-searched, and both the reply and the receipt say so when the list was cut off instead of implying that
-is everything.
+`/trader sales [item] [count]` searches the linked account's own sales for any part of an item name
+(spaces allowed) and answers with the same receipt, or `There are no sales entries for an item named
+<item>.` The item is optional: without it the reply lists the newest sales of anything (`Your 10 most
+recent sales.`), which is what you want when the item name is not known, and an empty history reads
+`There are no trader sales stored for your linked ESO account yet.` `count` caps the list and defaults
+to 10 for that plain list and to 50 for an item search; the backend clamps it to 1–50.
+The receipt opens with a neutral caption (`Your sale of Soul Gem.`, `Your 2 sales matching “blueprint”.`,
+`Your last 2 sales.`) rather than the congratulations line, since a search or list result is not a fresh
+sale. The item match runs through `LOWER(item_name) LIKE LOWER(?)`, so it is case-insensitive whatever
+the column collation is. It replies privately to the caller and never enters the DM queue. Both the
+reply and the receipt say so when the list was cut off instead of implying that is everything.
 `/trader receipt` DMs a receipt for the newest stored sale of the linked account as if it had just
 happened, and confirms where the command was typed (ephemerally in a channel, in the DM itself when
 the command was a DM) with the freshness line, `Sent your newest sale receipt to your DMs.` and the
