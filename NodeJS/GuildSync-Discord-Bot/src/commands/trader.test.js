@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MessageFlags } from 'discord.js';
-import { data, execute, searchReceiptCaption, testReceiptOptions, LINK_REQUIRED_MESSAGE } from './trader.js';
+import { data, execute, searchReceiptCaption, LINK_REQUIRED_MESSAGE } from './trader.js';
+import { renderTraderInvoiceImages } from '../trader-invoice-image.js';
 
 function fixture({ response, option = 'on', connected = true, item = null, guildId = null } = {}) {
   const replies = [];
@@ -83,18 +84,19 @@ test('/trader test renders the receipt into the reply instead of sending a DM', 
   assert.equal(f.replies[0].files[0].name, 'trader-sales-receipt.png');
 });
 
-test('a test receipt never congratulates, even for a single sale', () => {
-  assert.deepEqual(testReceiptOptions([soldSale]), {
-    sales: [soldSale],
-    kind: 'sale',
-    caption: 'Last 1 sale.'
+test('a one-sale test receipt is captioned Last 1 sale, not a congratulations', async () => {
+  const f = fixture({
+    option: 'test',
+    response: { ok: true, linked: true, sales: [soldSale], latest_entry_time: 1794900000 }
   });
+  await execute(f.interaction, f.socket);
 
-  assert.deepEqual(testReceiptOptions([soldSale, { ...soldSale, eventId: 502 }]), {
-    sales: [soldSale, { ...soldSale, eventId: 502 }],
-    kind: 'invoice',
-    caption: 'Last 2 sales.'
-  });
+  const [neutral] = await renderTraderInvoiceImages({ sales: [soldSale], caption: 'Last 1 sale.' });
+  assert.deepEqual(
+    Buffer.from(f.replies[0].files[0].attachment),
+    Buffer.from(neutral),
+    'the rendered page matches a neutral-caption receipt, not the congratulations default'
+  );
 });
 
 test('a test with nothing stored or no link explains why there is nothing to show', async () => {

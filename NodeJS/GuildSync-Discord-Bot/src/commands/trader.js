@@ -36,7 +36,7 @@ export const data = new SlashCommandBuilder()
       .setMaxLength(100)))
   .addSubcommand((subcommand) => subcommand
     .setName('test')
-    .setDescription('Temporary: DM me a receipt for my newest stored trader sales.'))
+    .setDescription('Temporary: show a receipt for my newest stored trader sales.'))
   .setDMPermission(true);
 
 // A search result is not a fresh sale, so its receipt opens with a neutral
@@ -54,26 +54,16 @@ export function searchReceiptCaption(sales = [], item = '') {
   return `Your ${list.length} sales matching “${term}”.`;
 }
 
-// A test replay is not a fresh sale, so its receipt never congratulates: even a
-// single stored sale reads "Last 1 sale." like a list receipt does.
-export function testReceiptOptions(sales = []) {
-  const list = Array.isArray(sales) ? sales.filter(Boolean) : [];
-
-  return {
-    sales: list,
-    kind: list.length === 1 ? 'sale' : 'invoice',
-    caption: defaultInvoiceHeadline(list.length)
-  };
-}
-
 // register/unregister are aliases so either wording works.
 const ACTION_BY_OPTION = { on: 'on', register: 'on', off: 'off', unregister: 'off', sales: 'sales', test: 'test' };
 
 // Both receipt answers are built the same way: render the pages, name the files,
 // and put the freshness line above the reply line. The options and the wording
 // differ, so they are arguments instead of a second copy of this code.
-async function receiptReply({ infoLine, line, renderOptions }) {
-  const pages = await renderTraderInvoiceImages(renderOptions);
+async function receiptReply({ infoLine, line, sales, caption = '', footerNote = '' }) {
+  // The renderer already shows the detailed single-sale receipt for exactly one
+  // sale and pages for a list, so no kind has to be chosen here.
+  const pages = await renderTraderInvoiceImages({ sales, caption, footerNote });
   const names = traderReceiptFileNames(pages.length);
 
   return {
@@ -147,14 +137,11 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
         line: truncated
           ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
           : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`,
-        renderOptions: {
-          sales,
-          kind: sales.length === 1 ? 'sale' : 'invoice',
-          caption: searchReceiptCaption(sales, item),
-          footerNote: truncated
-            ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
-            : ''
-        }
+        sales,
+        caption: searchReceiptCaption(sales, item),
+        footerNote: truncated
+          ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
+          : ''
       }));
 
       log(`Trader sales search for “${item}” returned ${sales.length} sale(s) for Discord user ${interaction.user?.id || 'unknown'}.`);
@@ -164,25 +151,17 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
     if (action === 'test') {
       const sales = Array.isArray(response.sales) ? response.sales.filter(Boolean) : [];
 
-      if (!sales.length) {
-        await interaction.editReply({
-          content: `${infoLine}\nNo trader sales are stored for your linked ESO account yet.`,
-          allowedMentions: { parse: [] }
-        });
-        return;
-      }
-
-      const count = sales.length;
-
       // The receipt goes where the command was typed: this reply is ephemeral in
-      // a channel and is the DM itself when the command was sent in a DM.
+      // a channel and is the DM itself when the command was sent in a DM. A test
+      // replay is not a fresh sale, so it is captioned like a list even for one.
       await interaction.editReply(await receiptReply({
         infoLine,
-        line: `Test receipt for your newest ${count} sale${count === 1 ? '' : 's'}.`,
-        renderOptions: testReceiptOptions(sales)
+        line: `Test receipt for your newest ${sales.length} sale${sales.length === 1 ? '' : 's'}.`,
+        sales,
+        caption: defaultInvoiceHeadline(sales.length)
       }));
 
-      log(`Trader test receipt rendered for Discord user ${interaction.user?.id || 'unknown'} with ${count} sale(s).`);
+      log(`Trader test receipt rendered for Discord user ${interaction.user?.id || 'unknown'} with ${sales.length} sale(s).`);
       return;
     }
 
