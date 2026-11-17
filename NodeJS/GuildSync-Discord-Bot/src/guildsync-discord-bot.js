@@ -405,9 +405,9 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
       return;
     }
 
-    recordDiscordReaction(guildSyncSocket, reaction, user, DISCORD_GUILD_ID, {log: Log});
     const member = await guild.members.fetch(user.id).catch(() => null);
 
+    recordDiscordReaction(guildSyncSocket, reaction, user, member, DISCORD_GUILD_ID, {log: Log});
     await recordGuildMemberActivity(member, 'reaction_add');
   } catch (error) {
     Log(`Discord reaction activity tracking failed: ${error.message}`);
