@@ -100,3 +100,43 @@ Discord subscriber announcements for trader updates are not part of this change.
 
 `/gst stream`, `/gst catchup`, `/gst dump`, `/gst reset`, `/gst stop`, `/gst status`, `/gst guild`,
 `/gst debug`.
+
+## Planned follow-ups
+
+Ranked by value per hour. None of these is started; the first three are the cheapest way to remove the
+friction this work kept hitting.
+
+1. **Bot/backend capability handshake.** The backend advertises what it supports (`latest_entry_time`,
+   `test` returning sales, a protocol version) when the bot connects, so an old backend is reported in
+   the log instead of silently producing an undated reply or a surprise DM. Small: one handshake field,
+   one log line, one fallback string.
+2. **`/trader status`.** The backend already implements `action: 'status'` (linked ESO name, enabled,
+   `subscribed_at`) and nothing calls it. Surfacing it answers "am I linked, subscribed as whom, since
+   when" and gives that dead branch a caller. Small.
+3. **Text summary line with every receipt.** `50 sales · gross · tax · net` beside the image, because a
+   PNG cannot be searched, copied into a spreadsheet or read by a screen reader. Small.
+4. **Notice durability and de-duplication.** Notices are not deduplicated per (recipient, eventId), so a
+   retried import can DM the same sale twice, and a whole batch is dropped with a log line when the bot
+   socket is down. Medium.
+5. **Visual regression fixtures.** Render 1 / 15 / 50 sales, long and non-ASCII names, zero tax and huge
+   amounts, then compare hashes. Every layout defect so far was found by eye; only three strings are
+   width-tested today. Medium.
+6. **On-demand DM test.** `/trader test where:dm` (default stays in place) or a debug send through the
+   real queue, since answering in place removed the only manual check of queue spacing and temp-file
+   cleanup. Small.
+7. **Surface DM delivery failures.** A closed DM (`user.send` throwing) is only logged; record it and
+   report it from `/trader status`, so nobody believes they are subscribed while every receipt fails.
+   Small to medium.
+8. **Settle the image timezone.** Either one zone per guild or drop the per-row zone label and state
+   it once in the header. Today the message line is the reader's local time while the image says
+   Eastern: two times for the same sale. Small with a guild setting (medium if it needs config).
+9. **Search depth.** `/trader sales` stops at the newest 50 matches, so older history of a fast-selling
+   item is unreachable; add `before:`/`after:` or page the search itself. Small to medium.
+10. **Officer view and export.** Permission-gated lookup of another member's sales, and/or CSV output;
+    reconciliation is an officer job and currently means forwarding a DM. Medium, needs a permission
+    decision first.
+11. **Verify registration after `npm run deploy`.** Read the global and guild command sets back and
+    print them, so a stale description or a duplicate definition shows up before typing the command.
+    Small.
+12. **Retire `/trader test`.** It is flagged temporary and now duplicates `/trader sales` minus the
+    item filter; remove it once the trader path is settled. Small.
