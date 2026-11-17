@@ -251,13 +251,19 @@ export async function announceTraderSaleNotices(db, notices = []) {
     const ids = [];
 
     for (const sale of notice.sales || []) {
+      // Notices normally carry the camelCase shape saleForNotice builds, but a
+      // snake_cased row must not end up with an empty guild: that would collapse
+      // the same event id from two guilds into one announcement.
+      const guildId = String(sale?.guildId ?? sale?.guild_id ?? '').trim();
+      const eventId = Number(sale?.eventId ?? sale?.event_id) || 0;
+
       const [result] = await db.execute(
         `INSERT IGNORE INTO ${NOTICES} (discord_user_id, guild_id, event_id, sale_json, latest_entry_time)
          VALUES (?, ?, ?, ?, ?)`,
         [
           notice.discord_user_id,
-          String(sale.guildId || ''),
-          Number(sale.eventId) || 0,
+          guildId,
+          eventId,
           JSON.stringify(sale),
           Number(notice.latest_entry_time) || 0
         ]

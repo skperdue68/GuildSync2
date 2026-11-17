@@ -494,6 +494,30 @@ test('the same event id from two guilds is not collapsed for one member', async 
   assert.deepEqual(replay, [], 'replaying the same pair is still deduplicated per guild');
 });
 
+test('a snake_cased notice still keys on its guild instead of collapsing event ids', async () => {
+  const db = database();
+
+  const announced = await announceTraderSaleNotices(db, [{
+    discord_user_id: '42',
+    kind: 'invoice',
+    latest_entry_time: 2100,
+    sales: [
+      { event_id: 501, guild_id: '761817', guild_name: 'Example Guild', item_name: 'Soul Gem', time: 2000 },
+      { event_id: 501, guild_id: '900001', guild_name: 'Other Guild', item_name: 'Soul Gem', time: 2100 }
+    ]
+  }]);
+
+  assert.equal(announced.length, 1);
+  assert.equal(announced[0].sales.length, 2, 'both guilds keep their sale');
+
+  const inserts = db.calls.filter((call) => call.sql.includes('INSERT IGNORE INTO guildsync_trader_sale_notices'));
+  assert.deepEqual(
+    inserts.map((call) => [call.args[1], call.args[2]]),
+    [['761817', 501], ['900001', 501]],
+    'guild_id and event_id reach the key columns'
+  );
+});
+
 test('a sale is announced once per recipient and stays pending until it is delivered', async () => {
   const db = database();
   const notice = { discord_user_id: '42', kind: 'sale', sales: [sale()], latest_entry_time: 900 };

@@ -114,6 +114,12 @@ test('trader insert dedupes by guild and event and derives unit price and net', 
   assert.equal(first.insertedEntries[0].catchUp, false);
   assert.equal(first.insertedEntries[1].catchUp, true);
   assert.equal(first.insertedEntries[0].net, 93000);
+  assert.equal(
+    first.insertedEntries[0].guildId,
+    '761817',
+    'sale notifications are keyed on the guild, so it has to reach the notice'
+  );
+  assert.equal(first.insertedEntries[0].eventId, 123);
   assert.equal(retry.insertedEntries.length, 0);
   assert.equal(calls[0][3], 'EU Megaserver');
   assert.equal(calls[0][4], '@Seller', 'stored resolved seller');
