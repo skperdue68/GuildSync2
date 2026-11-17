@@ -38,6 +38,21 @@ export const data = new SlashCommandBuilder()
     .setDescription('Temporary: DM me a receipt for my newest stored trader sales.'))
   .setDMPermission(true);
 
+// A search result is not a fresh sale, so its receipt opens with a neutral
+// caption instead of the congratulations line.
+export function searchReceiptCaption(sales = [], item = '') {
+  const list = Array.isArray(sales) ? sales.filter(Boolean) : [];
+  const term = String(item || '').trim();
+
+  if (list.length === 1) {
+    return list[0].itemName
+      ? `Your sale of ${list[0].itemName}.`
+      : `Your sale matching “${term}”.`;
+  }
+
+  return `Your ${list.length} sales matching “${term}”.`;
+}
+
 // register/unregister are aliases so either wording works.
 const ACTION_BY_OPTION = { on: 'on', register: 'on', off: 'off', unregister: 'off', sales: 'sales', test: 'test' };
 
@@ -97,6 +112,7 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
       const png = await renderTraderInvoiceImage({
         sales,
         kind: sales.length === 1 ? 'sale' : 'invoice',
+        caption: searchReceiptCaption(sales, item),
         footerNote: truncated
           ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
           : ''

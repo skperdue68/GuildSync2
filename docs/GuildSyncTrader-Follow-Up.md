@@ -37,6 +37,9 @@ GuildSyncBanking is untouched.
 `/trader register` and `/trader unregister` are accepted as aliases for the same two actions.
 `/trader sales <item>` searches the linked account's own sales for any part of an item name (spaces
 allowed) and answers with the same receipt, or `There are no sales entries for an item named <item>.`
+Its receipt opens with a neutral caption (`Your sale of Soul Gem.` or `Your 2 sales matching “blueprint”.`)
+rather than the congratulations line, since a search result is not a fresh sale. The item match runs
+through `LOWER(item_name) LIKE LOWER(?)`, so it is case-insensitive whatever the column collation is.
 It replies privately to the caller and never enters the DM queue. Only the newest 50 matching sales are
 searched, and both the reply and the receipt say so when the list was cut off instead of implying that
 is everything.

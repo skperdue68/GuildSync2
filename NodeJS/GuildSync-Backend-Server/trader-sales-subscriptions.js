@@ -273,7 +273,7 @@ export async function searchTraderSales(db, discordUserId, itemQuery, { limit = 
        FROM guildsync_trader_entries
       WHERE (LOWER(TRIM(LEADING '@' FROM seller)) IN (${placeholders})
           OR LOWER(TRIM(LEADING '@' FROM seller_original)) IN (${placeholders}))
-        AND item_name LIKE ?
+        AND LOWER(item_name) LIKE LOWER(?)
       ORDER BY event_timestamp DESC
       LIMIT ${capped + 1}`,
     [...list, ...list, `%${escapeLike(term)}%`]

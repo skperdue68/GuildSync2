@@ -216,9 +216,31 @@ test('/trader sales matches part of an item name for the linked account', async 
   assert.equal(limit, 50);
 
   const call = db.calls.find((entry) => entry.sql.includes('FROM guildsync_trader_entries'));
-  assert.ok(call.sql.includes('item_name LIKE ?'));
+  assert.ok(call.sql.includes('LOWER(item_name) LIKE LOWER(?)'));
   assert.ok(call.sql.includes('seller_original'), 'renamed sellers still match');
   assert.equal(call.args.at(-1), '%Soul%');
+});
+
+test('/trader sales finds Soul Gem when the query is SOUL', async () => {
+  const db = database();
+  const execute = db.execute;
+  db.execute = async (sql, args = []) => {
+    if (sql.includes('FROM guildsync_trader_entries')) {
+      db.calls.push({ sql, args });
+      // A case-insensitive collation is not guaranteed, so the match must come
+      // from LOWER() on both sides rather than from the column definition.
+      assert.match(sql, /LOWER\(item_name\) LIKE LOWER\(\?\)/);
+      return [[{ event_id: 9, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 700 }]];
+    }
+    return execute.call(db, sql, args);
+  };
+
+  const { sales } = await searchTraderSales(db, '42', 'SOUL');
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].itemName, 'Soul Gem');
+
+  const call = db.calls.find((entry) => entry.sql.includes('FROM guildsync_trader_entries'));
+  assert.equal(call.args.at(-1), '%SOUL%', 'the raw query is passed and LOWER() does the folding');
 });
 
 test('/trader sales escapes LIKE wildcards in the item query', async () => {

@@ -15,7 +15,7 @@ const INNER_W = CARD_W - 64;
 const RIGHT = INNER_X + INNER_W;
 
 const BAND_H = 120;
-const CONGRATS_LINE_H = 24;
+const HEADLINE_LINE_H = 24;
 const META_H = 62;
 const TABLE_HEADER_H = 34;
 const SECTION_H = 26;
@@ -164,10 +164,10 @@ function rowPlan(groups, single) {
 /**
  * Render a trader sale (or a multi-sale invoice) as a PNG document.
  *
- * @param {{sales?: object[], kind?: 'sale'|'invoice', footerNote?: string}} notice
+ * @param {{sales?: object[], kind?: 'sale'|'invoice', caption?: string, footerNote?: string}} notice
  * @returns {Promise<Buffer>}
  */
-export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', footerNote = '' } = {}) {
+export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', caption = '', footerNote = '' } = {}) {
   const list = (Array.isArray(sales) ? sales : []).filter(Boolean);
   if (!list.length) throw new Error('No trader sales to render.');
 
@@ -184,10 +184,12 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', foot
 
   const measuring = createCanvas(8, 8).getContext('2d');
   measuring.font = font(500, 17);
-  const congratulations = single
+  // A caller can replace the congratulations line; a search result is not a
+  // fresh sale, so it passes a neutral caption instead.
+  const headline = String(caption || '').trim() || (single
     ? `Congratulations! You sold ${first.itemName || 'an item'} on the ${guildName} Trader — the details are below.`
-    : `Congratulations! You made ${list.length} trader sales on the ${guildName} Trader — the details are below.`;
-  const congratsLines = wrapLines(measuring, congratulations, INNER_W);
+    : `Congratulations! You made ${list.length} trader sales on the ${guildName} Trader — the details are below.`);
+  const headlineLines = wrapLines(measuring, headline, INNER_W);
 
   const rowH = single ? 40 : 36;
   const itemRowCount = body.filter((row) => row.type === 'item').length;
@@ -195,7 +197,7 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', foot
 
   const bandTop = CARD_X;
   const congratsTop = bandTop + BAND_H + 34;
-  const metaTop = congratsTop + congratsLines.length * CONGRATS_LINE_H + 8;
+  const metaTop = congratsTop + headlineLines.length * HEADLINE_LINE_H + 8;
   const tableTop = metaTop + META_H + 14;
   const rowsTop = tableTop + TABLE_HEADER_H;
   const bodyHeight = itemRowCount * rowH + sectionCount * SECTION_H + (hidden ? 26 : 0);
@@ -251,12 +253,12 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', foot
   ctx.fillStyle = C.gold;
   ctx.fillText(gold(net), RIGHT, bandTop + 80);
 
-  // Congratulations
+  // Headline
   ctx.textAlign = 'left';
   ctx.font = font(500, 17);
   ctx.fillStyle = C.ink;
-  congratsLines.forEach((line, index) => {
-    ctx.fillText(line, INNER_X, congratsTop + index * CONGRATS_LINE_H);
+  headlineLines.forEach((line, index) => {
+    ctx.fillText(line, INNER_X, congratsTop + index * HEADLINE_LINE_H);
   });
 
   // Meta columns
