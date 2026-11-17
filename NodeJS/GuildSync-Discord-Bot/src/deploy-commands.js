@@ -11,6 +11,7 @@ const commands = [
   roles.data.toJSON(),
   raffle.data.toJSON(),
   tickets.data.toJSON(),
+  trader.data.toJSON(),
   createGsaCommandData().toJSON(),
   createGsrCommandData().toJSON(),
   createGsrAliasCommandData().toJSON(),
@@ -37,8 +38,10 @@ try {
     { body: commands }
   );
 
-  // Register /trader globally so it also works in DMs. Existing guild commands
-  // stay guild-scoped and keep appearing immediately after deployment. This
+  // /trader is registered in both places: guild-scoped so it is there the
+  // moment this runs (a global command can take up to an hour to reach a
+  // client, and a stale per-guild integration toggle can hide it), and global
+  // so it also works in DMs. Discord shows the guild copy in the guild. This
   // PUT replaces the whole global command set, which removes the retired
   // global /sales command.
   await rest.put(
