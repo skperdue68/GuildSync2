@@ -47,7 +47,9 @@ DM is a short congratulations caption (guild, item or sale count, and the arithm
 `unit × quantity − tax = net`) with the full invoice attached as a rendered PNG
 (`trader-invoice.png`): date, transaction ID, buyer, item, quantity, unit price, amount, subtotal, tax
 and net payout. The bot writes that PNG to the OS temp directory, attaches it with `attachment://`,
-and deletes the file as soon as Discord has the message. If rendering fails, the DM falls back to a
+and deletes the file as soon as Discord has the message. Notices are queued instead of sent in a
+burst: about two seconds between DMs, then a one to two minute pause after every five, so a
+catch-up import is never mistaken for spam. If rendering fails, the DM falls back to a
 details embed carrying every field (and, for several sales, the buyer-grouped item list), so the
 information is never lost. Two or more matching sales become one
 combined invoice, grouped by buyer and then by sale time, with one row per item and a grand total for

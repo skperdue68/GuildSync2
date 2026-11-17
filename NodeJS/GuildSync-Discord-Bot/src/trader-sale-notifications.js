@@ -9,6 +9,60 @@ import {
   renderTraderInvoiceImage
 } from './trader-invoice-image.js';
 
+// Discord rate-limits DMs, so notices are queued instead of fired off in a
+// burst: a short gap between messages, then a longer pause after every few.
+const TRADER_SEND_DELAY_MS = 2000;
+const TRADER_SEND_BATCH = 5;
+const TRADER_SEND_PAUSE_MIN_MS = 60000;
+const TRADER_SEND_PAUSE_MAX_MS = 120000;
+
+const sleepFor = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Serial queue for trader DMs. Each task waits its turn, so a catch-up import
+ * that produces many notices cannot be mistaken for spam.
+ */
+export function createTraderSendQueue({
+  delayMs = TRADER_SEND_DELAY_MS,
+  batchSize = TRADER_SEND_BATCH,
+  pauseMinMs = TRADER_SEND_PAUSE_MIN_MS,
+  pauseMaxMs = TRADER_SEND_PAUSE_MAX_MS,
+  sleep = sleepFor,
+  random = Math.random,
+  now = Date.now,
+  log = () => {}
+} = {}) {
+  let chain = Promise.resolve();
+  let sentInBatch = 0;
+  let lastSentAt = 0;
+
+  async function waitTurn() {
+    // After a long quiet spell the next send starts a fresh batch, so a single
+    // import hours later is not held back by a stale pause.
+    if (lastSentAt && now() - lastSentAt > pauseMaxMs) sentInBatch = 0;
+
+    if (sentInBatch >= batchSize) {
+      sentInBatch = 0;
+      await sleep(pauseMinMs + Math.round(random() * (pauseMaxMs - pauseMinMs)));
+    } else if (sentInBatch > 0) {
+      await sleep(delayMs);
+    }
+  }
+
+  return function enqueue(task) {
+    chain = chain
+      .then(async () => {
+        await waitTurn();
+        await task();
+        sentInBatch += 1;
+        lastSentAt = now();
+      })
+      .catch((error) => log(`Trader sale DM queue error: ${error.message}`));
+
+    return chain;
+  };
+}
+
 const gold = (value) => `${Math.round(Number(value) || 0).toLocaleString('en-US')}g`;
 
 const discordTimestamp = (value) => {
@@ -144,7 +198,10 @@ export function buildTraderInvoiceFallbackEmbed(sales = []) {
   };
 }
 
-export function startTraderSaleNotifications(client, socket, log = console.log, { renderInvoiceImage = renderTraderInvoiceImage } = {}) {
+export function startTraderSaleNotifications(client, socket, log = console.log, {
+  renderInvoiceImage = renderTraderInvoiceImage,
+  enqueue = createTraderSendQueue({ log })
+} = {}) {
   const handler = async (notice = {}) => {
     try {
       const discordUserId = String(notice.discord_user_id || '').trim();
@@ -186,6 +243,8 @@ export function startTraderSaleNotifications(client, socket, log = console.log, 
     }
   };
 
-  socket.on('guildsync:trader-sale-notice', handler);
-  return () => socket.off('guildsync:trader-sale-notice', handler);
+  const listener = (notice) => enqueue(() => handler(notice));
+
+  socket.on('guildsync:trader-sale-notice', listener);
+  return () => socket.off('guildsync:trader-sale-notice', listener);
 }

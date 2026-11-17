@@ -7,6 +7,7 @@ import {
   buildTraderSaleFallbackEmbed,
   buildTraderInvoiceEmbed,
   buildTraderInvoiceFallbackEmbed,
+  createTraderSendQueue,
   startTraderSaleNotifications
 } from './trader-sale-notifications.js';
 import { renderTraderInvoiceImage } from './trader-invoice-image.js';
@@ -106,6 +107,45 @@ test('the invoice graphic renders as a PNG for one sale and for many', async () 
   assert.deepEqual(Buffer.from(invoice.subarray(0, 4)), PNG_SIGNATURE);
 });
 
+test('the DM queue spaces sends out and pauses every fifth', async () => {
+  const waits = [];
+  const enqueue = createTraderSendQueue({ sleep: async (ms) => waits.push(ms), random: () => 0 });
+  const sent = [];
+
+  for (let index = 0; index < 7; index += 1) await enqueue(async () => sent.push(index));
+
+  assert.deepEqual(sent, [0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(
+    waits,
+    [2000, 2000, 2000, 2000, 60000, 2000],
+    'a gap between each DM, then a full pause after the fifth'
+  );
+});
+
+test('the queue resets its batch after a long idle and survives a failed task', async () => {
+  let clock = 0;
+  const waits = [];
+  const logs = [];
+  const enqueue = createTraderSendQueue({
+    sleep: async (ms) => waits.push(ms),
+    random: () => 0,
+    now: () => clock,
+    log: (line) => logs.push(line)
+  });
+
+  for (let index = 0; index < 5; index += 1) await enqueue(async () => { clock += 10; });
+  clock += 10 * 60 * 1000;
+
+  const sent = [];
+  await enqueue(async () => sent.push('after idle'));
+  await enqueue(async () => { throw new Error('boom'); });
+  await enqueue(async () => sent.push('after failure'));
+
+  assert.deepEqual(waits, [2000, 2000, 2000, 2000, 2000, 2000], 'no 60-120s pause after an idle gap');
+  assert.deepEqual(sent, ['after idle', 'after failure'], 'a failing DM does not stall the queue');
+  assert.ok(logs.some((line) => line.includes('boom')));
+});
+
 test('a failed invoice render falls back to the details embed', async () => {
   const sent = [];
   const handlers = new Map();
@@ -114,7 +154,8 @@ test('a failed invoice render falls back to the details embed', async () => {
   const logs = [];
 
   startTraderSaleNotifications(client, socket, (line) => logs.push(line), {
-    renderInvoiceImage: () => { throw new Error('canvas unavailable'); }
+    renderInvoiceImage: () => { throw new Error('canvas unavailable'); },
+    enqueue: (task) => task()
   });
 
   const handler = handlers.get('guildsync:trader-sale-notice');
@@ -153,7 +194,7 @@ test('the socket listener sends the trimmed embed with the image and deletes the
     }
   };
   const logs = [];
-  startTraderSaleNotifications(client, socket, (line) => logs.push(line));
+  startTraderSaleNotifications(client, socket, (line) => logs.push(line), { enqueue: (task) => task() });
 
   const handler = handlers.get('guildsync:trader-sale-notice');
   await handler({ discord_user_id: '42', kind: 'sale', sales: [sale] });
