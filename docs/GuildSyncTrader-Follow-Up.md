@@ -54,7 +54,8 @@ to link the account and who to contact for help. Subscriptions live in
 when each sale is sent, so renames and re-links keep working.
 
 Trader data arrives as one SavedVars batch, so each subscriber gets at most one DM per import. Every
-DM is the receipt image alone (`trader-sales-receipt.png`, headed **TRADER SALES RECEIPT**) with no
+DM is the receipt image alone (`trader-sales-receipt.png`, or `-1.png`, `-2.png` … when the list runs over
+several pages, headed **TRADER SALES RECEIPT**) with no
 caption text beside it: date, transaction ID, buyer, item, quantity, unit price and amount, plus the
 guild name and NET PAYOUT total in the header band. The bottom right corner stacks gross sales, guild
 tax and net profit one under the other, right aligned, with the net emphasised; the guild name and the
@@ -65,9 +66,14 @@ deletes the file as soon as Discord has the message. Notices are queued instead 
 burst: about two seconds between DMs, then a one to two minute pause after every five, so a
 catch-up import is never mistaken for spam. If rendering fails, the DM falls back to a
 details embed carrying every field (and, for several sales, the buyer-grouped item list), so the
-information is never lost. Two or more matching sales become one
-combined receipt, grouped by buyer and then by sale time, with one row per item and a grand total for
-sales, quantity, gross, tax and net. This applies to live uploads and `/gst catchup` alike. Sales
+information is never lost. Two or more sales become a list receipt headed `Last <n> sales.`, grouped by
+buyer and then by sale time with one row per item. Each row starts with the full sale date and time,
+`Nov 17 · 5:15 AM EST`, and the item name wraps onto a second line when it needs the room instead of
+pushing the timezone out of view. The list is split across as many pages as the rows need: every page
+repeats the buyer headings and the header shows `PAGE 2 OF 3`, while the totals, the footer and the
+NET PAYOUT figure appear on the last page only. All pages arrive together in the same DM, so no sale is
+dropped and no "and N more sales" line is needed. A single sale keeps the detailed one-page receipt.
+This applies to live uploads, `/trader test` and `/gst catchup` alike. Sales
 older than the subscription are skipped, so enabling notifications never floods someone with old
 history.
 

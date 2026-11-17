@@ -10,7 +10,15 @@ import {
   createTraderSendQueue,
   startTraderSaleNotifications
 } from './trader-sale-notifications.js';
-import { renderTraderInvoiceImage } from './trader-invoice-image.js';
+import { createCanvas } from '@napi-rs/canvas';
+import {
+  SOLD_COLUMN_W,
+  defaultInvoiceHeadline,
+  font,
+  planReceiptPages,
+  renderTraderInvoiceImages,
+  shortSaleDate
+} from './trader-invoice-image.js';
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 
@@ -95,20 +103,71 @@ test('the invoice fallback groups items by buyer, then by sale time, with column
   assert.ok(embed.fields.some((field) => field.name === 'Net profit' && field.value === '24,180g'));
 });
 
-test('the invoice graphic renders as a PNG for one sale and for many', async () => {
-  const single = await renderTraderInvoiceImage({ sales: [sale], kind: 'sale' });
+test('the invoice graphic renders as a PNG page for a sale or a short list', async () => {
+  const [single] = await renderTraderInvoiceImages({ sales: [sale], kind: 'sale' });
   assert.deepEqual(Buffer.from(single.subarray(0, 4)), PNG_SIGNATURE);
   assert.ok(single.length > 2000, 'the PNG carries a real page');
   assert.equal(single.readUInt32BE(16), 1920, 'the receipt renders at 2x for the full-size view');
 
-  const captioned = await renderTraderInvoiceImage({ sales: [sale], kind: 'sale', caption: 'Your sale of Dreugh Wax.' });
+  const [captioned] = await renderTraderInvoiceImages({ sales: [sale], kind: 'sale', caption: 'Your sale of Dreugh Wax.' });
   assert.notDeepEqual(Buffer.from(captioned), Buffer.from(single), 'a custom caption replaces the congratulations line');
 
-  const invoice = await renderTraderInvoiceImage({
+  const invoice = await renderTraderInvoiceImages({
     sales: [sale, { ...sale, eventId: 502, buyer: '@Other', time: 1780000600 }, { ...sale, eventId: 503, buyer: '@Third', time: 1780000700 }],
     kind: 'invoice'
   });
-  assert.deepEqual(Buffer.from(invoice.subarray(0, 4)), PNG_SIGNATURE);
+  assert.equal(invoice.length, 1, 'a short list still fits one page');
+  assert.deepEqual(Buffer.from(invoice[0].subarray(0, 4)), PNG_SIGNATURE);
+});
+
+test('a long list continues on more pages instead of dropping sales', async () => {
+  const many = Array.from({ length: 50 }, (_, index) => ({
+    ...sale,
+    eventId: 600 + index,
+    buyer: `@Buyer${index % 7}`,
+    itemName: index % 2 ? 'Blueprint: Driftwood Arrangement, Hanging' : 'Dreugh Wax',
+    time: 1780000000 + index * 3600
+  }));
+
+  const pages = planReceiptPages(many);
+  assert.ok(pages.length > 1, '50 sales need more than one graphic');
+
+  const drawn = pages.flat().filter((row) => row.type === 'item').map((row) => row.sale.eventId);
+  assert.equal(drawn.length, 50, 'every sale is drawn');
+  assert.deepEqual(
+    [...drawn].sort((a, b) => a - b),
+    many.map((item) => item.eventId).sort((a, b) => a - b),
+    'no sale is repeated or left out across the pages'
+  );
+
+  const images = await renderTraderInvoiceImages({ sales: many, kind: 'invoice' });
+  assert.equal(images.length, pages.length, 'one image per planned page');
+  for (const image of images) {
+    assert.deepEqual(Buffer.from(image.subarray(0, 4)), PNG_SIGNATURE);
+  }
+});
+
+test('the sold column fits the whole stamp, timezone included', () => {
+  const ctx = createCanvas(8, 8).getContext('2d');
+  ctx.font = font(500, 13);
+
+  const stamps = [
+    Date.UTC(2026, 8, 30, 16, 59) / 1000, // Sep 30, 12:59 PM EDT
+    Date.UTC(2026, 11, 31, 22, 59) / 1000, // Dec 31, 5:59 PM EST
+    Date.UTC(2026, 6, 1, 16, 0) / 1000 // Jul 1, 12:00 PM EDT
+  ];
+
+  for (const stamp of stamps) {
+    const text = shortSaleDate(stamp);
+    assert.match(text, / (EST|EDT)$/, `${text} keeps its timezone label`);
+    assert.ok(ctx.measureText(text).width <= SOLD_COLUMN_W - 14, `${text} must not be clipped`);
+  }
+});
+
+test('a list receipt says how many of the last sales it covers', () => {
+  assert.equal(defaultInvoiceHeadline(50), 'Last 50 sales.');
+  assert.equal(defaultInvoiceHeadline(1), 'Last 1 sale.');
+  assert.equal(defaultInvoiceHeadline(0), 'Last 0 sales.');
 });
 
 test('the DM queue spaces sends out and pauses every fifth', async () => {
@@ -182,6 +241,28 @@ test('a failed invoice render falls back to the details embed', async () => {
   assert.match(invoice.embeds[0].description, /Dreugh Wax/);
 
   assert.equal(logs.filter((line) => line.includes('canvas unavailable')).length, 2, 'each failure is logged');
+});
+
+test('a long receipt arrives as several pages in a single DM', async () => {
+  const sent = [];
+  const handlers = new Map();
+  const socket = { on: (event, handler) => handlers.set(event, handler), off() {} };
+  const client = { users: { async fetch() { return { async send(message) { sent.push(message); } }; } } };
+  startTraderSaleNotifications(client, socket, () => {}, { enqueue: (task) => task() });
+
+  const many = Array.from({ length: 50 }, (_, index) => ({
+    ...sale,
+    eventId: 700 + index,
+    buyer: `@Buyer${index}`,
+    time: 1780000000 + index
+  }));
+  await handlers.get('guildsync:trader-sale-notice')({ discord_user_id: '42', kind: 'invoice', sales: many });
+
+  assert.equal(sent.length, 1, 'the pages travel together in one DM');
+  assert.ok(sent[0].files.length > 1, 'a long list needs more than one page');
+  assert.equal(sent[0].files[0].name, 'trader-sales-receipt-1.png');
+  assert.equal(sent[0].files.at(-1).name, `trader-sales-receipt-${sent[0].files.length}.png`);
+  assert.equal(sent[0].embeds, undefined);
 });
 
 test('the socket listener sends only the receipt image and deletes the temp file', async () => {

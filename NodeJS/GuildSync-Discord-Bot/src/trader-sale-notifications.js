@@ -4,9 +4,9 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AttachmentBuilder } from 'discord.js';
 import {
-  TRADER_INVOICE_FILE_NAME,
   groupSalesByBuyer,
-  renderTraderInvoiceImage
+  renderTraderInvoiceImages,
+  traderReceiptFileNames
 } from './trader-invoice-image.js';
 
 // Discord rate-limits DMs, so notices are queued instead of fired off in a
@@ -199,7 +199,7 @@ export function buildTraderInvoiceFallbackEmbed(sales = []) {
 }
 
 export function startTraderSaleNotifications(client, socket, log = console.log, {
-  renderInvoiceImage = renderTraderInvoiceImage,
+  renderInvoiceImage = renderTraderInvoiceImages,
   enqueue = createTraderSendQueue({ log })
 } = {}) {
   const handler = async (notice = {}) => {
@@ -212,18 +212,26 @@ export function startTraderSaleNotifications(client, socket, log = console.log, 
       const user = await client.users.fetch(discordUserId);
 
       const message = {};
-      let tempImage;
+      const tempImages = [];
 
       try {
-        const png = await renderInvoiceImage({ sales, kind });
-        tempImage = await writeTraderInvoiceTempImage(png);
+        const rendered = await renderInvoiceImage({ sales, kind });
+        const pages = Array.isArray(rendered) ? rendered : [rendered];
+        const names = traderReceiptFileNames(pages.length);
 
-        // The receipt carries every detail, so the DM itself is just the image.
-        message.files = [new AttachmentBuilder(tempImage.path, {
-          name: TRADER_INVOICE_FILE_NAME,
-          description: 'GuildSync trader sales receipt'
-        })];
+        // The receipt carries every detail, so the DM itself is just the images.
+        // A long list arrives as several pages in one message.
+        message.files = [];
+        for (const [index, png] of pages.entries()) {
+          const temp = await writeTraderInvoiceTempImage(png);
+          tempImages.push(temp);
+          message.files.push(new AttachmentBuilder(temp.path, {
+            name: names[index],
+            description: 'GuildSync trader sales receipt'
+          }));
+        }
       } catch (imageError) {
+        for (const temp of tempImages.splice(0)) await temp.remove();
         log(`Trader invoice image failed for ${discordUserId}: ${imageError.message}. Sending the details embed instead.`);
         message.embeds = [
           kind === 'invoice' ? buildTraderInvoiceFallbackEmbed(sales) : buildTraderSaleFallbackEmbed(sales[0])
@@ -233,7 +241,7 @@ export function startTraderSaleNotifications(client, socket, log = console.log, 
       try {
         await user.send(message);
       } finally {
-        if (tempImage) await tempImage.remove();
+        for (const temp of tempImages.splice(0)) await temp.remove();
       }
     } catch (error) {
       log(`Trader sale DM failed for ${notice?.discord_user_id || 'unknown user'}: ${error.message}`);
