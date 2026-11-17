@@ -1711,6 +1711,8 @@ export async function getDiscordMemberHistoryMatches(applicationDB, query = '') 
   }
 
   const like = `%${search}%`;
+  // The selected `username` is a display fallback chain (nickname, then display name, then
+  // username), not the account username, so callers should show it rather than compare it.
   const [rows] = await applicationDB.execute(
     `
       SELECT
