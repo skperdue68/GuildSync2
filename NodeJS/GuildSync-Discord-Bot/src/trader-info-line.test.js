@@ -20,14 +20,14 @@ test('a missing timestamp is unknown, not an empty table', () => {
   for (const missing of [undefined, null, '', 'not a time']) {
     assert.equal(
       traderInfoLine({ now: 100, latestEntryTime: missing }),
-      'As of <t:100:f> — the time of the most recent GuildSync info is unknown.',
+      'As of <t:100:f> — the GuildSync backend did not report when its trader data was last updated.',
       `${String(missing)} is an older backend, not an empty table`
     );
   }
 
   assert.equal(
     traderInfoLine({ now: 100 }),
-    'As of <t:100:f> — the time of the most recent GuildSync info is unknown.',
+    'As of <t:100:f> — the GuildSync backend did not report when its trader data was last updated.',
     'a payload without the field at all is unknown too'
   );
 });

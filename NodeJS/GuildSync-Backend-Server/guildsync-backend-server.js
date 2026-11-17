@@ -1,5 +1,5 @@
 import {createEsoAccountRenames,registerEsoAccountRenameSocket} from './eso-account-identity.js';
-import {registerTraderSalesSubscriptionSocket, planTraderSaleNotices} from './trader-sales-subscriptions.js';
+import {registerTraderSalesSubscriptionSocket, planTraderSaleNotices, announceTraderSaleNotices, markTraderSaleNoticesDelivered} from './trader-sales-subscriptions.js';
 import {createUserSwitches,initializeUserSwitchSchema,registerUserSwitchSocket,registerUserSwitchGuard} from './user-switch.js';
 import {registerApplicationHistorySocket} from './application-history.js';
 import {createRosterNoteAccess} from './roster-note-access.js';
@@ -2871,16 +2871,31 @@ async function notifyTraderSaleSubscribers(entries = []) {
   try {
     if (!entries.length) return;
 
-    const notices = await planTraderSaleNotices(applicationDB, entries);
-    if (!notices.length) return;
+    const planned = await planTraderSaleNotices(applicationDB, entries);
+    if (!planned.length) return;
 
-    const botSocket = discordBotSocketId ? io.sockets.sockets.get(discordBotSocketId) : null;
-    if (!botSocket?.connected) {
-      Log(`Trader sales: ${notices.length} notification(s) skipped because the Discord bot is offline.`);
+    // Each sale is recorded per recipient first: a retried import cannot announce
+    // it twice, and a notice the bot never takes stays pending for its reconnect.
+    const notices = await announceTraderSaleNotices(applicationDB, planned);
+    if (!notices.length) {
+      Log('Trader sales: every sale in this import was already announced.');
       return;
     }
 
-    for (const notice of notices) botSocket.emit('guildsync:trader-sale-notice', notice);
+    const botSocket = discordBotSocketId ? io.sockets.sockets.get(discordBotSocketId) : null;
+    if (!botSocket?.connected) {
+      Log(`Trader sales: ${notices.length} notification(s) kept for the next bot connection because the Discord bot is offline.`);
+      return;
+    }
+
+    // The bot acknowledges a notice once it has sent (or tried to send) the DM, and
+    // only then is it marked delivered, so a drop is retried rather than lost.
+    for (const notice of notices) {
+      botSocket.emit('guildsync:trader-sale-notice', notice, () => {
+        markTraderSaleNoticesDelivered(applicationDB, notice.notice_ids)
+          .catch((error) => Log(`Trader sale delivery mark failed: ${error.message}`));
+      });
+    }
     Log(`Trader sales: sent ${notices.length} Discord notification(s).`);
   } catch (error) {
     Log(`Trader sale notifications failed: ${error.message}`);

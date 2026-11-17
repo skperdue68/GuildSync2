@@ -9,6 +9,7 @@ import {
   traderReceiptFileNames
 } from './trader-invoice-image.js';
 import { traderInfoLine } from './trader-info-line.js';
+import { receiptSummary } from './trader-receipt-summary.js';
 
 // Discord rate-limits DMs, so notices are queued instead of fired off in a
 // burst: a short gap between messages, then a longer pause after every few.
@@ -212,9 +213,14 @@ export function startTraderSaleNotifications(client, socket, log = console.log, 
       const kind = notice.kind === 'invoice' ? 'invoice' : 'sale';
       const user = await client.users.fetch(discordUserId);
 
-      // How fresh the data is comes before the receipt itself; the stamps are
-      // Discord timestamps, so each reader sees them in their own time zone.
-      const message = { content: traderInfoLine({ latestEntryTime: notice.latest_entry_time }) };
+      // How fresh the data is comes before the receipt, then the same numbers as
+      // text: the stamps localise per reader and the summary stays searchable.
+      const message = {
+        content: [
+          traderInfoLine({ latestEntryTime: notice.latest_entry_time }),
+          receiptSummary(sales)
+        ].filter(Boolean).join('\n')
+      };
       const tempImages = [];
 
       try {
@@ -246,13 +252,75 @@ export function startTraderSaleNotifications(client, socket, log = console.log, 
       } finally {
         for (const temp of tempImages.splice(0)) await temp.remove();
       }
+
+      reportDmFailure(discordUserId, false);
     } catch (error) {
+      // A closed DM and a failed fetch both mean the receipt never arrived, and
+      // /trader status should be able to say so.
+      reportDmFailure(String(notice?.discord_user_id || '').trim(), true);
       log(`Trader sale DM failed for ${notice?.discord_user_id || 'unknown user'}: ${error.message}`);
     }
   };
 
-  const listener = (notice) => enqueue(() => handler(notice));
+  // Whether the DM actually went through is the backend's to remember, so
+  // /trader status can say so instead of leaving a member believing they are
+  // subscribed while every receipt quietly fails.
+  const reportDmFailure = (discordUserId, failed) => {
+    try {
+      if (!socket.connected) return;
+      socket.emit('guildsync:trader-sales-subscription', {
+        discord_user_id: String(discordUserId || ''),
+        action: 'dm-failed',
+        failed
+      });
+    } catch {
+      // Best effort: the receipt itself has already been sent or has failed.
+    }
+  };
+
+  // The backend keeps a notice it could not hand over while the bot was offline;
+  // ask for those as soon as the socket connects, so a receipt is late, not lost.
+  const replayNotices = async (notices = []) => {
+    const list = Array.isArray(notices) ? notices.filter(Boolean) : [];
+    if (!list.length) return;
+
+    for (const notice of list) await enqueue(() => handler(notice));
+
+    socket.emit('guildsync:trader-sales-subscription', {
+      action: 'delivered',
+      ids: list.flatMap((notice) => notice.notice_ids || [])
+    });
+
+    log(`Trader sales: replayed ${list.length} receipt(s) that arrived while the bot was offline.`);
+  };
+
+  const replayPending = () => {
+    if (!socket.connected) return;
+
+    socket.timeout(15000).emit('guildsync:trader-sales-subscription', { action: 'pending' }, (error, response) => {
+      if (error || !response?.ok) return;
+      replayNotices(response.notices).catch((replayError) => log(`Trader sales: replay failed: ${replayError.message}`));
+    });
+  };
+
+  // The acknowledgement is what lets the backend mark the notice delivered.
+  const listener = (notice, ack) => {
+    const done = () => {
+      try {
+        ack?.();
+      } catch {
+        // The delivery mark is best effort.
+      }
+    };
+
+    return enqueue(() => handler(notice)).then(done, done);
+  };
 
   socket.on('guildsync:trader-sale-notice', listener);
-  return () => socket.off('guildsync:trader-sale-notice', listener);
+  socket.on('connect', replayPending);
+
+  return () => {
+    socket.off('guildsync:trader-sale-notice', listener);
+    socket.off('connect', replayPending);
+  };
 }

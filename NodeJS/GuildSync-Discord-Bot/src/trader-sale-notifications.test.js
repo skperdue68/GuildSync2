@@ -276,11 +276,108 @@ test('a receipt DM says how fresh the data is, then the images', async () => {
   await handler({ discord_user_id: '42', kind: 'sale', sales: [sale], latest_entry_time: 1780000501 });
   await handler({ discord_user_id: '42', kind: 'sale', sales: [sale] });
 
-  assert.match(sent[0].content, /^As of <t:\d+:f> — most recent GuildSync info at <t:1780000501:f>\.$/);
+  assert.match(
+    sent[0].content,
+    /^As of <t:\d+:f> — most recent GuildSync info at <t:1780000501:f>\.\n1 sale · 100,000g gross · 7,000g tax · 93,000g net$/
+  );
   assert.equal(sent[0].files.length, 1, 'the receipt still follows the line');
   assert.equal(sent[0].embeds, undefined);
 
-  assert.match(sent[1].content, /the time of the most recent GuildSync info is unknown/, 'a notice without the field is not called empty');
+  assert.match(
+    sent[1].content,
+    /the GuildSync backend did not report when its trader data was last updated/,
+    'a notice without the field is not called empty'
+  );
+});
+
+test('a notice is acknowledged once its DM has been handled', async () => {
+  const acks = [];
+  const handlers = new Map();
+  const socket = { on: (event, handler) => handlers.set(event, handler), off() {} };
+  const client = { users: { async fetch() { return { async send() {} }; } } };
+  startTraderSaleNotifications(client, socket, () => {}, { enqueue: (task) => task() });
+
+  await handlers.get('guildsync:trader-sale-notice')(
+    { discord_user_id: '42', kind: 'sale', sales: [sale] },
+    () => acks.push('delivered')
+  );
+  assert.deepEqual(acks, ['delivered'], 'the backend can mark the notice delivered');
+
+  const broken = new Map();
+  startTraderSaleNotifications(
+    { users: { async fetch() { throw new Error('DMs closed'); } } },
+    { on: (event, handler) => broken.set(event, handler), off() {} },
+    () => {},
+    { enqueue: (task) => task() }
+  );
+  await broken.get('guildsync:trader-sale-notice')(
+    { discord_user_id: '42', kind: 'sale', sales: [sale] },
+    () => acks.push('attempted')
+  );
+  assert.deepEqual(acks, ['delivered', 'attempted'], 'an attempted send is acknowledged too, so it is not replayed forever');
+});
+
+test('a failed or successful DM is reported so /trader status can show it', async () => {
+  const emitted = [];
+  const handlers = new Map();
+  const socket = {
+    connected: true,
+    on: (event, handler) => handlers.set(event, handler),
+    off() {},
+    emit(event, payload) { emitted.push({ event, payload }); }
+  };
+  const client = {
+    users: {
+      async fetch(id) {
+        if (id === 'closed') throw new Error('DMs closed');
+        return { async send() {} };
+      }
+    }
+  };
+  startTraderSaleNotifications(client, socket, () => {}, { enqueue: (task) => task() });
+
+  const handler = handlers.get('guildsync:trader-sale-notice');
+  await handler({ discord_user_id: '42', kind: 'sale', sales: [sale] });
+  await handler({ discord_user_id: 'closed', kind: 'sale', sales: [sale] });
+
+  assert.deepEqual(emitted, [
+    { event: 'guildsync:trader-sales-subscription', payload: { discord_user_id: '42', action: 'dm-failed', failed: false } },
+    { event: 'guildsync:trader-sales-subscription', payload: { discord_user_id: 'closed', action: 'dm-failed', failed: true } }
+  ]);
+});
+
+test('the bot replays receipts the backend kept while it was offline', async () => {
+  const sent = [];
+  const emitted = [];
+  const handlers = new Map();
+  const socket = {
+    connected: true,
+    on: (event, handler) => handlers.set(event, handler),
+    off() {},
+    emit(event, payload) { emitted.push({ event, payload }); },
+    timeout() {
+      return {
+        emit: (event, payload, callback) => callback(null, {
+          ok: true,
+          protocol: 2,
+          notices: [{ discord_user_id: '42', kind: 'sale', sales: [sale], latest_entry_time: 1780000501, notice_ids: [7] }]
+        })
+      };
+    }
+  };
+  const client = { users: { async fetch() { return { async send(message) { sent.push(message); } }; } } };
+  startTraderSaleNotifications(client, socket, () => {}, { enqueue: (task) => task() });
+
+  handlers.get('connect')();
+  for (let wait = 0; wait < 50 && !sent.length; wait += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  assert.equal(sent.length, 1, 'the kept receipt is sent when the bot comes back');
+  assert.deepEqual(emitted, [
+    { event: 'guildsync:trader-sales-subscription', payload: { discord_user_id: '42', action: 'dm-failed', failed: false } },
+    { event: 'guildsync:trader-sales-subscription', payload: { action: 'delivered', ids: [7] } }
+  ]);
 });
 
 test('the socket listener sends only the receipt image and deletes the temp file', async () => {

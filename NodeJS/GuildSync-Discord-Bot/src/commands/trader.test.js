@@ -23,15 +23,20 @@ function fixture({ response, option = 'on', connected = true, item = null, guild
     timeout() { return this; },
     emit(event, payload, callback) {
       calls.push({ event, payload });
-      callback(null, response);
+      // A current backend stamps its protocol on every reply.
+      callback(null, response && typeof response === 'object' ? { protocol: 2, ...response } : response);
     }
   };
   return { interaction, socket, replies, defers, calls };
 }
 
-test('the global /trader command exposes on, register, off, unregister, sales and test', () => {
+test('the global /trader command exposes on, register, off, unregister, sales, receipt and status', () => {
   assert.equal(data.name, 'trader');
-  assert.deepEqual(data.options.map((option) => option.name), ['on', 'register', 'off', 'unregister', 'sales', 'test']);
+  assert.deepEqual(
+    data.options.map((option) => option.name),
+    ['on', 'register', 'off', 'unregister', 'sales', 'receipt', 'status']
+  );
+  assert.equal(data.options.some((option) => option.name === 'test'), false, '/trader test is gone');
   assert.equal(data.dm_permission, true);
   assert.ok(
     JSON.stringify(data.toJSON()).includes('"name":"sales"'),
@@ -68,46 +73,57 @@ test('turning invoices on and off reports the linked account', async () => {
   assert.match(off.replies[0].content, /\/trader on/);
 });
 
-test('/trader test renders the receipt into the reply instead of sending a DM', async () => {
+test('/trader receipt asks for the newest sale and confirms the DM', async () => {
   const f = fixture({
-    option: 'test',
+    option: 'receipt',
     guildId: '761817',
     response: { ok: true, linked: true, eso_account_name: '@Seller', sales: [soldSale], latest_entry_time: 1794900000 }
   });
   await execute(f.interaction, f.socket);
 
   assert.equal(f.calls[0].event, 'guildsync:trader-sales-subscription');
-  assert.deepEqual(f.calls[0].payload, { discord_user_id: '42', action: 'test' });
+  assert.deepEqual(f.calls[0].payload, { discord_user_id: '42', action: 'receipt' });
   assert.deepEqual(f.defers[0].flags, [MessageFlags.Ephemeral], 'a channel answer stays private to the caller');
-  assert.match(f.replies[0].content, /Test receipt for your newest 1 sale\./);
-  assert.equal(f.replies[0].files.length, 1);
-  assert.equal(f.replies[0].files[0].name, 'trader-sales-receipt.png');
+
+  const [freshness, confirmation, summary] = f.replies[0].content.split('\n');
+  assert.match(freshness, /^As of <t:\d+:f> — most recent GuildSync info at <t:1794900000:f>\.$/);
+  assert.equal(confirmation, 'Sent your newest sale receipt to your DMs.');
+  assert.equal(summary, '1 sale · 15g gross · 0g tax · 15g net', 'the numbers are repeated as text');
+
+  assert.equal(f.replies[0].files, undefined, 'the receipt is DMd, not attached to the reply');
 });
 
-test('a one-sale test receipt is captioned Last 1 sale, not a congratulations', async () => {
-  const f = fixture({
-    option: 'test',
-    response: { ok: true, linked: true, sales: [soldSale], latest_entry_time: 1794900000 }
+test('/trader status says whether receipts are on, and whether a DM failed', async () => {
+  const on = fixture({
+    option: 'status',
+    response: { ok: true, linked: true, eso_account_name: '@Seller', enabled: true, subscribed_at: 1794000000 }
   });
-  await execute(f.interaction, f.socket);
+  await execute(on.interaction, on.socket);
 
-  const [neutral] = await renderTraderInvoiceImages({ sales: [soldSale], caption: 'Last 1 sale.' });
-  assert.deepEqual(
-    Buffer.from(f.replies[0].files[0].attachment),
-    Buffer.from(neutral),
-    'the rendered page matches a neutral-caption receipt, not the congratulations default'
-  );
+  assert.deepEqual(on.calls[0].payload, { discord_user_id: '42', action: 'status' });
+  assert.match(on.replies[0].content, /^Trader sale receipts are on for @Seller since <t:1794000000:f>\./);
+  assert.doesNotMatch(on.replies[0].content, /failed/);
+
+  const broken = fixture({
+    option: 'status',
+    response: { ok: true, linked: true, eso_account_name: '@Seller', enabled: false, dm_failed_at: 1794900000 }
+  });
+  await execute(broken.interaction, broken.socket);
+
+  assert.match(broken.replies[0].content, /are off for @Seller/);
+  assert.match(broken.replies[0].content, /\/trader on/);
+  assert.match(broken.replies[0].content, /last receipt DM to you failed on <t:1794900000:f>/);
 });
 
-test('a test with nothing stored or no link explains why there is nothing to show', async () => {
+test('a receipt with nothing stored or no link explains why there is nothing to show', async () => {
   const empty = fixture({
     response: { ok: false, linked: true, message: 'No trader sales are stored for your linked ESO account yet.' },
-    option: 'test'
+    option: 'receipt'
   });
   await execute(empty.interaction, empty.socket);
   assert.match(empty.replies[0].content, /No trader sales are stored/);
 
-  const unlinked = fixture({ response: { ok: false, linked: false }, option: 'test' });
+  const unlinked = fixture({ response: { ok: false, linked: false }, option: 'receipt' });
   await execute(unlinked.interaction, unlinked.socket);
   assert.equal(unlinked.replies[0].content, LINK_REQUIRED_MESSAGE);
 });
@@ -175,7 +191,7 @@ test('/trader sales reports an item that has no entries', async () => {
   await execute(f.interaction, f.socket);
 
   assert.equal(f.replies[0].content.split('\n').at(-1), 'There are no sales entries for an item named dreugh wax.');
-  assert.match(f.replies[0].content, /^As of <t:\d+:f> — the time of the most recent GuildSync info is unknown\./);
+  assert.match(f.replies[0].content, /^As of <t:\d+:f> — the GuildSync backend did not report when its trader data was last updated\./);
   assert.equal(f.replies[0].files, undefined);
 });
 
@@ -207,16 +223,16 @@ test('sales answers lead with how fresh the data is', async () => {
   assert.match(second, /1 sale matching “soul gem”/);
 });
 
-test('/trader test and an empty search both lead with the freshness line', async () => {
-  const testReply = fixture({
-    option: 'test',
-    response: { ok: true, linked: true, sales: [soldSale, { ...soldSale, eventId: 502 }], latest_entry_time: 1794000000 }
+test('/trader receipt and an empty search both lead with the freshness line', async () => {
+  const receipt = fixture({
+    option: 'receipt',
+    response: { ok: true, linked: true, sales: [soldSale], latest_entry_time: 1794000000 }
   });
-  await execute(testReply.interaction, testReply.socket);
-  assert.match(
-    testReply.replies[0].content,
-    /^As of <t:\d+:f> — most recent GuildSync info at <t:1794000000:f>\.\nTest receipt for your newest 2 sales\.$/
-  );
+  await execute(receipt.interaction, receipt.socket);
+
+  const [freshness, confirmation] = receipt.replies[0].content.split('\n');
+  assert.match(freshness, /^As of <t:\d+:f> — most recent GuildSync info at <t:1794000000:f>\.$/);
+  assert.equal(confirmation, 'Sent your newest sale receipt to your DMs.');
 
   const none = fixture({
     option: 'sales',
@@ -227,6 +243,22 @@ test('/trader test and an empty search both lead with the freshness line', async
   assert.match(
     none.replies[0].content,
     /^As of <t:\d+:f> — most recent GuildSync info at <t:1794000000:f>\.\nThere are no sales entries for an item named dreugh wax\.$/
+  );
+});
+
+test('an older backend is named once instead of looking like missing data', async () => {
+  const logs = [];
+
+  for (let call = 0; call < 2; call += 1) {
+    const f = fixture({ option: 'status' });
+    f.socket.emit = (event, payload, callback) => callback(null, { ok: true, enabled: false, protocol: 1 });
+    await execute(f.interaction, f.socket, (line) => logs.push(line));
+  }
+
+  assert.equal(
+    logs.filter((line) => line.includes('speaks trader protocol 1')).length,
+    1,
+    'the mismatch is logged once per process, not on every command'
   );
 });
 
