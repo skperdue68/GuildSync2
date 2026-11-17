@@ -69,6 +69,20 @@ export function testReceiptOptions(sales = []) {
 // register/unregister are aliases so either wording works.
 const ACTION_BY_OPTION = { on: 'on', register: 'on', off: 'off', unregister: 'off', sales: 'sales', test: 'test' };
 
+// Both receipt answers are built the same way: render the pages, name the files,
+// and put the freshness line above the reply line. The options and the wording
+// differ, so they are arguments instead of a second copy of this code.
+async function receiptReply({ infoLine, line, renderOptions }) {
+  const pages = await renderTraderInvoiceImages(renderOptions);
+  const names = traderReceiptFileNames(pages.length);
+
+  return {
+    content: `${infoLine}\n${line}`,
+    files: pages.map((png, index) => new AttachmentBuilder(png, { name: names[index] })),
+    allowedMentions: { parse: [] }
+  };
+}
+
 function request(socket, payload) {
   return new Promise((resolve, reject) => {
     if (!socket?.connected) {
@@ -128,25 +142,20 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
       }
 
       const truncated = Boolean(response.truncated);
-      const pages = await renderTraderInvoiceImages({
-        sales,
-        kind: sales.length === 1 ? 'sale' : 'invoice',
-        caption: searchReceiptCaption(sales, item),
-        footerNote: truncated
-          ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
-          : ''
-      });
-      const names = traderReceiptFileNames(pages.length);
-      await interaction.editReply({
-        content: [
-          infoLine,
-          truncated
-            ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
-            : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`
-        ].join('\n'),
-        files: pages.map((png, index) => new AttachmentBuilder(png, { name: names[index] })),
-        allowedMentions: { parse: [] }
-      });
+      await interaction.editReply(await receiptReply({
+        infoLine,
+        line: truncated
+          ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
+          : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`,
+        renderOptions: {
+          sales,
+          kind: sales.length === 1 ? 'sale' : 'invoice',
+          caption: searchReceiptCaption(sales, item),
+          footerNote: truncated
+            ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
+            : ''
+        }
+      }));
 
       log(`Trader sales search for “${item}” returned ${sales.length} sale(s) for Discord user ${interaction.user?.id || 'unknown'}.`);
       return;
@@ -163,17 +172,15 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
         return;
       }
 
-      const pages = await renderTraderInvoiceImages(testReceiptOptions(sales));
-      const names = traderReceiptFileNames(pages.length);
       const count = sales.length;
 
       // The receipt goes where the command was typed: this reply is ephemeral in
       // a channel and is the DM itself when the command was sent in a DM.
-      await interaction.editReply({
-        content: `${infoLine}\nTest receipt for your newest ${count} sale${count === 1 ? '' : 's'}.`,
-        files: pages.map((png, index) => new AttachmentBuilder(png, { name: names[index] })),
-        allowedMentions: { parse: [] }
-      });
+      await interaction.editReply(await receiptReply({
+        infoLine,
+        line: `Test receipt for your newest ${count} sale${count === 1 ? '' : 's'}.`,
+        renderOptions: testReceiptOptions(sales)
+      }));
 
       log(`Trader test receipt rendered for Discord user ${interaction.user?.id || 'unknown'} with ${count} sale(s).`);
       return;
