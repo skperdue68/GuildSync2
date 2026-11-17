@@ -193,6 +193,70 @@ export async function planTraderSaleNotices(db, sales = []) {
   return groupTraderSaleNotices(sales, (seller) => bySeller.get(String(seller || '').trim().toLowerCase()) || []);
 }
 
+// How many recent sales /trader test replays. The receipt itself stops at 16
+// rows and says how many were left out, so this only bounds the query.
+const TEST_SALE_LIMIT = 50;
+
+// /trader test replays the newest sales already stored for the linked account so
+// the DM can be checked without waiting for a live sale. It deliberately skips
+// the subscription cutoff that hides sales older than /trader on.
+export async function loadTraderSalesForTest(db, discordUserId, { limit = TEST_SALE_LIMIT } = {}) {
+  const id = normalizeUserId(discordUserId);
+  if (!id) return { sales: [], names: [] };
+
+  const linkedNames = await getLinkedEsoNames(db, id);
+  if (!linkedNames.length) return { sales: [], names: [] };
+
+  const keys = new Set();
+  for (const name of linkedNames) {
+    for (const alias of await loadEsoAccountAliases(db, name)) {
+      const key = String(alias || '').trim().replace(/^@+/, '').toLowerCase();
+      if (key) keys.add(key);
+    }
+  }
+
+  if (!keys.size) return { sales: [], names: linkedNames };
+
+  const list = [...keys];
+  const placeholders = list.map(() => '?').join(',');
+  const [rows] = await db.execute(
+    `SELECT event_id, guild_name, world, seller, buyer, item_name, quantity, price, unit_price, tax, net, event_timestamp
+       FROM guildsync_trader_entries
+      WHERE LOWER(TRIM(LEADING '@' FROM seller)) IN (${placeholders})
+         OR LOWER(TRIM(LEADING '@' FROM seller_original)) IN (${placeholders})
+      ORDER BY event_timestamp DESC
+      LIMIT ${Number(limit) || TEST_SALE_LIMIT}`,
+    [...list, ...list]
+  );
+
+  return {
+    names: linkedNames,
+    sales: (Array.isArray(rows) ? rows : []).map((row) => ({
+      eventId: row.event_id,
+      guildName: row.guild_name,
+      world: row.world,
+      seller: row.seller,
+      buyer: row.buyer,
+      itemName: row.item_name,
+      quantity: row.quantity,
+      price: row.price,
+      unitPrice: row.unit_price,
+      tax: row.tax,
+      net: row.net,
+      eventTimestamp: row.event_timestamp
+    }))
+  };
+}
+
+// A test notice is a normal notice with the age filter disabled.
+export function buildTraderTestNotice(discordUserId, sales = []) {
+  const id = normalizeUserId(discordUserId);
+  if (!id) return null;
+
+  const subscribers = [{ discord_user_id: id, subscribed_at: 0 }];
+  return groupTraderSaleNotices(sales, () => subscribers)[0] || null;
+}
+
 export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
   socket.on('guildsync:trader-sales-subscription', async (payload = {}, callback) => {
     const reply = (response) => {
@@ -221,6 +285,29 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
           eso_account_name: linked[0] || null,
           ...(await getTraderSalesSubscription(db, discordUserId))
         });
+        return;
+      }
+
+      if (action === 'test') {
+        const { sales, names } = await loadTraderSalesForTest(db, discordUserId);
+        if (!names.length) {
+          reply({ ok: false, linked: false });
+          return;
+        }
+
+        const notice = buildTraderTestNotice(discordUserId, sales);
+        if (!notice) {
+          reply({
+            ok: false,
+            linked: true,
+            eso_account_name: names[0],
+            message: 'No trader sales are stored for your linked ESO account yet.'
+          });
+          return;
+        }
+
+        socket.emit('guildsync:trader-sale-notice', notice);
+        reply({ ok: true, linked: true, eso_account_name: names[0], sales: notice.sales.length });
         return;
       }
 

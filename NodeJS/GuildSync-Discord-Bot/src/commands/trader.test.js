@@ -23,9 +23,9 @@ function fixture({ response, option = 'on', connected = true } = {}) {
   return { interaction, socket, replies, calls };
 }
 
-test('the global /trader command exposes on, register, off and unregister', () => {
+test('the global /trader command exposes on, register, off, unregister and test', () => {
   assert.equal(data.name, 'trader');
-  assert.deepEqual(data.options.map((option) => option.name), ['on', 'register', 'off', 'unregister']);
+  assert.deepEqual(data.options.map((option) => option.name), ['on', 'register', 'off', 'unregister', 'test']);
   assert.equal(data.dm_permission, true);
   assert.ok(!JSON.stringify(data.toJSON()).includes('"sales"'), 'the retired /sales command is gone');
 });
@@ -57,6 +57,28 @@ test('turning invoices on and off reports the linked account', async () => {
   await execute(off.interaction, off.socket);
   assert.match(off.replies[0].content, /invoices are off for @Seller/);
   assert.match(off.replies[0].content, /\/trader on/);
+});
+
+test('/trader test asks the backend to replay the stored sales into a DM', async () => {
+  const f = fixture({ response: { ok: true, linked: true, eso_account_name: '@Seller', sales: 3 }, option: 'test' });
+  await execute(f.interaction, f.socket);
+
+  assert.equal(f.calls[0].event, 'guildsync:trader-sales-subscription');
+  assert.deepEqual(f.calls[0].payload, { discord_user_id: '42', action: 'test' });
+  assert.match(f.replies[0].content, /test receipt with 3 sales/);
+});
+
+test('a test with nothing stored or no link explains why no DM arrived', async () => {
+  const empty = fixture({
+    response: { ok: false, linked: true, message: 'No trader sales are stored for your linked ESO account yet.' },
+    option: 'test'
+  });
+  await execute(empty.interaction, empty.socket);
+  assert.match(empty.replies[0].content, /No trader sales are stored/);
+
+  const unlinked = fixture({ response: { ok: false, linked: false }, option: 'test' });
+  await execute(unlinked.interaction, unlinked.socket);
+  assert.equal(unlinked.replies[0].content, LINK_REQUIRED_MESSAGE);
 });
 
 test('a disconnected GuildSync backend is reported instead of crashing', async () => {

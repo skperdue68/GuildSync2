@@ -24,10 +24,13 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((subcommand) => subcommand
     .setName('unregister')
     .setDescription('Same as /trader off: stop sending me trader sale invoices.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('test')
+    .setDescription('Temporary: DM me a receipt for my newest stored trader sales.'))
   .setDMPermission(true);
 
 // register/unregister are aliases so either wording works.
-const ACTION_BY_OPTION = { on: 'on', register: 'on', off: 'off', unregister: 'off' };
+const ACTION_BY_OPTION = { on: 'on', register: 'on', off: 'off', unregister: 'off', test: 'test' };
 
 function request(socket, payload) {
   return new Promise((resolve, reject) => {
@@ -63,6 +66,17 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
         ? LINK_REQUIRED_MESSAGE
         : response?.message || 'Could not update trader sale invoices.';
       await interaction.editReply({ content, allowedMentions: { parse: [] } });
+      return;
+    }
+
+    if (action === 'test') {
+      const count = Number(response.sales) || 0;
+      await interaction.editReply({
+        content: `Sent a test receipt with ${count} sale${count === 1 ? '' : 's'} to your DMs.`,
+        allowedMentions: { parse: [] }
+      });
+
+      log(`Trader test receipt sent to Discord user ${interaction.user?.id || 'unknown'} with ${count} sale(s).`);
       return;
     }
 

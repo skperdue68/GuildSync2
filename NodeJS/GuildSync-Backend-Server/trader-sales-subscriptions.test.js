@@ -6,6 +6,8 @@ import {
   getTraderSalesSubscription,
   groupTraderSaleNotices,
   planTraderSaleNotices,
+  loadTraderSalesForTest,
+  buildTraderTestNotice,
   registerTraderSalesSubscriptionSocket
 } from './trader-sales-subscriptions.js';
 
@@ -167,6 +169,71 @@ test('the socket handler is bot-only and toggles subscriptions', async () => {
   registerTraderSalesSubscriptionSocket({ guildSyncAuthType: 'GuildSync user', on: (event, handler) => denied.set(event, handler) }, { db });
   const deniedResult = await new Promise((resolve) => denied.get('guildsync:trader-sales-subscription')({ action: 'on', discord_user_id: '42' }, resolve));
   assert.equal(deniedResult.ok, false);
+});
+
+test('/trader test loads the newest stored sales for the linked account', async () => {
+  const db = database();
+  const execute = db.execute;
+  db.execute = async (sql, args = []) => {
+    if (sql.includes('FROM guildsync_trader_entries')) {
+      db.calls.push({ sql, args });
+      return [[
+        { event_id: 9, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 900 },
+        { event_id: 8, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@OldSeller', buyer: '@Buyer', item_name: 'Ruby', quantity: 2, price: 20000, unit_price: 10000, tax: 1400, net: 18600, event_timestamp: 800 }
+      ]];
+    }
+    return execute.call(db, sql, args);
+  };
+
+  const { sales, names } = await loadTraderSalesForTest(db, '42', { limit: 5 });
+  assert.deepEqual(names, ['@Seller']);
+  assert.deepEqual(sales.map((sale) => sale.eventId), [9, 8]);
+  assert.equal(sales[0].eventTimestamp, 900);
+
+  const query = db.calls.find((call) => call.sql.includes('FROM guildsync_trader_entries'));
+  assert.match(query.sql, /ORDER BY event_timestamp DESC/);
+  assert.match(query.sql, /LIMIT 5/);
+  assert.ok(query.sql.includes('seller_original'), 'renamed sellers still match');
+});
+
+test('a test notice keeps sales that predate the subscription', () => {
+  const notice = buildTraderTestNotice('42', [sale({ eventId: 1, time: 900 }), sale({ eventId: 2, time: 950 })]);
+
+  assert.equal(notice.discord_user_id, '42');
+  assert.equal(notice.kind, 'invoice');
+  assert.deepEqual(notice.sales.map((item) => item.eventId), [1, 2], 'both sales are older than any subscription');
+});
+
+test('/trader test emits the notice to the bot and reports the sale count', async () => {
+  const db = database();
+  const execute = db.execute;
+  db.execute = async (sql, args = []) => {
+    if (sql.includes('FROM guildsync_trader_entries')) {
+      return [[
+        { event_id: 9, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 900 }
+      ]];
+    }
+    return execute.call(db, sql, args);
+  };
+
+  const handlers = new Map();
+  const emitted = [];
+  const socket = {
+    guildSyncAuthType: 'discord-bot',
+    on(event, handler) { handlers.set(event, handler); },
+    emit(event, payload) { emitted.push({ event, payload }); }
+  };
+  registerTraderSalesSubscriptionSocket(socket, { db });
+
+  const result = await new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')({ action: 'test', discord_user_id: '42' }, resolve));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.sales, 1);
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].event, 'guildsync:trader-sale-notice');
+  assert.equal(emitted[0].payload.discord_user_id, '42');
+  assert.equal(emitted[0].payload.kind, 'sale');
+  assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO guildsync_trader_sales_subscriptions')), false, 'test never changes the subscription');
 });
 
 test('subscription rows are not created for an unknown action', async () => {

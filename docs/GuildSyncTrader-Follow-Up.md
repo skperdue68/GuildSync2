@@ -34,7 +34,10 @@ GuildSyncBanking is untouched.
 ## Sale notifications
 
 `/trader on` and `/trader off` are global Discord commands, so they work in the guild and in DMs;
-`/trader register` and `/trader unregister` are accepted as aliases for the same two actions. Run the
+`/trader register` and `/trader unregister` are accepted as aliases for the same two actions.
+`/trader test` sends the same receipt straight away for the newest stored sales of the linked account
+and ignores the subscription cutoff below, so the DM can be checked without waiting for a live sale.
+It is a temporary testing aid and can be removed once the trader path is settled. Run the
 bot's `npm run deploy` once to register the global command (the same PUT removes the retired global
 `/sales` command). A
 Discord account must have a `linked` row in `guildsync_member_links`; otherwise the bot explains how
@@ -45,9 +48,9 @@ when each sale is sent, so renames and re-links keep working.
 Trader data arrives as one SavedVars batch, so each subscriber gets at most one DM per import. Every
 DM is the receipt image alone (`trader-sales-receipt.png`, headed **TRADER SALES RECEIPT**) with no
 caption text beside it: date, transaction ID, buyer, item, quantity, unit price and amount, plus the
-guild name and NET PAYOUT total in the header band. The bottom line is the quick view — guild name,
-sales total, guild tax and net profit — beside the transaction number (one sale) or the sale and buyer
-count (several sales). The PNG is drawn at
+guild name and NET PAYOUT total in the header band. The bottom right corner stacks gross sales, guild
+tax and net profit one under the other, right aligned, with the net emphasised; the guild name and the
+transaction number (one sale) or the sale and buyer count (several sales) sit to its left. The PNG is drawn at
 2× resolution, so the inline preview stays modest while opening the image shows a full-size, sharp
 receipt. The bot writes that PNG to the OS temp directory, attaches it with `attachment://`, and
 deletes the file as soon as Discord has the message. Notices are queued instead of sent in a
