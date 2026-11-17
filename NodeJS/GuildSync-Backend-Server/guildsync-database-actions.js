@@ -1715,9 +1715,15 @@ export async function getDiscordMemberHistoryMatches(applicationDB, query = '') 
     `
       SELECT
         h.discord_id AS discord_id,
-        COALESCE(MAX(NULLIF(dm.username, '')), MAX(NULLIF(h.username, '')), h.discord_id) AS username,
-        COALESCE(MAX(NULLIF(dm.global_name, '')), MAX(NULLIF(h.global_name, ''))) AS global_name,
-        COALESCE(MAX(NULLIF(dm.server_nickname, '')), MAX(NULLIF(h.server_nickname, ''))) AS server_nickname,
+        MAX(NULLIF(dm.server_nickname, '')) AS server_nickname,
+        MAX(NULLIF(dm.global_name, '')) AS global_name,
+        COALESCE(
+          MAX(NULLIF(dm.username, '')),
+          MAX(NULLIF(h.server_nickname, '')),
+          MAX(NULLIF(h.global_name, '')),
+          MAX(NULLIF(h.username, '')),
+          h.discord_id
+        ) AS username,
         COUNT(*) AS event_count,
         MAX(h.event_datetime) AS last_event_datetime
       FROM discord_member_history h
@@ -1734,10 +1740,10 @@ export async function getDiscordMemberHistoryMatches(applicationDB, query = '') 
       ORDER BY
         LOWER(COALESCE(
           MAX(NULLIF(dm.server_nickname, '')),
-          MAX(NULLIF(h.server_nickname, '')),
           MAX(NULLIF(dm.global_name, '')),
-          MAX(NULLIF(h.global_name, '')),
           MAX(NULLIF(dm.username, '')),
+          MAX(NULLIF(h.server_nickname, '')),
+          MAX(NULLIF(h.global_name, '')),
           MAX(NULLIF(h.username, '')),
           h.discord_id
         )) ASC,
