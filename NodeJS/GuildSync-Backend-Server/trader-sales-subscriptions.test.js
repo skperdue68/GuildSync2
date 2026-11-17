@@ -6,14 +6,21 @@ import {
   getTraderSalesSubscription,
   groupTraderSaleNotices,
   planTraderSaleNotices,
-  loadTraderSalesForTest,
+  loadTraderSalesForReceipt,
   searchTraderSales,
   newestTraderEntryTime,
+  announceTraderSaleNotices,
+  markTraderSaleNoticesDelivered,
+  loadPendingTraderSaleNotices,
+  TRADER_SOCKET_PROTOCOL,
   registerTraderSalesSubscriptionSocket
 } from './trader-sales-subscriptions.js';
 
-function database({ linkedNames = ['@Seller'], subscribers = [] } = {}) {
+function database({ linkedNames = ['@Seller'], subscribers = [], pending = [], subscription = null } = {}) {
   const calls = [];
+  const inserted = new Set();
+  let nextId = 1;
+
   const db = {
     calls,
     async query(sql) {
@@ -27,7 +34,16 @@ function database({ linkedNames = ['@Seller'], subscribers = [] } = {}) {
         return [linkedNames.map((eso_account_name) => ({ eso_account_name }))];
       }
       if (sql.includes('FROM guildsync_trader_sales_subscriptions AS subscriptions')) return [subscribers];
-      if (sql.includes('FROM guildsync_trader_sales_subscriptions') && sql.includes('LIMIT 1')) return [[]];
+      if (sql.includes('INSERT IGNORE INTO guildsync_trader_sale_notices')) {
+        const key = `${args[0]}:${args[1]}:${args[2]}`;
+        if (inserted.has(key)) return [{ affectedRows: 0, insertId: 0 }];
+        inserted.add(key);
+        return [{ affectedRows: 1, insertId: nextId++ }];
+      }
+      if (sql.includes('SELECT id, discord_user_id, sale_json')) return [pending];
+      if (sql.includes('FROM guildsync_trader_sales_subscriptions') && sql.includes('LIMIT 1')) {
+        return [subscription ? [subscription] : []];
+      }
       return [{}];
     }
   };
@@ -55,6 +71,13 @@ test('subscription table is created and on/off require a linked ESO account', as
   const db = database();
   await initializeTraderSalesSubscriptions(db);
   assert.ok(db.calls.some((call) => call.sql.includes('CREATE TABLE IF NOT EXISTS guildsync_trader_sales_subscriptions')));
+  assert.ok(db.calls.some((call) => call.sql.includes('ADD COLUMN IF NOT EXISTS last_dm_failed_at')));
+  assert.ok(db.calls.some((call) => call.sql.includes('CREATE TABLE IF NOT EXISTS guildsync_trader_sale_notices')));
+  assert.ok(
+    db.calls.some((call) => call.sql.includes('UNIQUE KEY uniq_trader_sale_notice')),
+    'the unique key is what stops a sale being announced twice'
+  );
+  assert.ok(db.calls.some((call) => call.sql.includes('delivered_at < NOW() - INTERVAL 90 DAY')), 'old notices are pruned');
 
   const unlinked = database({ linkedNames: [] });
   const refused = await setTraderSalesSubscription(unlinked, '42', true, { now: 1234 });
@@ -84,7 +107,7 @@ test('subscription table is created and on/off require a linked ESO account', as
 test('subscription status reads the stored flag', async () => {
   const db = database();
   const status = await getTraderSalesSubscription(db, '42');
-  assert.deepEqual(status, { enabled: false, subscribed_at: null });
+  assert.deepEqual(status, { enabled: false, subscribed_at: null, dm_failed_at: null });
 });
 
 test('a live import with several sales becomes one invoice and keeps the age filter', () => {
@@ -172,7 +195,7 @@ test('the socket handler is bot-only and toggles subscriptions', async () => {
   assert.equal(deniedResult.ok, false);
 });
 
-test('/trader test loads the newest stored sales for the linked account', async () => {
+test('/trader receipt loads the newest stored sale for the linked account', async () => {
   const db = database();
   const execute = db.execute;
   db.execute = async (sql, args = []) => {
@@ -186,7 +209,7 @@ test('/trader test loads the newest stored sales for the linked account', async 
     return execute.call(db, sql, args);
   };
 
-  const { sales, names } = await loadTraderSalesForTest(db, '42', { limit: 5 });
+  const { sales, names } = await loadTraderSalesForReceipt(db, '42', { limit: 5 });
   assert.deepEqual(names, ['@Seller']);
   assert.deepEqual(sales.map((sale) => sale.eventId), [9, 8]);
   assert.equal(sales[0].time, 900, 'rows are normalised through saleForNotice');
@@ -316,14 +339,16 @@ test('/trader sales returns the matches without sending a DM', async () => {
   assert.deepEqual(emitted, [], 'a search never sends a DM');
 });
 
-test('/trader test returns the sales instead of sending a DM', async () => {
+test('/trader receipt DMs the newest sale and returns it for the reply', async () => {
   const db = database();
   const execute = db.execute;
   db.execute = async (sql, args = []) => {
     if (sql.includes('MAX(event_timestamp)')) return [[{ latest: 901 }]];
     if (sql.includes('FROM guildsync_trader_entries')) {
+      db.calls.push({ sql, args });
       return [[
-        { event_id: 9, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 900 }
+        { event_id: 9, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 900 },
+        { event_id: 8, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Ruby', quantity: 2, price: 20000, unit_price: 10000, tax: 1400, net: 18600, event_timestamp: 800 }
       ]];
     }
     return execute.call(db, sql, args);
@@ -338,14 +363,28 @@ test('/trader test returns the sales instead of sending a DM', async () => {
   };
   registerTraderSalesSubscriptionSocket(socket, { db });
 
-  const result = await new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')({ action: 'test', discord_user_id: '42' }, resolve));
+  const result = await new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')({ action: 'receipt', discord_user_id: '42' }, resolve));
 
   assert.equal(result.ok, true);
-  assert.equal(result.sales.length, 1, 'the bot renders these itself, where the command was typed');
+  assert.equal(result.sales.length, 1, 'only the most recent sale is replayed');
   assert.equal(result.sales[0].itemName, 'Soul Gem');
   assert.equal(result.latest_entry_time, 901, 'the reply is dated like every other receipt');
-  assert.deepEqual(emitted, [], 'a test receipt no longer leaves as a notice');
-  assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO guildsync_trader_sales_subscriptions')), false, 'test never changes the subscription');
+
+  const query = db.calls.find((call) => call.sql.includes('FROM guildsync_trader_entries'));
+  assert.match(query.sql, /LIMIT 1/, 'the receipt only asks for the newest sale');
+
+  assert.equal(emitted.length, 1, 'the receipt itself leaves as a DM');
+  assert.equal(emitted[0].event, 'guildsync:trader-sale-notice');
+  assert.equal(emitted[0].payload.kind, 'sale', 'it is presented as a sale that just happened');
+  assert.deepEqual(emitted[0].payload.sales.map((sale) => sale.eventId), [9]);
+  assert.equal(emitted[0].payload.latest_entry_time, 901);
+
+  assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO guildsync_trader_sales_subscriptions')), false, 'receipt never changes the subscription');
+  assert.equal(
+    db.calls.some((call) => call.sql.includes('INSERT IGNORE INTO guildsync_trader_sale_notices')),
+    false,
+    'a replay is not an announcement, so it is not recorded as one'
+  );
 });
 
 test('the newest stored entry time comes from the trader entries table', async () => {
@@ -365,7 +404,7 @@ test('the newest stored entry time comes from the trader entries table', async (
   assert.equal(await newestTraderEntryTime(empty), 0, 'an empty table reads as no known time');
 });
 
-test('/trader sales and /trader test both report the newest stored entry time', async () => {
+test('/trader sales and /trader receipt both report the newest stored entry time', async () => {
   const db = database();
   const execute = db.execute;
   db.execute = async (sql, args = []) => {
@@ -390,10 +429,104 @@ test('/trader sales and /trader test both report the newest stored entry time', 
   assert.equal(found.ok, true);
   assert.equal(found.latest_entry_time, 4321);
 
-  const testReply = await ask({ action: 'test', discord_user_id: '42' });
-  assert.equal(testReply.sales.length, 1);
-  assert.equal(testReply.latest_entry_time, 4321, 'the test receipt is dated too');
-  assert.deepEqual(emitted, [], 'the test receipt is rendered where the command was typed');
+  const receiptReply = await ask({ action: 'receipt', discord_user_id: '42' });
+  assert.equal(receiptReply.sales.length, 1);
+  assert.equal(receiptReply.latest_entry_time, 4321, 'the receipt DM is dated too');
+  assert.equal(emitted.length, 1, 'the receipt leaves as a notice so it arrives by DM');
+  assert.equal(emitted[0].payload.latest_entry_time, 4321);
+});
+
+test('every reply is stamped with the protocol, and status reports a failed DM', async () => {
+  const db = database({ subscription: { enabled: 1, subscribed_at: 1234, dm_failed_at: 555 } });
+  const handlers = new Map();
+  const socket = { guildSyncAuthType: 'discord-bot', on: (event, handler) => handlers.set(event, handler) };
+  registerTraderSalesSubscriptionSocket(socket, { db });
+  const ask = (payload) => new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')(payload, resolve));
+
+  const result = await ask({ action: 'status', discord_user_id: '42' });
+  assert.equal(result.ok, true);
+  assert.equal(result.protocol, TRADER_SOCKET_PROTOCOL, 'the bot can compare protocols instead of guessing');
+  assert.equal(result.enabled, true);
+  assert.equal(result.subscribed_at, 1234);
+  assert.equal(result.dm_failed_at, 555);
+
+  const unknown = await ask({ action: 'later', discord_user_id: '42' });
+  assert.equal(unknown.protocol, TRADER_SOCKET_PROTOCOL, 'refusals carry it too');
+});
+
+test('a sale is announced once per recipient and stays pending until it is delivered', async () => {
+  const db = database();
+  const notice = { discord_user_id: '42', kind: 'sale', sales: [sale()], latest_entry_time: 900 };
+
+  const first = await announceTraderSaleNotices(db, [notice]);
+  assert.equal(first.length, 1);
+  assert.deepEqual(first[0].notice_ids, [1]);
+  assert.equal(first[0].kind, 'sale');
+  assert.equal(first[0].latest_entry_time, 900);
+
+  const again = await announceTraderSaleNotices(db, [notice]);
+  assert.deepEqual(again, [], 'the same sale is never announced twice');
+
+  const other = await announceTraderSaleNotices(db, [{ ...notice, discord_user_id: '43' }]);
+  assert.deepEqual(other[0].notice_ids, [2], 'another member still gets theirs');
+
+  const otherGuild = await announceTraderSaleNotices(db, [{ ...notice, sales: [sale({ guildId: '999' })] }]);
+  assert.equal(otherGuild.length, 1, 'the same event id in another guild is a different sale');
+
+  assert.equal(await markTraderSaleNoticesDelivered(db, first[0].notice_ids), 1);
+  const update = db.calls.find((call) => call.sql.includes('SET delivered_at = NOW()'));
+  assert.deepEqual(update.args, [1]);
+
+  const pendingDb = database({
+    pending: [
+      { id: 7, discord_user_id: '42', sale_json: JSON.stringify(sale({ eventId: 501 })), latest_entry_time: 900 },
+      { id: 8, discord_user_id: '42', sale_json: JSON.stringify(sale({ eventId: 502 })), latest_entry_time: 900 }
+    ]
+  });
+  const pending = await loadPendingTraderSaleNotices(pendingDb);
+  assert.equal(pending.length, 1, 'undelivered sales for one member come back as one notice');
+  assert.equal(pending[0].kind, 'invoice');
+  assert.deepEqual(pending[0].notice_ids, [7, 8]);
+  assert.equal(pending[0].sales.length, 2);
+});
+
+test('the bot can ask for pending receipts and say they were delivered', async () => {
+  const db = database({
+    pending: [{ id: 7, discord_user_id: '42', sale_json: JSON.stringify(sale()), latest_entry_time: 900 }]
+  });
+  const handlers = new Map();
+  const socket = { guildSyncAuthType: 'discord-bot', on: (event, handler) => handlers.set(event, handler) };
+  registerTraderSalesSubscriptionSocket(socket, { db });
+  const ask = (payload) => new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')(payload, resolve));
+
+  const pending = await ask({ action: 'pending' });
+  assert.equal(pending.ok, true);
+  assert.equal(pending.protocol, TRADER_SOCKET_PROTOCOL);
+  assert.equal(pending.notices.length, 1);
+  assert.deepEqual(pending.notices[0].notice_ids, [7]);
+
+  const delivered = await ask({ action: 'delivered', ids: [7] });
+  assert.equal(delivered.ok, true);
+  assert.equal(delivered.delivered, 1);
+});
+
+test('the bot can record and clear a failed receipt DM', async () => {
+  const db = database();
+  const handlers = new Map();
+  const socket = { guildSyncAuthType: 'discord-bot', on: (event, handler) => handlers.set(event, handler) };
+  registerTraderSalesSubscriptionSocket(socket, { db });
+  const ask = (payload) => new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')(payload, resolve));
+
+  const failed = await ask({ action: 'dm-failed', discord_user_id: '42', failed: true });
+  assert.equal(failed.ok, true);
+  assert.equal(failed.stored, true);
+  assert.deepEqual(
+    db.calls.find((call) => call.sql.includes('SET last_dm_failed_at = NOW()')).args,
+    ['42']
+  );
+
+  await ask({ action: 'dm-failed', discord_user_id: '42', failed: false });
+  assert.ok(db.calls.some((call) => call.sql.includes('SET last_dm_failed_at = NULL')));
 });
 
 test('a live sale notice carries the newest stored entry time', async () => {

@@ -1,7 +1,22 @@
 import { AttachmentBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { Log } from '../helper.js';
-import { defaultInvoiceHeadline, renderTraderInvoiceImages, traderReceiptFileNames } from '../trader-invoice-image.js';
+import { renderTraderInvoiceImages, traderReceiptFileNames } from '../trader-invoice-image.js';
 import { traderInfoLine } from '../trader-info-line.js';
+import { receiptSummary } from '../trader-receipt-summary.js';
+
+// Must match TRADER_SOCKET_PROTOCOL in the backend's trader-sales-subscriptions.
+export const TRADER_SOCKET_PROTOCOL = 2;
+
+let warnedAboutBackend = false;
+
+// The backend stamps every reply with its protocol, so a mismatch can be said out
+// loud once instead of looking like receipts that lost their timestamps.
+function warnIfBackendOutdated(response, log) {
+  if (Number(response?.protocol) === TRADER_SOCKET_PROTOCOL || warnedAboutBackend) return;
+
+  warnedAboutBackend = true;
+  log(`GuildSync backend speaks trader protocol ${response?.protocol ?? 'none'}, this bot expects ${TRADER_SOCKET_PROTOCOL}. Restart the backend to date receipts and to enable /trader receipt.`);
+}
 
 export const LINK_REQUIRED_MESSAGE = [
   'I cannot send trader sale invoices until your Discord account is linked to an ESO account.',
@@ -35,8 +50,11 @@ export const data = new SlashCommandBuilder()
       .setRequired(true)
       .setMaxLength(100)))
   .addSubcommand((subcommand) => subcommand
-    .setName('test')
-    .setDescription('Temporary: show a receipt for my newest stored trader sales.'))
+    .setName('receipt')
+    .setDescription('DM me a receipt for my most recent trader sale.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('status')
+    .setDescription('Check whether trader sale receipts are on for me.'))
   .setDMPermission(true);
 
 // A search result is not a fresh sale, so its receipt opens with a neutral
@@ -55,7 +73,15 @@ export function searchReceiptCaption(sales = [], item = '') {
 }
 
 // register/unregister are aliases so either wording works.
-const ACTION_BY_OPTION = { on: 'on', register: 'on', off: 'off', unregister: 'off', sales: 'sales', test: 'test' };
+const ACTION_BY_OPTION = {
+  on: 'on',
+  register: 'on',
+  off: 'off',
+  unregister: 'off',
+  sales: 'sales',
+  receipt: 'receipt',
+  status: 'status'
+};
 
 // Both receipt answers are built the same way: render the pages, name the files,
 // and put the freshness line above the reply line. The options and the wording
@@ -67,7 +93,7 @@ async function receiptReply({ infoLine, line, sales, caption = '', footerNote = 
   const names = traderReceiptFileNames(pages.length);
 
   return {
-    content: `${infoLine}\n${line}`,
+    content: [infoLine, line, receiptSummary(sales)].filter(Boolean).join('\n'),
     files: pages.map((png, index) => new AttachmentBuilder(png, { name: names[index] })),
     allowedMentions: { parse: [] }
   };
@@ -109,11 +135,40 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
       ...(item ? { item } : {})
     });
 
+    warnIfBackendOutdated(response, log);
+
     if (!response?.ok) {
       const content = response?.linked === false
         ? LINK_REQUIRED_MESSAGE
         : response?.message || 'Could not update trader sale invoices.';
       await interaction.editReply({ content, allowedMentions: { parse: [] } });
+      return;
+    }
+
+    if (action === 'status') {
+      if (response.linked === false) {
+        await interaction.editReply({ content: LINK_REQUIRED_MESSAGE, allowedMentions: { parse: [] } });
+        return;
+      }
+
+      const account = response.eso_account_name ? ` for ${response.eso_account_name}` : '';
+      const lines = [];
+
+      if (response.enabled) {
+        const since = response.subscribed_at ? ` since <t:${response.subscribed_at}:f>` : '';
+        lines.push(`Trader sale receipts are on${account}${since}. Each sale I see for you arrives as a DM receipt.`);
+      } else {
+        lines.push(`Trader sale receipts are off${account}. Use /trader on to turn them on.`);
+      }
+
+      // The backend records a failed DM, so a member whose DMs are closed finds out
+      // here instead of assuming the receipts are simply not being sent.
+      if (response.dm_failed_at) {
+        lines.push(`My last receipt DM to you failed on <t:${response.dm_failed_at}:f>. Check that this bot is allowed to DM you, then run /trader on again.`);
+      }
+
+      await interaction.editReply({ content: lines.join('\n'), allowedMentions: { parse: [] } });
+      log(`Trader status for Discord user ${interaction.user?.id || 'unknown'}: ${response.enabled ? 'on' : 'off'}${response.dm_failed_at ? ', last receipt DM failed' : ''}.`);
       return;
     }
 
@@ -148,20 +203,22 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
       return;
     }
 
-    if (action === 'test') {
-      const sales = Array.isArray(response.sales) ? response.sales.filter(Boolean) : [];
+    if (action === 'receipt') {
+      const sale = (Array.isArray(response.sales) ? response.sales : []).filter(Boolean)[0];
 
-      // The receipt goes where the command was typed: this reply is ephemeral in
-      // a channel and is the DM itself when the command was sent in a DM. A test
-      // replay is not a fresh sale, so it is captioned like a list even for one.
-      await interaction.editReply(await receiptReply({
-        infoLine,
-        line: `Test receipt for your newest ${sales.length} sale${sales.length === 1 ? '' : 's'}.`,
-        sales,
-        caption: defaultInvoiceHeadline(sales.length)
-      }));
+      // The backend DMs the receipt through the same path a live sale takes, so it
+      // looks like a sale that just happened. This reply only confirms it, in the
+      // channel or DM the command was typed in, and repeats the numbers as text.
+      await interaction.editReply({
+        content: [
+          infoLine,
+          'Sent your newest sale receipt to your DMs.',
+          sale ? receiptSummary([sale]) : ''
+        ].filter(Boolean).join('\n'),
+        allowedMentions: { parse: [] }
+      });
 
-      log(`Trader test receipt rendered for Discord user ${interaction.user?.id || 'unknown'} with ${sales.length} sale(s).`);
+      log(`Trader receipt DM requested for Discord user ${interaction.user?.id || 'unknown'}${sale ? ` (sale #${sale.eventId})` : ''}.`);
       return;
     }
 

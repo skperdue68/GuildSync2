@@ -25,7 +25,7 @@ export function traderInfoLine({ now = Math.floor(Date.now() / 1000), latestEntr
   const asOf = stamp(now) || 'now';
 
   if (!hasLatest(latestEntryTime)) {
-    return `As of ${asOf} — the time of the most recent GuildSync info is unknown.`;
+    return `As of ${asOf} — the GuildSync backend did not report when its trader data was last updated.`;
   }
 
   const latest = Number(latestEntryTime);

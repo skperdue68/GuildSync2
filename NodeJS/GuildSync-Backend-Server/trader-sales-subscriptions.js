@@ -1,6 +1,12 @@
 import { loadEsoAccountAliases } from './eso-account-identity.js';
 
 const TABLE = 'guildsync_trader_sales_subscriptions';
+const NOTICES = 'guildsync_trader_sale_notices';
+
+// The bot and the backend ride the same socket, so the backend stamps every
+// reply with its protocol. A bot can then say plainly that it is talking to an
+// older backend instead of inferring it from a missing field.
+export const TRADER_SOCKET_PROTOCOL = 2;
 
 const normalizeUserId = (value) => String(value ?? '').trim().slice(0, 32);
 
@@ -13,6 +19,27 @@ export async function initializeTraderSalesSubscriptions(db) {
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
+  await db.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS last_dm_failed_at DATETIME DEFAULT NULL`);
+
+  // One row per sale per recipient. The unique key is what stops a retried import
+  // from DMing the same sale twice; delivered_at stays NULL until the bot takes
+  // the notice, so a receipt whose bot is offline is sent when it comes back.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS ${NOTICES} (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      discord_user_id VARCHAR(32) NOT NULL,
+      guild_id VARCHAR(32) NOT NULL DEFAULT '',
+      event_id BIGINT UNSIGNED NOT NULL,
+      sale_json LONGTEXT NOT NULL,
+      latest_entry_time BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      delivered_at DATETIME DEFAULT NULL,
+      UNIQUE KEY uniq_trader_sale_notice (discord_user_id, guild_id, event_id),
+      KEY idx_trader_sale_notice_delivery (delivered_at)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
+  await db.query(`DELETE FROM ${NOTICES} WHERE delivered_at IS NOT NULL AND delivered_at < NOW() - INTERVAL 90 DAY`);
 }
 
 export async function getLinkedEsoNames(db, discordUserId) {
@@ -31,15 +58,37 @@ export async function getLinkedEsoNames(db, discordUserId) {
 
 export async function getTraderSalesSubscription(db, discordUserId) {
   const id = normalizeUserId(discordUserId);
-  if (!id) return { enabled: false, subscribed_at: null };
+  const empty = { enabled: false, subscribed_at: null, dm_failed_at: null };
+  if (!id) return empty;
 
   const [rows] = await db.execute(
-    `SELECT enabled, subscribed_at FROM ${TABLE} WHERE discord_user_id = ? LIMIT 1`,
+    `SELECT enabled, subscribed_at, UNIX_TIMESTAMP(last_dm_failed_at) AS dm_failed_at
+       FROM ${TABLE} WHERE discord_user_id = ? LIMIT 1`,
     [id]
   );
 
-  if (!rows.length) return { enabled: false, subscribed_at: null };
-  return { enabled: Number(rows[0].enabled) === 1, subscribed_at: Number(rows[0].subscribed_at) || 0 };
+  if (!rows.length) return empty;
+  return {
+    enabled: Number(rows[0].enabled) === 1,
+    subscribed_at: Number(rows[0].subscribed_at) || 0,
+    dm_failed_at: Number(rows[0].dm_failed_at) || null
+  };
+}
+
+// Remember whether the bot's last receipt DM to this user failed, so /trader
+// status can tell them instead of leaving every receipt silently undelivered.
+export async function setTraderDmFailure(db, discordUserId, failed) {
+  const id = normalizeUserId(discordUserId);
+  if (!id) return false;
+
+  await db.execute(
+    failed
+      ? `UPDATE ${TABLE} SET last_dm_failed_at = NOW() WHERE discord_user_id = ?`
+      : `UPDATE ${TABLE} SET last_dm_failed_at = NULL WHERE discord_user_id = ?`,
+    [id]
+  );
+
+  return true;
 }
 
 export async function setTraderSalesSubscription(db, discordUserId, enabled, { now = Math.floor(Date.now() / 1000) } = {}) {
@@ -188,6 +237,109 @@ export async function newestTraderEntryTime(db) {
   return Array.isArray(rows) ? Number(rows[0]?.latest) || 0 : 0;
 }
 
+// Record each sale against each recipient before it is sent. insert-ignore makes
+// this the de-duplication point: a sale already announced to that user is not
+// announced again, and the surviving rows are what a reconnect replays.
+export async function announceTraderSaleNotices(db, notices = []) {
+  const announced = [];
+
+  for (const notice of notices) {
+    const kept = [];
+    const ids = [];
+
+    for (const sale of notice.sales || []) {
+      const [result] = await db.execute(
+        `INSERT IGNORE INTO ${NOTICES} (discord_user_id, guild_id, event_id, sale_json, latest_entry_time)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          notice.discord_user_id,
+          String(sale.guildId || ''),
+          Number(sale.eventId) || 0,
+          JSON.stringify(sale),
+          Number(notice.latest_entry_time) || 0
+        ]
+      );
+
+      if (Number(result?.affectedRows) !== 1) continue;
+      kept.push(sale);
+      if (Number(result.insertId)) ids.push(Number(result.insertId));
+    }
+
+    if (!kept.length) continue;
+    announced.push({
+      ...notice,
+      sales: kept,
+      kind: kept.length === 1 ? 'sale' : 'invoice',
+      notice_ids: ids
+    });
+  }
+
+  return announced;
+}
+
+export async function markTraderSaleNoticesDelivered(db, ids = []) {
+  const list = (Array.isArray(ids) ? ids : []).map(Number).filter((id) => id > 0);
+  if (!list.length) return 0;
+
+  await db.execute(
+    `UPDATE ${NOTICES} SET delivered_at = NOW() WHERE id IN (${list.map(() => '?').join(',')})`,
+    list
+  );
+
+  return list.length;
+}
+
+// Everything the bot never took, grouped back into one notice per recipient so
+// a reconnect keeps the same one-message-per-import shape.
+export async function loadPendingTraderSaleNotices(db) {
+  const [rows] = await db.execute(
+    `SELECT id, discord_user_id, sale_json, latest_entry_time
+       FROM ${NOTICES}
+      WHERE delivered_at IS NULL
+      ORDER BY id`
+  );
+
+  const byUser = new Map();
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const userId = String(row.discord_user_id || '').trim();
+    if (!userId) continue;
+
+    let sale;
+    try {
+      sale = JSON.parse(row.sale_json);
+    } catch {
+      continue;
+    }
+    if (!sale) continue;
+
+    let notice = byUser.get(userId);
+    if (!notice) {
+      notice = {
+        discord_user_id: userId,
+        sales: [],
+        notice_ids: [],
+        latest_entry_time: Number(row.latest_entry_time) || 0
+      };
+      byUser.set(userId, notice);
+    }
+
+    notice.sales.push(sale);
+    notice.notice_ids.push(Number(row.id));
+  }
+
+  for (const notice of byUser.values()) {
+    notice.sales.sort((a, b) =>
+      String(a.buyer || '').localeCompare(String(b.buyer || ''), 'en', { sensitivity: 'base' }) ||
+      a.time - b.time ||
+      a.eventId - b.eventId
+    );
+    notice.kind = notice.sales.length === 1 ? 'sale' : 'invoice';
+  }
+
+  return [...byUser.values()];
+}
+
 export async function planTraderSaleNotices(db, sales = []) {
   const bySeller = new Map();
 
@@ -207,13 +359,15 @@ export async function planTraderSaleNotices(db, sales = []) {
   return notices;
 }
 
-// How many recent sales /trader test replays. The receipt itself stops at 16
-// rows and says how many were left out, so this only bounds the query.
-const TEST_SALE_LIMIT = 50;
+// How many matching sales /trader sales searches, and how many recent sales
+// /trader receipt looks at (it only ever sends the newest one).
+const SALE_SEARCH_LIMIT = 50;
+const RECEIPT_SALE_LIMIT = 1;
 
-// /trader test replays the newest sales already stored for the linked account so
-// the DM can be checked without waiting for a live sale. It deliberately skips
-// the subscription cutoff that hides sales older than /trader on.
+// /trader receipt replays the newest sale already stored for the linked account
+// as if it had just happened, so the DM can be checked without waiting for a
+// live sale. It deliberately skips the subscription cutoff that hides sales
+// older than /trader on.
 const saleColumns = 'event_id, guild_name, world, seller, buyer, item_name, quantity, price, unit_price, tax, net, event_timestamp';
 
 // Every name and rename the linked account is known by, so a sale recorded
@@ -233,7 +387,7 @@ async function linkedSaleKeys(db, linkedNames) {
 
 const escapeLike = (value) => String(value ?? '').replace(/[\\%_]/g, (char) => `\\${char}`);
 
-export async function loadTraderSalesForTest(db, discordUserId, { limit = TEST_SALE_LIMIT } = {}) {
+export async function loadTraderSalesForReceipt(db, discordUserId, { limit = RECEIPT_SALE_LIMIT } = {}) {
   const id = normalizeUserId(discordUserId);
   if (!id) return { sales: [], names: [] };
 
@@ -250,7 +404,7 @@ export async function loadTraderSalesForTest(db, discordUserId, { limit = TEST_S
       WHERE LOWER(TRIM(LEADING '@' FROM seller)) IN (${placeholders})
          OR LOWER(TRIM(LEADING '@' FROM seller_original)) IN (${placeholders})
       ORDER BY event_timestamp DESC
-      LIMIT ${Number(limit) || TEST_SALE_LIMIT}`,
+      LIMIT ${Number(limit) || RECEIPT_SALE_LIMIT}`,
     [...list, ...list]
   );
 
@@ -259,7 +413,7 @@ export async function loadTraderSalesForTest(db, discordUserId, { limit = TEST_S
 
 // /trader sales <part of an item name> returns the linked account's own sales of
 // every matching item, newest first, for a receipt of that item's history.
-export async function searchTraderSales(db, discordUserId, itemQuery, { limit = TEST_SALE_LIMIT } = {}) {
+export async function searchTraderSales(db, discordUserId, itemQuery, { limit = SALE_SEARCH_LIMIT } = {}) {
   const id = normalizeUserId(discordUserId);
   const term = String(itemQuery ?? '').trim();
   if (!id || !term) return { sales: [], names: [] };
@@ -271,7 +425,7 @@ export async function searchTraderSales(db, discordUserId, itemQuery, { limit = 
   if (!list.length) return { sales: [], names: linkedNames };
 
   const placeholders = list.map(() => '?').join(',');
-  const capped = Number(limit) || TEST_SALE_LIMIT;
+  const capped = Number(limit) || SALE_SEARCH_LIMIT;
   // One extra row tells us the list was cut off, so the reply can say so.
   const [rows] = await db.execute(
     `SELECT ${saleColumns}
@@ -296,8 +450,9 @@ export async function searchTraderSales(db, discordUserId, itemQuery, { limit = 
 
 export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
   socket.on('guildsync:trader-sales-subscription', async (payload = {}, callback) => {
+    // Every reply carries the protocol so the bot can report an older backend.
     const reply = (response) => {
-      if (typeof callback === 'function') callback(response);
+      if (typeof callback === 'function') callback({ protocol: TRADER_SOCKET_PROTOCOL, ...response });
     };
 
     if (socket.guildSyncAuthType !== 'discord-bot') {
@@ -307,6 +462,23 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
 
     try {
       let action = String(payload?.action || '').trim().toLowerCase();
+
+      // Bot-level actions; they are not about one member.
+      if (action === 'pending') {
+        reply({ ok: true, notices: await loadPendingTraderSaleNotices(db) });
+        return;
+      }
+
+      if (action === 'delivered') {
+        reply({ ok: true, delivered: await markTraderSaleNoticesDelivered(db, payload?.ids) });
+        return;
+      }
+
+      if (action === 'dm-failed') {
+        reply({ ok: true, stored: await setTraderDmFailure(db, payload?.discord_user_id, Boolean(payload?.failed)) });
+        return;
+      }
+
       const discordUserId = normalizeUserId(payload?.discord_user_id);
 
       if (!discordUserId) {
@@ -351,14 +523,15 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
         return;
       }
 
-      if (action === 'test') {
-        const { sales, names } = await loadTraderSalesForTest(db, discordUserId);
+      if (action === 'receipt') {
+        const { sales, names } = await loadTraderSalesForReceipt(db, discordUserId);
         if (!names.length) {
           reply({ ok: false, linked: false });
           return;
         }
 
-        if (!sales.length) {
+        const sale = sales[0];
+        if (!sale) {
           reply({
             ok: false,
             linked: true,
@@ -368,15 +541,23 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
           return;
         }
 
-        // The receipt belongs where the command was typed, so the bot renders it
-        // into the reply (ephemeral in a channel, in place in a DM). Nothing is
-        // emitted as a notice here.
+        // /trader receipt DMs the newest sale through the same notice path a live
+        // sale takes, so it arrives looking like it just happened. It is a
+        // replay, not an announcement, so it skips the announced-sales table.
+        const notice = {
+          discord_user_id: discordUserId,
+          kind: 'sale',
+          sales: [sale],
+          latest_entry_time: await newestTraderEntryTime(db)
+        };
+        socket.emit('guildsync:trader-sale-notice', notice);
+
         reply({
           ok: true,
           linked: true,
           eso_account_name: names[0],
-          sales,
-          latest_entry_time: await newestTraderEntryTime(db)
+          sales: [sale],
+          latest_entry_time: notice.latest_entry_time
         });
         return;
       }

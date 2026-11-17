@@ -43,12 +43,16 @@ through `LOWER(item_name) LIKE LOWER(?)`, so it is case-insensitive whatever the
 It replies privately to the caller and never enters the DM queue. Only the newest 50 matching sales are
 searched, and both the reply and the receipt say so when the list was cut off instead of implying that
 is everything.
-`/trader test` renders the same receipt for the newest stored sales of the linked account and answers
-where the command was typed: ephemerally in a channel, in the DM itself when the command was a DM. It
-ignores the subscription cutoff below, so the receipt can be checked without waiting for a live sale.
-It is a temporary testing aid and can be removed once the trader path is settled. Run the
-bot's `npm run deploy` once to register the global command (the same PUT removes the retired global
-`/sales` command). A
+`/trader receipt` DMs a receipt for the newest stored sale of the linked account as if it had just
+happened, and confirms where the command was typed (ephemerally in a channel, in the DM itself when
+the command was a DM) with the freshness line, `Sent your newest sale receipt to your DMs.` and the
+same totals as text. It ignores the subscription cutoff below, so the receipt can be checked without
+waiting for a live sale, and it is a replay rather than an announcement, so it is not recorded as a
+sale already sent.
+`/trader status` answers whether receipts are on for the linked account, since when, and whether the
+bot's last receipt DM to that member failed, so someone whose DMs are closed is told instead of
+silently missing every receipt. Run the bot's `npm run deploy` once to register the global command
+(the same PUT removes the retired global `/sales` command). A
 Discord account must have a `linked` row in `guildsync_member_links`; otherwise the bot explains how
 to link the account and who to contact for help. Subscriptions live in
 `guildsync_trader_sales_subscriptions` (one row per Discord user) and the linked ESO name is resolved
@@ -78,6 +82,16 @@ This applies to live uploads and `/gst catchup` alike. Sales
 older than the subscription are skipped, so enabling notifications never floods someone with old
 history.
 
+Every announced sale is also recorded per recipient in `guildsync_trader_sale_notices`, keyed by
+`(discord_user_id, guild_id, event_id)`, so a retried or replayed import cannot DM the same sale twice.
+The guild is part of that key because trader entries are deduped per guild. The row
+is marked delivered only when the bot acknowledges the notice, so a notice the bot never took (offline,
+restart, dropped connection) stays pending and is sent when the bot connects again. A DM that fails,
+for example because the member closed their DMs, is recorded on the subscription and shown by
+`/trader status`. The backend stamps every subscription reply with a protocol number and the bot logs
+once when it is talking to an older backend, instead of leaving receipts looking like they lost their
+timestamps.
+
 ## Tests
 
 - `ESO/tests/trader.lua` covers streaming, dedupe, catch-up, reset, the pending-row guild switch,
@@ -88,9 +102,11 @@ history.
   eventId inserting once per guild, and `@OldName` renames updating trader seller and buyer while
   retaining the imported names in `seller_original` / `buyer_original`.
 - `trader-sales-subscriptions.test.js` covers link-gated subscriptions, one notice per import, age
-  filtering, buyer/time ordering and the bot socket handler.
-- Bot tests cover `/trader` replies, the short caption embed, the details fallback embeds, the PNG
-  render, and temp-file cleanup after sending.
+  filtering, buyer/time ordering, the bot socket handler, the protocol stamp, the receipt replay, the
+  announced-sale de-duplication, pending replay and the failed-DM record.
+- Bot tests cover `/trader` replies (including `receipt` and `status`), the text summary line, the
+  short caption embed, the details fallback embeds, the PNG render, notice acknowledgement, pending
+  replay on connect, and temp-file cleanup after sending.
 
 ## Still separate
 
@@ -104,40 +120,34 @@ Discord subscriber announcements for trader updates are not part of this change.
 
 ## Planned follow-ups
 
-Ranked by value per hour. None of these is started; the first three are the cheapest way to remove the
-friction this work kept hitting.
+Updated after `/trader receipt`, `/trader status`, the protocol stamp, the text summary and the
+notice table shipped. Items 1, 2, 3, 4, 7 and 12 of the previous list are done: every reply carries
+`protocol`, `/trader status` reports the subscription and the last failed DM, every receipt DM and
+reply carries `N sales · gross · tax · net`, announcements are deduplicated per
+`(recipient, guild, eventId)` and replayed after a reconnect, and `/trader test` is gone.
 
-1. **Bot/backend capability handshake.** The backend advertises what it supports (`latest_entry_time`,
-   `test` returning sales, a protocol version) when the bot connects, so an old backend is reported in
-   the log instead of silently producing an undated reply or a surprise DM. Small: one handshake field,
-   one log line, one fallback string.
-2. **`/trader status`.** The backend already implements `action: 'status'` (linked ESO name, enabled,
-   `subscribed_at`) and nothing calls it. Surfacing it answers "am I linked, subscribed as whom, since
-   when" and gives that dead branch a caller. Small.
-3. **Text summary line with every receipt.** `50 sales · gross · tax · net` beside the image, because a
-   PNG cannot be searched, copied into a spreadsheet or read by a screen reader. Small.
-4. **Notice durability and de-duplication.** Notices are not deduplicated per (recipient, eventId), so a
-   retried import can DM the same sale twice, and a whole batch is dropped with a log line when the bot
-   socket is down. Medium.
-5. **Visual regression fixtures.** Render 1 / 15 / 50 sales, long and non-ASCII names, zero tax and huge
-   amounts, then compare hashes. Every layout defect so far was found by eye; only three strings are
-   width-tested today. Medium.
-6. **On-demand DM test.** `/trader test where:dm` (default stays in place) or a debug send through the
-   real queue, since answering in place removed the only manual check of queue spacing and temp-file
-   cleanup. Small.
-7. **Surface DM delivery failures.** A closed DM (`user.send` throwing) is only logged; record it and
-   report it from `/trader status`, so nobody believes they are subscribed while every receipt fails.
-   Small to medium.
-8. **Settle the image timezone.** Either one zone per guild or drop the per-row zone label and state
+Still open, ranked by value per hour:
+
+1. **Notice retention for undelivered rows.** Delivered notices are pruned after 90 days; a pending
+   row for a member who never comes back lives forever. Add a cut-off and a log line when it fires.
+   Small.
+2. **End-to-end notify test.** `notifyTraderSaleSubscribers` in `guildsync-backend-server.js` has no
+   test because the file is too large to import cheaply: the announce and delivery-mark pieces it
+   calls are tested, the wiring is not. Medium.
+3. **Idempotent replay.** A notice is marked delivered when the bot acknowledges the attempt, so a
+   lost acknowledgement can duplicate one DM. A per-notice token the bot remembers would close it.
+   Medium.
+4. **Visual regression fixtures.** Render 1 / 15 / 50 sales, long and non-ASCII names, zero tax and
+   huge amounts, then compare hashes. Every layout defect so far was found by eye; only three strings
+   are width-tested today. Medium.
+5. **Settle the image timezone.** Either one zone per guild or drop the per-row zone label and state
    it once in the header. Today the message line is the reader's local time while the image says
    Eastern: two times for the same sale. Small with a guild setting (medium if it needs config).
-9. **Search depth.** `/trader sales` stops at the newest 50 matches, so older history of a fast-selling
+6. **Search depth.** `/trader sales` stops at the newest 50 matches, so older history of a fast-selling
    item is unreachable; add `before:`/`after:` or page the search itself. Small to medium.
-10. **Officer view and export.** Permission-gated lookup of another member's sales, and/or CSV output;
-    reconciliation is an officer job and currently means forwarding a DM. Medium, needs a permission
-    decision first.
-11. **Verify registration after `npm run deploy`.** Read the global and guild command sets back and
-    print them, so a stale description or a duplicate definition shows up before typing the command.
-    Small.
-12. **Retire `/trader test`.** It is flagged temporary and now duplicates `/trader sales` minus the
-    item filter; remove it once the trader path is settled. Small.
+7. **Officer view and export.** Permission-gated lookup of another member's sales, and/or CSV output;
+   reconciliation is an officer job and currently means forwarding a DM. Medium, needs a permission
+   decision first.
+8. **Verify registration after `npm run deploy`.** Read the global and guild command sets back and
+   print them, so a stale description or a duplicate definition shows up before typing the command.
+   Small.
