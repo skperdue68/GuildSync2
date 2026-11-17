@@ -6,6 +6,7 @@ import {
   getTraderSalesSubscription,
   groupTraderSaleNotices,
   planTraderSaleNotices,
+  saleForNotice,
   loadTraderSalesForReceipt,
   searchTraderSales,
   newestTraderEntryTime,
@@ -347,8 +348,8 @@ test('/trader receipt DMs the newest sale and returns it for the reply', async (
     if (sql.includes('FROM guildsync_trader_entries')) {
       db.calls.push({ sql, args });
       return [[
-        { event_id: 9, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 900 },
-        { event_id: 8, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Ruby', quantity: 2, price: 20000, unit_price: 10000, tax: 1400, net: 18600, event_timestamp: 800 }
+        { event_id: 9, guild_id: '761817', guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 900 },
+        { event_id: 8, guild_id: '761817', guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Ruby', quantity: 2, price: 20000, unit_price: 10000, tax: 1400, net: 18600, event_timestamp: 800 }
       ]];
     }
     return execute.call(db, sql, args);
@@ -368,10 +369,12 @@ test('/trader receipt DMs the newest sale and returns it for the reply', async (
   assert.equal(result.ok, true);
   assert.equal(result.sales.length, 1, 'only the most recent sale is replayed');
   assert.equal(result.sales[0].itemName, 'Soul Gem');
+  assert.equal(result.sales[0].guildId, '761817', 'the guild travels with the sale for the notice key');
   assert.equal(result.latest_entry_time, 901, 'the reply is dated like every other receipt');
 
   const query = db.calls.find((call) => call.sql.includes('FROM guildsync_trader_entries'));
   assert.match(query.sql, /LIMIT 1/, 'the receipt only asks for the newest sale');
+  assert.match(query.sql, /SELECT event_id, guild_id,/, 'the query has to select the guild id it keys on');
 
   assert.equal(emitted.length, 1, 'the receipt itself leaves as a DM');
   assert.equal(emitted[0].event, 'guildsync:trader-sale-notice');
@@ -452,6 +455,43 @@ test('every reply is stamped with the protocol, and status reports a failed DM',
 
   const unknown = await ask({ action: 'later', discord_user_id: '42' });
   assert.equal(unknown.protocol, TRADER_SOCKET_PROTOCOL, 'refusals carry it too');
+});
+
+test('a stored sale keeps its guild id so the notice key is complete', () => {
+  assert.equal(
+    saleForNotice({ event_id: 501, guild_id: '761817', guild_name: 'Example Guild' }).guildId,
+    '761817',
+    'a row without the guild would collapse every guild into one key'
+  );
+  assert.equal(saleForNotice({ eventId: 501, guildId: '900001' }).guildId, '900001');
+  assert.equal(saleForNotice({ event_id: 501 }).guildId, '', 'a missing guild stays empty rather than undefined');
+});
+
+test('the same event id from two guilds is not collapsed for one member', async () => {
+  const db = database();
+  const notice = {
+    discord_user_id: '42',
+    kind: 'invoice',
+    latest_entry_time: 2100,
+    // Trader entries are keyed by (guild_id, event_id), so the same event id in
+    // another guild is a different sale and must arrive as its own row.
+    sales: [
+      saleForNotice({ event_id: 501, guild_id: '761817', guild_name: 'Example Guild', item_name: 'Soul Gem', event_timestamp: 2000 }),
+      saleForNotice({ event_id: 501, guild_id: '900001', guild_name: 'Other Guild', item_name: 'Soul Gem', event_timestamp: 2100 })
+    ]
+  };
+
+  const announced = await announceTraderSaleNotices(db, [notice]);
+  assert.equal(announced.length, 1);
+  assert.equal(announced[0].sales.length, 2, 'both guilds keep their sale');
+  assert.deepEqual(announced[0].sales.map((item) => item.guildId), ['761817', '900001']);
+
+  const inserts = db.calls.filter((call) => call.sql.includes('INSERT IGNORE INTO guildsync_trader_sale_notices'));
+  assert.deepEqual(inserts.map((call) => call.args[1]), ['761817', '900001'], 'the guild reaches the key column');
+  assert.deepEqual(inserts.map((call) => call.args[2]), [501, 501], 'the event id is the same in both rows');
+
+  const replay = await announceTraderSaleNotices(db, [notice]);
+  assert.deepEqual(replay, [], 'replaying the same pair is still deduplicated per guild');
 });
 
 test('a sale is announced once per recipient and stays pending until it is delivered', async () => {

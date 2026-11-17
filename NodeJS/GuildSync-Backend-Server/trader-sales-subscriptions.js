@@ -174,6 +174,9 @@ const saleTime = (entry) => Number(entry.time ?? entry.eventTimestamp ?? entry.e
 export function saleForNotice(entry = {}) {
   return {
     eventId: Number(entry.eventId ?? entry.event_id) || 0,
+    // Trader entries are keyed by (guild_id, event_id), so the guild has to
+    // travel with the sale: it is part of the announcement de-duplication key.
+    guildId: String(entry.guildId ?? entry.guild_id ?? '').trim(),
     guildName: String(entry.guildName ?? entry.guild_name ?? '').trim(),
     world: String(entry.world ?? '').trim(),
     seller: String(entry.seller ?? '').trim(),
@@ -368,7 +371,7 @@ const RECEIPT_SALE_LIMIT = 1;
 // as if it had just happened, so the DM can be checked without waiting for a
 // live sale. It deliberately skips the subscription cutoff that hides sales
 // older than /trader on.
-const saleColumns = 'event_id, guild_name, world, seller, buyer, item_name, quantity, price, unit_price, tax, net, event_timestamp';
+const saleColumns = 'event_id, guild_id, guild_name, world, seller, buyer, item_name, quantity, price, unit_price, tax, net, event_timestamp';
 
 // Every name and rename the linked account is known by, so a sale recorded
 // before a rename still matches.
@@ -399,7 +402,7 @@ export async function loadTraderSalesForReceipt(db, discordUserId, { limit = REC
 
   const placeholders = list.map(() => '?').join(',');
   const [rows] = await db.execute(
-    `SELECT event_id, guild_name, world, seller, buyer, item_name, quantity, price, unit_price, tax, net, event_timestamp
+    `SELECT ${saleColumns}
        FROM guildsync_trader_entries
       WHERE LOWER(TRIM(LEADING '@' FROM seller)) IN (${placeholders})
          OR LOWER(TRIM(LEADING '@' FROM seller_original)) IN (${placeholders})
