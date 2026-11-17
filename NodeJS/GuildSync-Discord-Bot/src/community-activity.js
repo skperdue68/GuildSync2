@@ -35,7 +35,7 @@ export function recordDiscordPost(socket, message, guildId, options) {
   send(socket, guildId, message.author, memberLabel(message.member, message.author), 'post', ['post', message.id], options);
 }
 
-export function recordDiscordReaction(socket, reaction, user, guildId, options, member = null) {
+export function recordDiscordReaction(socket, reaction, user, member, guildId, options) {
   const message = reaction?.message;
   const emoji = reaction?.emoji?.id || reaction?.emoji?.name;
   if (!message?.id || message.guildId !== guildId || !emoji) return;

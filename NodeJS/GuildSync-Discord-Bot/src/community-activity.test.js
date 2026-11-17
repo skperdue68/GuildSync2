@@ -13,9 +13,9 @@ test('posts send stable identifiers and display name without message content',()
 });
 test('reaction deduplication distinguishes actor and emoji but not delivery repeats',()=>{
  const {calls,socket}=fixture();const reaction={message,emoji:{id:null,name:'👍'}};
- recordDiscordReaction(socket,reaction,user,'789');recordDiscordReaction(socket,reaction,user,'789');
- recordDiscordReaction(socket,{...reaction,emoji:{id:'987',name:'custom'}},user,'789');
- recordDiscordReaction(socket,reaction,{...user,id:'124'},'789');
+ recordDiscordReaction(socket,reaction,user,null,'789');recordDiscordReaction(socket,reaction,user,null,'789');
+ recordDiscordReaction(socket,{...reaction,emoji:{id:'987',name:'custom'}},user,null,'789');
+ recordDiscordReaction(socket,reaction,{...user,id:'124'},null,'789');
  assert.equal(calls[0][1].type,'reaction');assert.equal(calls[0][1].eventKey,calls[1][1].eventKey);
  assert.notEqual(calls[0][1].eventKey,calls[2][1].eventKey);assert.notEqual(calls[0][1].eventKey,calls[3][1].eventKey);
  assert.equal(calls[0][1].userId,'123');assert.ok(!JSON.stringify(calls).includes('private'));
@@ -24,17 +24,17 @@ test('posts and reactions both prefer the server nickname, then the Discord disp
  const {calls,socket}=fixture();const named={...user,globalName:'Display Name'};
  const member={displayName:'Display Name',nickname:'Server Nick'};
  recordDiscordPost(socket,{...message,author:named,member},'789');
- recordDiscordReaction(socket,{message,emoji:{name:'👍'}},named,'789',undefined,member);
- recordDiscordReaction(socket,{message,emoji:{name:'👍'}},named,'789');
- recordDiscordReaction(socket,{message,emoji:{name:'👍'}},user,'789',undefined,{displayName:'Actor'});
+ recordDiscordReaction(socket,{message,emoji:{name:'👍'}},named,member,'789');
+ recordDiscordReaction(socket,{message,emoji:{name:'👍'}},named,null,'789');
+ recordDiscordReaction(socket,{message,emoji:{name:'👍'}},user,{displayName:'Actor'},'789');
  assert.deepEqual(calls.map(call=>call[1].displayName),['Server Nick','Server Nick','Display Name','Actor']);
 });
 test('bots, system posts, DMs, other guilds, and disconnected sockets are excluded',()=>{
  const {calls,socket}=fixture();
  for(const modified of [{author:{...user,bot:true}},{system:true},{guildId:null},{guildId:'999'}])recordDiscordPost(socket,{...message,...modified},'789');
  recordDiscordPost({...socket,connected:false},message,'789');
- recordDiscordReaction(socket,{message,emoji:{name:'👍'}},{...user,bot:true},'789');
- recordDiscordReaction(socket,{message:{...message,guildId:'999'},emoji:{name:'👍'}},user,'789');
+ recordDiscordReaction(socket,{message,emoji:{name:'👍'}},{...user,bot:true},null,'789');
+ recordDiscordReaction(socket,{message:{...message,guildId:'999'},emoji:{name:'👍'}},user,null,'789');
  assert.equal(calls.length,0);
 });
 test('rejected activity writes are logged without interfering with Discord events',()=>{

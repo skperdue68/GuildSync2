@@ -135,6 +135,15 @@ test('activity rankings use the current server nickname and fall back to the rec
  ]});
  assert.deepEqual(report.highlights.find(h=>h.id==='discord-reactions').rows.map(r=>r.name),['GreenBeanYuk(she/her)','Renamed','Gone member']);
 });
+test('Discord join rankings use the current server nickname and fall back to the recorded username',()=>{
+ const report=buildCommunityStatistics({discordMembers:[{discord_id:'1',username:'greenbean',global_name:'GreenBean',server_nickname:'GreenBeanYuk(she/her)'},{discord_id:'2',username:'orchid',global_name:'Orchid!',server_nickname:''}],discordHistory:[
+  {discord_id:'1',username:'Old reach',event_type:'joined_server',source:'live_event'},
+  {discord_id:'2',username:'orchid',event_type:'joined_server',source:'live_event'},
+  {discord_id:'3',username:'Former member',event_type:'joined_server',source:'live_event'}
+ ]});
+ const rows=report.highlights.find(h=>h.id==='discord-joins').rows;
+ assert.deepEqual(Object.fromEntries(rows.map(r=>[r.name,r.value])),{'GreenBeanYuk(she/her)':1,'Orchid!':1,'Former member':1});
+});
 test('activity SQL bounds original event timestamps without deleting history',async()=>{
  const handlers={},calls=[];const now=4000000;
  const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncUser:{role:'viewer'}};

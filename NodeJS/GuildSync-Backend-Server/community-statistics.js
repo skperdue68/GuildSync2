@@ -20,18 +20,18 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
    if(!membershipIds.has(id)&&membershipIndex>=0)highlights.splice(membershipIndex,0,card);
    else highlights.push(card);
  };
+ // Prefer each member's current server nickname; names recorded with the event are the fallback.
+ const currentNames=new Map(discordMembers.map(m=>[String(m.discord_id),m]));
+ const withCurrentNames=rows=>rows.map(r=>{const m=currentNames.get(String(r.discord_id));return m?{...r,server_nickname:m.server_nickname||r.server_nickname,global_name:m.global_name||r.global_name,username:m.username||r.username}:r;});
  add('guild-joins','ESO guild: most recorded joins','Recorded ESO guild join events. Rejoins count again; retained history may be incomplete.','joins',leaders(rosterEvents.filter(r=>r.event_type==='joined'),r=>r.account_name,()=>1));
- add('discord-joins','Discord server: most recorded joins','Live Discord server join records only; bulk imports excluded. First discovery during an update can appear as a join.','joins',leaders(discordHistory.filter(r=>r.event_type==='joined_server'&&r.source==='live_event'),r=>r.discord_id,()=>1));
+ add('discord-joins','Discord server: most recorded joins','Live Discord server join records only; bulk imports excluded. First discovery during an update can appear as a join.','joins',leaders(withCurrentNames(discordHistory.filter(r=>r.event_type==='joined_server'&&r.source==='live_event')),r=>r.discord_id,()=>1));
  // A roster snapshot timestamp can be the import date. Only an actual recorded join establishes tenure.
  const current=roster.filter(r=>Number(r.in_roster)===1);const tenure=current.flatMap(r=>{const joins=rosterEvents.filter(e=>e.account_name.toLowerCase()===r.account_name.toLowerCase()&&e.event_type==='joined').map(e=>Number(e.event_timestamp)).filter(t=>t>0&&t<=now);if(!joins.length)return [];const joined=Math.max(...joins);const departed=rosterEvents.some(e=>String(e.account_name).toLowerCase()===r.account_name.toLowerCase()&&['left','kicked'].includes(e.event_type)&&Number(e.event_timestamp)>=joined&&Number(e.event_timestamp)<=now);if(departed)return [];return [{name:r.account_name,value:Math.floor((now-joined)/86400),detail:'Latest recorded join: '+new Date(joined*1000).toISOString()}];});
  const missingJoins=current.filter(r=>!rosterEvents.some(e=>String(e.account_name).toLowerCase()===String(r.account_name).toLowerCase()&&e.event_type==='joined'&&Number(e.event_timestamp)>0&&Number(e.event_timestamp)<=now)).length;
  const joinCoverage=`${missingJoins} of ${current.length} current members have no recorded join date. Import dates are excluded.`;
  add('longest-member','Longest membership with a known join date','Days since the latest recorded join. '+joinCoverage,'days',[...tenure].sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name)).slice(0,LEADERBOARD_LIMIT));
  add('newest-member','Newest recorded current members','Current ESO members with a recorded join. '+joinCoverage,'days',[...tenure].sort((a,b)=>a.value-b.value||b.detail.localeCompare(a.detail)||a.name.localeCompare(b.name)).slice(0,LEADERBOARD_LIMIT));
- // Show each actor's current server nickname; names recorded with the event are the fallback.
- const currentNames=new Map(discordMembers.map(m=>[String(m.discord_id),m]));
- const namedActivity=activity.map(r=>{const m=currentNames.get(String(r.discord_id));return m?{...r,server_nickname:m.server_nickname||r.server_nickname,global_name:m.global_name||r.global_name,username:m.username||r.username}:r;});
- const recordedActivity=namedActivity.filter(r=>['post','reaction'].includes(r.activity_type)&&Number(r.activity_timestamp)>=now-30*86400&&Number(r.activity_timestamp)<=now);
+ const recordedActivity=withCurrentNames(activity).filter(r=>['post','reaction'].includes(r.activity_type)&&Number(r.activity_timestamp)>=now-30*86400&&Number(r.activity_timestamp)<=now);
  add('discord-busiest','Busiest Discord Users','Recorded posts plus emoji reactions given in the last 30 days. Bots excluded; offline or missed events are not backfilled.','actions',leaders(recordedActivity,r=>r.discord_id,r=>positive(r.activity_count)));
  add('discord-posts','Most Posts','New Discord posts recorded in the last 30 days; bots and system messages excluded.','posts',leaders(recordedActivity.filter(r=>r.activity_type==='post'),r=>r.discord_id,r=>positive(r.activity_count)));
  add('discord-reactions','Most Reactions Given','Emoji reactions given in the last 30 days, including likes. Each member/message/emoji counts once; removing a reaction does not subtract it.','reactions',leaders(recordedActivity.filter(r=>r.activity_type==='reaction'),r=>r.discord_id,r=>positive(r.activity_count)));
