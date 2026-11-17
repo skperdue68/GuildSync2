@@ -144,7 +144,7 @@ export function buildTraderInvoiceFallbackEmbed(sales = []) {
   };
 }
 
-export function startTraderSaleNotifications(client, socket, log = console.log) {
+export function startTraderSaleNotifications(client, socket, log = console.log, { renderInvoiceImage = renderTraderInvoiceImage } = {}) {
   const handler = async (notice = {}) => {
     try {
       const discordUserId = String(notice.discord_user_id || '').trim();
@@ -158,7 +158,7 @@ export function startTraderSaleNotifications(client, socket, log = console.log) 
       let tempImage;
 
       try {
-        const png = await renderTraderInvoiceImage({ sales, kind });
+        const png = await renderInvoiceImage({ sales, kind });
         tempImage = await writeTraderInvoiceTempImage(png);
 
         const embed = kind === 'invoice' ? buildTraderInvoiceEmbed(sales) : buildTraderSaleEmbed(sales[0]);

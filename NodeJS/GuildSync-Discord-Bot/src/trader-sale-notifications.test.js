@@ -106,6 +106,39 @@ test('the invoice graphic renders as a PNG for one sale and for many', async () 
   assert.deepEqual(Buffer.from(invoice.subarray(0, 4)), PNG_SIGNATURE);
 });
 
+test('a failed invoice render falls back to the details embed', async () => {
+  const sent = [];
+  const handlers = new Map();
+  const socket = { on: (event, handler) => handlers.set(event, handler), off() {} };
+  const client = { users: { async fetch() { return { async send(message) { sent.push(message); } }; } } };
+  const logs = [];
+
+  startTraderSaleNotifications(client, socket, (line) => logs.push(line), {
+    renderInvoiceImage: () => { throw new Error('canvas unavailable'); }
+  });
+
+  const handler = handlers.get('guildsync:trader-sale-notice');
+  await handler({ discord_user_id: '42', kind: 'sale', sales: [sale] });
+  await handler({ discord_user_id: '42', kind: 'invoice', sales: [sale, { ...sale, eventId: 502, buyer: '@Other' }] });
+
+  assert.equal(sent.length, 2, 'both DMs still go out');
+
+  const single = sent[0];
+  assert.equal(single.files, undefined, 'nothing is attached when rendering failed');
+  assert.equal(single.embeds[0].image, undefined);
+  assert.ok(single.embeds[0].fields.some((field) => field.name === 'Transaction ID' && field.value === '#501'));
+  assert.ok(single.embeds[0].fields.some((field) => field.name === 'Buyer' && field.value === '@Buyer'));
+  assert.ok(single.embeds[0].fields.some((field) => field.name === 'Net profit' && field.value === '93,000g'));
+
+  const invoice = sent[1];
+  assert.equal(invoice.files, undefined);
+  assert.ok(invoice.embeds[0].fields.some((field) => field.name === 'Sales' && field.value === '2'));
+  assert.match(invoice.embeds[0].description, /@Other/, 'the buyer-grouped item list survives');
+  assert.match(invoice.embeds[0].description, /Dreugh Wax/);
+
+  assert.equal(logs.filter((line) => line.includes('canvas unavailable')).length, 2, 'each failure is logged');
+});
+
 test('the socket listener sends the trimmed embed with the image and deletes the temp file', async () => {
   const before = new Set(await fs.readdir(os.tmpdir()));
   const sent = [];

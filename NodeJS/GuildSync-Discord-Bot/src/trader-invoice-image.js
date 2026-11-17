@@ -36,10 +36,6 @@ const gold = (value) => `${Math.round(Number(value) || 0).toLocaleString('en-US'
 const num = (value) => Number(value) || 0;
 const sum = (list, field) => list.reduce((total, item) => total + num(item[field]), 0);
 
-function measureContext() {
-  return createCanvas(8, 8).getContext('2d');
-}
-
 function clipLine(ctx, text, maxWidth) {
   const value = String(text ?? '');
   if (!value || ctx.measureText(value).width <= maxWidth) return value;
@@ -81,7 +77,7 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-export function traderSaleDate(seconds) {
+function traderSaleDate(seconds) {
   const value = num(seconds);
   if (value <= 0) return 'Unknown';
 
@@ -114,33 +110,30 @@ export function groupSalesByBuyer(sales = []) {
       sales: [...group.sales].sort((a, b) =>
         num(a.time) - num(b.time) || num(a.eventId) - num(b.eventId))
     }))
-    .sort((a, b) =>
-      a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
-      || num(a.sales[0]?.time) - num(b.sales[0]?.time));
+    .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
 }
 
 function rowPlan(groups, single) {
+  if (single) return { body: [{ type: 'item', sale: groups[0].sales[0] }], hidden: 0 };
+
   const body = [];
+  let itemRows = 0;
   let hidden = 0;
 
-  if (single) {
-    body.push({ type: 'item', sale: groups[0]?.sales[0] });
-    return { body, hidden };
-  }
-
   for (const group of groups) {
-    if (body.length >= MAX_INVOICE_ROWS) {
-      hidden += group.sales.length;
-      continue;
-    }
+    const sales = [];
 
-    body.push({ type: 'buyer', label: group.name });
     for (const sale of group.sales) {
-      if (body.filter((row) => row.type === 'item').length >= MAX_INVOICE_ROWS) {
+      if (itemRows >= MAX_INVOICE_ROWS) {
         hidden += 1;
         continue;
       }
-      body.push({ type: 'item', sale });
+      sales.push(sale);
+      itemRows += 1;
+    }
+
+    if (sales.length) {
+      body.push({ type: 'buyer', label: group.name }, ...sales.map((sale) => ({ type: 'item', sale })));
     }
   }
 
@@ -169,7 +162,7 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   const net = sum(list, 'net');
   const quantity = sum(list, 'quantity');
 
-  const measuring = measureContext();
+  const measuring = createCanvas(8, 8).getContext('2d');
   measuring.font = font(500, 17);
   const congratulations = single
     ? `Congratulations! You sold ${first.itemName || 'an item'} on the ${guildName} Trader — the details are below.`
@@ -189,7 +182,7 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   const rowsBottom = rowsTop + bodyHeight;
   const totalsTop = rowsBottom + 18;
   const mathTop = totalsTop + TOTALS_ROW_H * 3 + 16;
-  const footerRule = mathTop + 22 + 14;
+  const footerRule = mathTop + 36;
   const footerBaseline = footerRule + 26;
   const height = footerBaseline + 28;
 
@@ -289,6 +282,8 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   ctx.fillText('AMOUNT', RIGHT, headerY);
 
   // Rows
+  ctx.strokeStyle = C.rule;
+  ctx.lineWidth = 1;
   let cursor = rowsTop;
   for (const row of body) {
     if (row.type === 'buyer') {
@@ -304,7 +299,7 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
       continue;
     }
 
-    const sale = row.sale || {};
+    const sale = row.sale;
     const textY = cursor + rowH / 2 + 5;
 
     ctx.textAlign = 'left';
@@ -319,8 +314,6 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
     ctx.font = font(600, 15);
     ctx.fillText(gold(sale.price), RIGHT, textY);
 
-    ctx.strokeStyle = C.rule;
-    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(INNER_X, cursor + rowH - 1);
     ctx.lineTo(RIGHT, cursor + rowH - 1);
@@ -352,13 +345,10 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
 
     ctx.font = font(600, 14);
     ctx.fillStyle = C.ink;
-    ctx.textAlign = 'right';
     ctx.fillText(row.value, RIGHT, y);
   });
 
   const netY = totalsTop + TOTALS_ROW_H * 3 + 2;
-  ctx.strokeStyle = C.rule;
-  ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(RIGHT - 300, netY - 20);
   ctx.lineTo(RIGHT, netY - 20);
