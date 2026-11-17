@@ -84,23 +84,31 @@ test('subscription status reads the stored flag', async () => {
   assert.deepEqual(status, { enabled: false, subscribed_at: null });
 });
 
-test('live sales notify per sale and skip anything older than the subscription', () => {
-  const subscribers = () => [{ discord_user_id: '42', subscribed_at: 1000 }];
-
+test('a live import with several sales becomes one invoice and keeps the age filter', () => {
   const notices = groupTraderSaleNotices([
     sale({ eventId: 1, time: 900 }),
-    sale({ eventId: 2, time: 1000 }),
+    sale({ eventId: 2, buyer: '@OtherBuyer', time: 1000 }),
     sale({ eventId: 3, time: 1500 })
-  ], subscribers);
+  ], () => [{ discord_user_id: '42', subscribed_at: 1000 }]);
 
-  assert.equal(notices.length, 2);
-  assert.deepEqual(notices.map((notice) => notice.kind), ['sale', 'sale']);
-  assert.deepEqual(notices.map((notice) => notice.sales[0].eventId), [2, 3]);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].kind, 'invoice');
   assert.equal(notices[0].discord_user_id, '42');
+  assert.deepEqual(notices[0].sales.map((item) => item.eventId), [3, 2]);
+});
+
+test('a single matching sale keeps the original invoice notice', () => {
+  const notices = groupTraderSaleNotices([
+    sale({ eventId: 7, time: 1500 })
+  ], () => [{ discord_user_id: '42', subscribed_at: 1000 }]);
+
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].kind, 'sale');
+  assert.deepEqual(notices[0].sales.map((item) => item.eventId), [7]);
   assert.equal(notices[0].sales[0].net, 93000);
 });
 
-test('catch-up sales become one digest per subscriber and keep the age filter', () => {
+test('catch-up sales become one invoice per subscriber and keep the age filter', () => {
   const notices = groupTraderSaleNotices([
     sale({ eventId: 10, time: 1200, catchUp: true }),
     sale({ eventId: 11, time: 1100, catchUp: true }),
@@ -108,8 +116,22 @@ test('catch-up sales become one digest per subscriber and keep the age filter', 
   ], () => [{ discord_user_id: '42', subscribed_at: 1000 }]);
 
   assert.equal(notices.length, 1);
-  assert.equal(notices[0].kind, 'digest');
-  assert.deepEqual(notices[0].sales.map((item) => item.eventId), [10, 11]);
+  assert.equal(notices[0].kind, 'invoice');
+  assert.deepEqual(notices[0].sales.map((item) => item.eventId), [11, 10]);
+});
+
+test('invoice sales group by buyer and then by sale time', () => {
+  const notices = groupTraderSaleNotices([
+    sale({ eventId: 1, buyer: '@Zed', time: 300 }),
+    sale({ eventId: 2, buyer: '@Amy', time: 200 }),
+    sale({ eventId: 3, buyer: '@Amy', time: 100 }),
+    sale({ eventId: 4, buyer: '@Zed', time: 50 })
+  ], () => [{ discord_user_id: '42', subscribed_at: 0 }]);
+
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].kind, 'invoice');
+  assert.deepEqual(notices[0].sales.map((item) => item.buyer), ['@Amy', '@Amy', '@Zed', '@Zed']);
+  assert.deepEqual(notices[0].sales.map((item) => item.eventId), [3, 2, 4, 1]);
 });
 
 test('notices are grouped per Discord user and sellers resolve through identity aliases', async () => {
@@ -122,7 +144,7 @@ test('notices are grouped per Discord user and sellers resolve through identity 
 
   const notices = await planTraderSaleNotices(db, [sale({ eventId: 20, seller: '@OldSeller', catchUp: true })]);
   assert.deepEqual(notices.map((notice) => notice.discord_user_id).sort(), ['42', '43']);
-  assert.ok(notices.every((notice) => notice.kind === 'digest' && notice.sales.length === 1));
+  assert.ok(notices.every((notice) => notice.kind === 'sale' && notice.sales.length === 1));
   assert.ok(db.calls.some((call) => call.sql.includes("link_status = 'linked'")));
 });
 

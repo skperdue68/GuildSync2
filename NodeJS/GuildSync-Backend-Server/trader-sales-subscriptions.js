@@ -122,9 +122,6 @@ export async function findTraderSaleSubscribers(db, seller) {
 
 const saleTime = (entry) => Number(entry.time ?? entry.eventTimestamp ?? entry.event_timestamp) || 0;
 
-const isCatchUpSale = (entry) =>
-  entry.catchUp === true || entry.catchUp === 1 || String(entry.catchUp ?? '').toLowerCase() === 'true';
-
 export function saleForNotice(entry = {}) {
   return {
     eventId: Number(entry.eventId ?? entry.event_id) || 0,
@@ -142,12 +139,12 @@ export function saleForNotice(entry = {}) {
   };
 }
 
-// Live sales become one notice per sale; catch-up sales are merged into one
-// digest per Discord user for the current import. Sales that predate the
-// subscription are never announced.
+// An import is one batch of SavedVars, so each subscriber gets at most one DM
+// for it: the original single-sale invoice when one sale matched, or one
+// combined invoice grouped by buyer and sale time when several did. Sales that
+// predate the subscription are never announced.
 export function groupTraderSaleNotices(sales = [], subscribersFor = () => []) {
-  const notices = [];
-  const digests = new Map();
+  const byUser = new Map();
 
   for (const entry of sales) {
     const subscribers = subscribersFor(entry?.seller) || [];
@@ -162,22 +159,25 @@ export function groupTraderSaleNotices(sales = [], subscribersFor = () => []) {
       const discordUserId = String(subscriber.discord_user_id ?? subscriber.discordUserId ?? '').trim();
       if (!discordUserId) continue;
 
-      if (!isCatchUpSale(entry)) {
-        notices.push({ discord_user_id: discordUserId, kind: 'sale', sales: [sale] });
-        continue;
+      let notice = byUser.get(discordUserId);
+      if (!notice) {
+        notice = { discord_user_id: discordUserId, kind: 'sale', sales: [] };
+        byUser.set(discordUserId, notice);
       }
-
-      let digest = digests.get(discordUserId);
-      if (!digest) {
-        digest = { discord_user_id: discordUserId, kind: 'digest', sales: [] };
-        digests.set(discordUserId, digest);
-        notices.push(digest);
-      }
-      digest.sales.push(sale);
+      notice.sales.push(sale);
     }
   }
 
-  return notices;
+  for (const notice of byUser.values()) {
+    notice.sales.sort((a, b) =>
+      String(a.buyer || '').localeCompare(String(b.buyer || ''), 'en', { sensitivity: 'base' }) ||
+      a.time - b.time ||
+      a.eventId - b.eventId
+    );
+    notice.kind = notice.sales.length === 1 ? 'sale' : 'invoice';
+  }
+
+  return [...byUser.values()];
 }
 
 export async function planTraderSaleNotices(db, sales = []) {

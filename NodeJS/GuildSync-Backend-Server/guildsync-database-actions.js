@@ -4125,7 +4125,7 @@ export function parseGuildSyncBankingSavedVarsLua(rawLuaText = '') {
 
 export async function insertTraderEntries(db, payload = {}) {
   validateEsoGuildImport('trader', payload);
-  return insertTraderEntriesUnlocked(db, payload);
+  return withEsoIdentityLock(db, connection => insertTraderEntriesUnlocked(connection, payload));
 }
 
 async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
@@ -4142,6 +4142,18 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
   const connection = await applicationDB.getConnection();
   let insertedCount = 0;
   const insertedEntries = [];
+  const resolvedNames = new Map();
+
+  // Resolve inside the lock so a rename cannot land between lookup and insert.
+  const resolveName = async (value) => {
+    const original = String(value ?? '').trim().slice(0, 255);
+    if (!original) return original;
+    if (!resolvedNames.has(original)) {
+      const current = String(await resolveEsoAccountName(applicationDB, original) ?? original).trim().slice(0, 255);
+      resolvedNames.set(original, current || original);
+    }
+    return resolvedNames.get(original);
+  };
 
   try {
     await connection.beginTransaction();
@@ -4151,8 +4163,10 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
       const guildId = String(entry.guildId ?? entry.guild_id ?? payload.guildId ?? '').trim();
       const guildName = String(entry.guildName ?? entry.guild_name ?? payload.guildName ?? '').trim().slice(0, 255);
       const world = String(entry.world ?? payload.world ?? '').trim().slice(0, 64) || null;
-      const seller = String(entry.seller ?? entry.sellerDisplayName ?? '').trim().slice(0, 255);
-      const buyer = String(entry.buyer ?? entry.buyerDisplayName ?? '').trim().slice(0, 255);
+      const sellerOriginal = String(entry.seller ?? entry.sellerDisplayName ?? '').trim().slice(0, 255);
+      const buyerOriginal = String(entry.buyer ?? entry.buyerDisplayName ?? '').trim().slice(0, 255);
+      const seller = await resolveName(sellerOriginal);
+      const buyer = await resolveName(buyerOriginal);
       const itemLink = String(entry.itemLink ?? entry.item_link ?? '').trim();
       const itemId = Number(entry.itemId ?? entry.item_id) || 0;
       const itemName = String(entry.itemName ?? entry.item_name ?? '').trim().slice(0, 255) || null;
@@ -4199,9 +4213,9 @@ async function insertTraderEntriesUnlocked(applicationDB, payload = {}) {
           guildName,
           world,
           seller,
-          seller,
+          sellerOriginal,
           buyer,
-          buyer,
+          buyerOriginal,
           itemLink || null,
           String(itemId),
           itemName,
