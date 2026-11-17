@@ -44,8 +44,10 @@ when each sale is sent, so renames and re-links keep working.
 
 Trader data arrives as one SavedVars batch, so each subscriber gets at most one DM per import. Every
 DM is the receipt image alone (`trader-sales-receipt.png`, headed **TRADER SALES RECEIPT**) with no
-caption text beside it: date, transaction ID, buyer, item, quantity, unit price, amount, subtotal,
-tax and net payout, plus the guild name and NET PAYOUT total in the header band. The PNG is drawn at
+caption text beside it: date, transaction ID, buyer, item, quantity, unit price and amount, plus the
+guild name and NET PAYOUT total in the header band. The bottom line is the quick view — guild name,
+sales total, guild tax and net profit — beside the transaction number (one sale) or the sale and buyer
+count (several sales). The PNG is drawn at
 2× resolution, so the inline preview stays modest while opening the image shows a full-size, sharp
 receipt. The bot writes that PNG to the OS temp directory, attaches it with `attachment://`, and
 deletes the file as soon as Discord has the message. Notices are queued instead of sent in a

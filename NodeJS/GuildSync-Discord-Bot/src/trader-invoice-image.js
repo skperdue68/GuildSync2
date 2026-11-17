@@ -19,7 +19,6 @@ const CONGRATS_LINE_H = 24;
 const META_H = 62;
 const TABLE_HEADER_H = 34;
 const SECTION_H = 26;
-const TOTALS_ROW_H = 26;
 const MAX_INVOICE_ROWS = 16;
 
 const C = {
@@ -159,7 +158,6 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
 
   const first = list[0];
   const guildName = String(first.guildName || '').trim() || 'GuildSync';
-  const world = String(first.world || '').trim();
   const gross = sum(list, 'price');
   const tax = sum(list, 'tax');
   const net = sum(list, 'net');
@@ -183,10 +181,10 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   const rowsTop = tableTop + TABLE_HEADER_H;
   const bodyHeight = itemRowCount * rowH + sectionCount * SECTION_H + (hidden ? 26 : 0);
   const rowsBottom = rowsTop + bodyHeight;
-  const totalsTop = rowsBottom + 18;
-  const footerRule = totalsTop + TOTALS_ROW_H * 3 + 30;
+  const paidBaseline = rowsBottom + 34;
+  const footerRule = rowsBottom + 60;
   const footerBaseline = footerRule + 26;
-  const height = footerBaseline + 28;
+  const height = footerBaseline + 30;
 
   const canvas = createCanvas(WIDTH * SCALE, height * SCALE);
   const ctx = canvas.getContext('2d');
@@ -332,45 +330,11 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
     ctx.fillText(`…and ${hidden} more sale${hidden === 1 ? '' : 's'} not shown here.`, INNER_X + 16, cursor + 18);
   }
 
-  // Totals
-  const labelRight = RIGHT - 150;
-  const totals = [
-    { label: 'Subtotal', value: gold(gross) },
-    { label: 'Trader tax', value: tax > 0 ? `−${gold(tax)}` : gold(0) }
-  ];
-
-  totals.forEach((row, index) => {
-    const y = totalsTop + (index + 1) * TOTALS_ROW_H - 6;
-    ctx.font = font(500, 14);
-    ctx.fillStyle = C.muted;
-    ctx.textAlign = 'right';
-    ctx.fillText(row.label, labelRight, y);
-
-    ctx.font = font(600, 14);
-    ctx.fillStyle = C.ink;
-    ctx.fillText(row.value, RIGHT, y);
-  });
-
-  const netY = totalsTop + TOTALS_ROW_H * 3 + 2;
-  ctx.beginPath();
-  ctx.moveTo(RIGHT - 300, netY - 20);
-  ctx.lineTo(RIGHT, netY - 20);
-  ctx.stroke();
-
-  ctx.font = font(600, 14);
-  ctx.fillStyle = C.ink;
-  ctx.textAlign = 'right';
-  ctx.fillText('Net profit', labelRight, netY);
-
-  ctx.font = font(700, 18);
-  ctx.fillStyle = C.band;
-  ctx.fillText(gold(net), RIGHT, netY);
-
   if (single && first.seller) {
     ctx.font = font(500, 13);
     ctx.fillStyle = C.muted;
     ctx.textAlign = 'left';
-    ctx.fillText(clipLine(ctx, `Paid to ${first.seller}`, RIGHT - 320 - INNER_X), INNER_X, netY);
+    ctx.fillText(clipLine(ctx, `Paid to ${first.seller}`, INNER_W - 200), INNER_X, paidBaseline);
   }
 
   // Footer
@@ -383,11 +347,15 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   ctx.font = font(500, 12);
   ctx.fillStyle = C.muted;
   ctx.textAlign = 'left';
-  ctx.fillText(
-    clipLine(ctx, ['GuildSync', guildName, world].filter(Boolean).join(' · '), INNER_W - 200),
-    INNER_X,
-    footerBaseline
-  );
+  // The bottom line is the quick view: guild, sales total, guild tax, net profit.
+  const summary = [
+    'GuildSync',
+    guildName,
+    `${gold(gross)} sales`,
+    `${gold(tax)} guild tax`,
+    `${gold(net)} net`
+  ].join(' · ');
+  ctx.fillText(clipLine(ctx, summary, INNER_W - 260), INNER_X, footerBaseline);
 
   ctx.textAlign = 'right';
   ctx.fillText(
