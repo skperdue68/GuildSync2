@@ -1,18 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { MessageFlags } from 'discord.js';
 import { data, execute, searchReceiptCaption, LINK_REQUIRED_MESSAGE } from './trader.js';
 
-function fixture({ response, option = 'on', connected = true, item = null } = {}) {
+function fixture({ response, option = 'on', connected = true, item = null, guildId = null } = {}) {
   const replies = [];
   const calls = [];
+  const defers = [];
   const interaction = {
     user: { id: '42' },
-    guildId: null,
+    guildId,
     options: {
       getSubcommand: () => option,
       getString: (name) => (name === 'item' ? item : null)
     },
-    async deferReply() {},
+    async deferReply(payload) { defers.push(payload); },
     async editReply(payload) { replies.push(payload); }
   };
   const socket = {
@@ -23,7 +25,7 @@ function fixture({ response, option = 'on', connected = true, item = null } = {}
       callback(null, response);
     }
   };
-  return { interaction, socket, replies, calls };
+  return { interaction, socket, replies, defers, calls };
 }
 
 test('the global /trader command exposes on, register, off, unregister, sales and test', () => {
@@ -149,8 +151,60 @@ test('/trader sales reports an item that has no entries', async () => {
   });
   await execute(f.interaction, f.socket);
 
-  assert.equal(f.replies[0].content, 'There are no sales entries for an item named dreugh wax.');
+  assert.equal(f.replies[0].content.split('\n').at(-1), 'There are no sales entries for an item named dreugh wax.');
+  assert.match(f.replies[0].content, /^As of <t:\d+:f> — no GuildSync trader info is stored yet\./);
   assert.equal(f.replies[0].files, undefined);
+});
+
+test('/trader answers a channel ephemerally and a DM normally', async () => {
+  const channel = fixture({
+    option: 'sales',
+    item: 'soul',
+    guildId: '761817',
+    response: { ok: true, linked: true, sales: [soldSale] }
+  });
+  await execute(channel.interaction, channel.socket);
+  assert.deepEqual(channel.defers[0].flags, [MessageFlags.Ephemeral]);
+
+  const direct = fixture({ option: 'sales', item: 'soul', response: { ok: true, linked: true, sales: [soldSale] } });
+  await execute(direct.interaction, direct.socket);
+  assert.equal(direct.defers[0].flags, undefined, 'a DM is private already');
+});
+
+test('sales answers lead with how fresh the data is', async () => {
+  const f = fixture({
+    option: 'sales',
+    item: 'soul gem',
+    response: { ok: true, linked: true, sales: [soldSale], latest_entry_time: 1794900000 }
+  });
+  await execute(f.interaction, f.socket);
+
+  const [first, second] = f.replies[0].content.split('\n');
+  assert.match(first, /^As of <t:\d+:f> — most recent GuildSync info at <t:1794900000:f>\.$/);
+  assert.match(second, /1 sale matching “soul gem”/);
+});
+
+test('/trader test and an empty search both lead with the freshness line', async () => {
+  const testReply = fixture({
+    option: 'test',
+    response: { ok: true, linked: true, sales: 2, latest_entry_time: 1794000000 }
+  });
+  await execute(testReply.interaction, testReply.socket);
+  assert.match(
+    testReply.replies[0].content,
+    /^As of <t:\d+:f> — most recent GuildSync info at <t:1794000000:f>\.\nSent a test receipt with 2 sales/
+  );
+
+  const none = fixture({
+    option: 'sales',
+    item: 'dreugh wax',
+    response: { ok: true, linked: true, sales: [], latest_entry_time: 1794000000 }
+  });
+  await execute(none.interaction, none.socket);
+  assert.match(
+    none.replies[0].content,
+    /^As of <t:\d+:f> — most recent GuildSync info at <t:1794000000:f>\.\nThere are no sales entries for an item named dreugh wax\.$/
+  );
 });
 
 test('a disconnected GuildSync backend is reported instead of crashing', async () => {

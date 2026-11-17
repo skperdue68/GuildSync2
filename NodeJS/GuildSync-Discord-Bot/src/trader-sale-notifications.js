@@ -8,6 +8,7 @@ import {
   renderTraderInvoiceImages,
   traderReceiptFileNames
 } from './trader-invoice-image.js';
+import { traderInfoLine } from './trader-info-line.js';
 
 // Discord rate-limits DMs, so notices are queued instead of fired off in a
 // burst: a short gap between messages, then a longer pause after every few.
@@ -211,7 +212,9 @@ export function startTraderSaleNotifications(client, socket, log = console.log, 
       const kind = notice.kind === 'invoice' ? 'invoice' : 'sale';
       const user = await client.users.fetch(discordUserId);
 
-      const message = {};
+      // How fresh the data is comes before the receipt itself; the stamps are
+      // Discord timestamps, so each reader sees them in their own time zone.
+      const message = { content: traderInfoLine({ latestEntryTime: notice.latest_entry_time }) };
       const tempImages = [];
 
       try {

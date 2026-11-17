@@ -1,6 +1,7 @@
 import { AttachmentBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { Log } from '../helper.js';
 import { renderTraderInvoiceImages, traderReceiptFileNames } from '../trader-invoice-image.js';
+import { traderInfoLine } from '../trader-info-line.js';
 
 export const LINK_REQUIRED_MESSAGE = [
   'I cannot send trader sale invoices until your Discord account is linked to an ESO account.',
@@ -80,7 +81,10 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
     ? String(interaction.options.getString('item') || '').trim()
     : '';
 
-  await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+  // In a channel the answer is for the person who asked, receipts included; a
+  // DM is already private and ignores the ephemeral flag.
+  const inChannel = Boolean(interaction.guildId);
+  await interaction.deferReply(inChannel ? { flags: [MessageFlags.Ephemeral] } : {});
 
   try {
     const response = await request(guildSyncSocket, {
@@ -97,12 +101,15 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
       return;
     }
 
+    // Everything below is sales data, so it opens with how fresh that data is.
+    const infoLine = traderInfoLine({ latestEntryTime: response.latest_entry_time });
+
     if (action === 'sales') {
       const sales = Array.isArray(response.sales) ? response.sales.filter(Boolean) : [];
 
       if (!sales.length) {
         await interaction.editReply({
-          content: `There are no sales entries for an item named ${item}.`,
+          content: `${infoLine}\nThere are no sales entries for an item named ${item}.`,
           allowedMentions: { parse: [] }
         });
         return;
@@ -119,9 +126,12 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
       });
       const names = traderReceiptFileNames(pages.length);
       await interaction.editReply({
-        content: truncated
-          ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
-          : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`,
+        content: [
+          infoLine,
+          truncated
+            ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
+            : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`
+        ].join('\n'),
         files: pages.map((png, index) => new AttachmentBuilder(png, { name: names[index] })),
         allowedMentions: { parse: [] }
       });
@@ -133,7 +143,7 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
     if (action === 'test') {
       const count = Number(response.sales) || 0;
       await interaction.editReply({
-        content: `Sent a test receipt with ${count} sale${count === 1 ? '' : 's'} to your DMs.`,
+        content: `${infoLine}\nSent a test receipt with ${count} sale${count === 1 ? '' : 's'} to your DMs.`,
         allowedMentions: { parse: [] }
       });
 

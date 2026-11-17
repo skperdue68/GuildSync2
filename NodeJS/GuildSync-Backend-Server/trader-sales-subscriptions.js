@@ -180,6 +180,14 @@ export function groupTraderSaleNotices(sales = [], subscribersFor = () => []) {
   return [...byUser.values()];
 }
 
+// The newest trader sale GuildSync has stored. Every receipt carries it so the
+// reader can tell how old the sales they are being shown are; the Discord bot
+// turns it into the reader's own local time when it sends the message.
+export async function newestTraderEntryTime(db) {
+  const [rows] = await db.execute('SELECT MAX(event_timestamp) AS latest FROM guildsync_trader_entries');
+  return Array.isArray(rows) ? Number(rows[0]?.latest) || 0 : 0;
+}
+
 export async function planTraderSaleNotices(db, sales = []) {
   const bySeller = new Map();
 
@@ -190,7 +198,13 @@ export async function planTraderSaleNotices(db, sales = []) {
     bySeller.set(key, await findTraderSaleSubscribers(db, seller));
   }
 
-  return groupTraderSaleNotices(sales, (seller) => bySeller.get(String(seller || '').trim().toLowerCase()) || []);
+  const notices = groupTraderSaleNotices(sales, (seller) => bySeller.get(String(seller || '').trim().toLowerCase()) || []);
+  if (!notices.length) return notices;
+
+  const latestEntryTime = await newestTraderEntryTime(db);
+  for (const notice of notices) notice.latest_entry_time = latestEntryTime;
+
+  return notices;
 }
 
 // How many recent sales /trader test replays. The receipt itself stops at 16
@@ -333,7 +347,16 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
           return;
         }
 
-        reply({ ok: true, linked: true, eso_account_name: names[0], item, sales, truncated, limit });
+        reply({
+          ok: true,
+          linked: true,
+          eso_account_name: names[0],
+          item,
+          sales,
+          truncated,
+          limit,
+          latest_entry_time: await newestTraderEntryTime(db)
+        });
         return;
       }
 
@@ -355,6 +378,7 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
           return;
         }
 
+        notice.latest_entry_time = await newestTraderEntryTime(db);
         socket.emit('guildsync:trader-sale-notice', notice);
         reply({ ok: true, linked: true, eso_account_name: names[0], sales: notice.sales.length });
         return;
