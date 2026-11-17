@@ -19,6 +19,7 @@ const CONGRATS_LINE_H = 24;
 const META_H = 62;
 const TABLE_HEADER_H = 34;
 const SECTION_H = 26;
+const TIME_COLUMN_W = 150;
 const MAX_INVOICE_ROWS = 16;
 
 const C = {
@@ -32,6 +33,10 @@ const C = {
   stripe: '#f3efe5',
   white: '#ffffff'
 };
+
+// Trader times are shown in Eastern Time with the current EST/EDT label, since
+// the receipt is a picture and cannot follow each viewer's own timezone.
+const EASTERN = 'America/New_York';
 
 const font = (weight, size) => `${weight} ${size}px "Segoe UI", "DejaVu Sans", Arial, sans-serif`;
 const gold = (value) => `${Math.round(Number(value) || 0).toLocaleString('en-US')}g`;
@@ -85,12 +90,26 @@ function traderSaleDate(seconds) {
 
   const when = new Date(value * 1000);
   const date = when.toLocaleDateString('en-US', {
-    year: 'numeric', month: 'short', day: '2-digit', timeZone: 'UTC'
+    year: 'numeric', month: 'short', day: '2-digit', timeZone: EASTERN
   });
   const time = when.toLocaleTimeString('en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC'
+    hour: '2-digit', minute: '2-digit', hour12: true, timeZone: EASTERN, timeZoneName: 'short'
   });
-  return `${date}, ${time} UTC`;
+  return `${date}, ${time}`;
+}
+
+// A row-sized stamp for multi-sale receipts, in Eastern Time like the full
+// date above so both layouts read the same way.
+function shortSaleDate(seconds) {
+  const value = num(seconds);
+  if (value <= 0) return '';
+
+  const when = new Date(value * 1000);
+  const date = when.toLocaleDateString('en-US', { month: 'short', day: '2-digit', timeZone: EASTERN });
+  const time = when.toLocaleTimeString('en-US', {
+    hour: 'numeric', minute: '2-digit', timeZone: EASTERN, timeZoneName: 'short'
+  });
+  return `${date} · ${time}`;
 }
 
 // Buyers are grouped alphabetically and each buyer's sales are ordered by time,
@@ -145,10 +164,10 @@ function rowPlan(groups, single) {
 /**
  * Render a trader sale (or a multi-sale invoice) as a PNG document.
  *
- * @param {{sales?: object[], kind?: 'sale'|'invoice'}} notice
+ * @param {{sales?: object[], kind?: 'sale'|'invoice', footerNote?: string}} notice
  * @returns {Promise<Buffer>}
  */
-export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {}) {
+export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', footerNote = '' } = {}) {
   const list = (Array.isArray(sales) ? sales : []).filter(Boolean);
   if (!list.length) throw new Error('No trader sales to render.');
 
@@ -184,7 +203,7 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   const paidBaseline = rowsBottom + 34;
   const footerRule = rowsBottom + 60;
   const footerBaseline = footerRule + 26;
-  const height = footerBaseline + 30;
+  const height = footerBaseline + 96;
 
   const canvas = createCanvas(WIDTH * SCALE, height * SCALE);
   const ctx = canvas.getContext('2d');
@@ -275,8 +294,10 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   const headerY = tableTop + 22;
   ctx.font = font(700, 11);
   ctx.fillStyle = C.muted;
+  const itemX = single ? INNER_X + 16 : INNER_X + 16 + TIME_COLUMN_W;
   ctx.textAlign = 'left';
-  ctx.fillText('ITEM', INNER_X + 16, headerY);
+  ctx.fillText(single ? 'ITEM' : 'SOLD', INNER_X + 16, headerY);
+  if (!single) ctx.fillText('ITEM', itemX, headerY);
   ctx.textAlign = 'right';
   ctx.fillText('QTY', colQty, headerY);
   ctx.fillText('UNIT', colUnit, headerY);
@@ -304,9 +325,14 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
     const textY = cursor + rowH / 2 + 5;
 
     ctx.textAlign = 'left';
-    ctx.font = font(500, 15);
+    if (!single) {
+      ctx.font = font(500, 13);
+      ctx.fillStyle = C.muted;
+      ctx.fillText(clipLine(ctx, shortSaleDate(sale.time), TIME_COLUMN_W - 14), INNER_X + 16, textY);
+    }
+    ctx.font = font(500, single ? 15 : 14);
     ctx.fillStyle = C.ink;
-    ctx.fillText(clipLine(ctx, sale.itemName || 'Item', colQty - 60 - (INNER_X + 16)), INNER_X + 16, textY);
+    ctx.fillText(clipLine(ctx, sale.itemName || 'Item', colQty - 60 - itemX), itemX, textY);
 
     ctx.textAlign = 'right';
     ctx.fillStyle = C.ink;
@@ -347,22 +373,47 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
   ctx.font = font(500, 12);
   ctx.fillStyle = C.muted;
   ctx.textAlign = 'left';
-  // The bottom line is the quick view: guild, sales total, guild tax, net profit.
-  const summary = [
-    'GuildSync',
-    guildName,
-    `${gold(gross)} sales`,
-    `${gold(tax)} guild tax`,
-    `${gold(net)} net`
-  ].join(' · ');
-  ctx.fillText(clipLine(ctx, summary, INNER_W - 260), INNER_X, footerBaseline);
-
-  ctx.textAlign = 'right';
+  ctx.fillText(clipLine(ctx, ['GuildSync', guildName].filter(Boolean).join(' · '), INNER_W - 380), INNER_X, footerBaseline);
   ctx.fillText(
     single ? `Transaction #${first.eventId || 'unknown'}` : `${list.length} sales · ${groups.length} buyers`,
-    RIGHT,
-    footerBaseline
+    INNER_X,
+    footerBaseline + 20
   );
+
+  const note = String(footerNote || '').trim();
+  if (note) {
+    ctx.fillText(clipLine(ctx, note, INNER_W - 380), INNER_X, footerBaseline + 40);
+  }
+
+  // The totals sit at the bottom right, one amount under the other the way the
+  // arithmetic would be written: gross, less the guild tax, then the net.
+  const totalsLabelRight = RIGHT - 160;
+  const totalRows = [
+    { label: 'Gross sales', value: gold(gross), color: C.ink, size: 13, weight: 600 },
+    { label: 'Guild tax', value: tax > 0 ? `−${gold(tax)}` : gold(0), color: C.ink, size: 13, weight: 600 },
+    { label: 'Net profit', value: gold(net), color: C.band, size: 16, weight: 700 }
+  ];
+
+  totalRows.forEach((row, index) => {
+    const y = footerBaseline + index * 22;
+
+    ctx.textAlign = 'right';
+    ctx.font = font(500, 12);
+    ctx.fillStyle = C.muted;
+    ctx.fillText(row.label, totalsLabelRight, y);
+
+    ctx.font = font(row.weight, row.size);
+    ctx.fillStyle = row.color;
+    ctx.fillText(row.value, RIGHT, y);
+
+    if (index === 1) {
+      ctx.strokeStyle = C.rule;
+      ctx.beginPath();
+      ctx.moveTo(RIGHT - 340, y + 9);
+      ctx.lineTo(RIGHT, y + 9);
+      ctx.stroke();
+    }
+  });
 
   return canvas.encode('png');
 }
