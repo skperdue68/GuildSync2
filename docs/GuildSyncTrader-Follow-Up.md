@@ -33,16 +33,25 @@ GuildSyncBanking is untouched.
 
 ## Sale notifications
 
-`/sales on` and `/sales off` are global Discord commands, so they work in the guild and in DMs
-(run the bot's `npm run deploy` once to register the global command). A
+`/trader on` and `/trader off` are global Discord commands, so they work in the guild and in DMs;
+`/trader register` and `/trader unregister` are accepted as aliases for the same two actions. Run the
+bot's `npm run deploy` once to register the global command (the same PUT removes the retired global
+`/sales` command). A
 Discord account must have a `linked` row in `guildsync_member_links`; otherwise the bot explains how
 to link the account and who to contact for help. Subscriptions live in
 `guildsync_trader_sales_subscriptions` (one row per Discord user) and the linked ESO name is resolved
 when each sale is sent, so renames and re-links keep working.
 
-Trader data arrives as one SavedVars batch, so each subscriber gets at most one DM per import. A
-batch with one matching sale keeps the original invoice-style DM (Discord timestamp, transaction ID,
-item, buyer, unit price × quantity = total − tax = net). Two or more matching sales become one
+Trader data arrives as one SavedVars batch, so each subscriber gets at most one DM per import. Every
+DM is a short congratulations caption (guild, item or sale count, and the arithmetic
+`unit × quantity − tax = net`) with the full invoice attached as a rendered PNG
+(`trader-invoice.png`): date, transaction ID, buyer, item, quantity, unit price, amount, subtotal, tax
+and net payout. The bot writes that PNG to the OS temp directory, attaches it with `attachment://`,
+and deletes the file as soon as Discord has the message. Notices are queued instead of sent in a
+burst: about two seconds between DMs, then a one to two minute pause after every five, so a
+catch-up import is never mistaken for spam. If rendering fails, the DM falls back to a
+details embed carrying every field (and, for several sales, the buyer-grouped item list), so the
+information is never lost. Two or more matching sales become one
 combined invoice, grouped by buyer and then by sale time, with one row per item and a grand total for
 sales, quantity, gross, tax and net. This applies to live uploads and `/gst catchup` alike. Sales
 older than the subscription are skipped, so enabling notifications never floods someone with old
@@ -59,7 +68,8 @@ history.
   retaining the imported names in `seller_original` / `buyer_original`.
 - `trader-sales-subscriptions.test.js` covers link-gated subscriptions, one notice per import, age
   filtering, buyer/time ordering and the bot socket handler.
-- Bot tests cover `/sales` replies plus the single-sale and combined-invoice DM formatting.
+- Bot tests cover `/trader` replies, the short caption embed, the details fallback embeds, the PNG
+  render, and temp-file cleanup after sending.
 
 ## Still separate
 
