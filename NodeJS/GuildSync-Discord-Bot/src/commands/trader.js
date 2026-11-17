@@ -1,6 +1,6 @@
 import { AttachmentBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { Log } from '../helper.js';
-import { TRADER_INVOICE_FILE_NAME, renderTraderInvoiceImage } from '../trader-invoice-image.js';
+import { renderTraderInvoiceImages, traderReceiptFileNames } from '../trader-invoice-image.js';
 
 export const LINK_REQUIRED_MESSAGE = [
   'I cannot send trader sale invoices until your Discord account is linked to an ESO account.',
@@ -109,7 +109,7 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
       }
 
       const truncated = Boolean(response.truncated);
-      const png = await renderTraderInvoiceImage({
+      const pages = await renderTraderInvoiceImages({
         sales,
         kind: sales.length === 1 ? 'sale' : 'invoice',
         caption: searchReceiptCaption(sales, item),
@@ -117,11 +117,12 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
           ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
           : ''
       });
+      const names = traderReceiptFileNames(pages.length);
       await interaction.editReply({
         content: truncated
           ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
           : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`,
-        files: [new AttachmentBuilder(png, { name: TRADER_INVOICE_FILE_NAME })],
+        files: pages.map((png, index) => new AttachmentBuilder(png, { name: names[index] })),
         allowedMentions: { parse: [] }
       });
 

@@ -1,7 +1,8 @@
 import { createCanvas } from '@napi-rs/canvas';
 
 // The DM receipt is rendered as a PNG so Discord shows a single, tidy document
-// instead of a wall of embed fields.
+// instead of a wall of embed fields. A long list continues on extra pages
+// rather than dropping rows.
 export const TRADER_INVOICE_FILE_NAME = 'trader-sales-receipt.png';
 
 // Drawn at 2x so the receipt stays sharp when opened full size. Discord still
@@ -19,8 +20,15 @@ const HEADLINE_LINE_H = 24;
 const META_H = 62;
 const TABLE_HEADER_H = 34;
 const SECTION_H = 26;
-const TIME_COLUMN_W = 150;
-const MAX_INVOICE_ROWS = 16;
+// Wide enough for the full stamp including the timezone, e.g.
+// "Sep 30 · 12:59 PM EDT", so the EST/EDT label is never clipped away.
+export const SOLD_COLUMN_W = 178;
+// A page holds as many rows as fit in this much body height; anything left
+// moves to the next graphic.
+const MAX_PAGE_BODY_H = 620;
+const ROW_H = 36;
+const SINGLE_ROW_H = 40;
+const ROW_LINE_H = 16;
 
 const C = {
   backdrop: '#11151b',
@@ -38,7 +46,7 @@ const C = {
 // the receipt is a picture and cannot follow each viewer's own timezone.
 const EASTERN = 'America/New_York';
 
-const font = (weight, size) => `${weight} ${size}px "Segoe UI", "DejaVu Sans", Arial, sans-serif`;
+export const font = (weight, size) => `${weight} ${size}px "Segoe UI", "DejaVu Sans", Arial, sans-serif`;
 const gold = (value) => `${Math.round(Number(value) || 0).toLocaleString('en-US')}g`;
 const num = (value) => Number(value) || 0;
 const sum = (list, field) => list.reduce((total, item) => total + num(item[field]), 0);
@@ -73,6 +81,16 @@ function wrapLines(ctx, text, maxWidth) {
   return lines.length ? lines : [''];
 }
 
+// Item names may wrap onto a second line so the date column can keep the whole
+// timestamp; anything past that is clipped rather than spilling out of its cell.
+function itemLines(ctx, itemName, maxWidth, size = 14) {
+  ctx.font = font(500, size);
+  const lines = wrapLines(ctx, String(itemName || 'Item'), maxWidth);
+  if (lines.length <= 2) return lines;
+
+  return [lines[0], clipLine(ctx, lines.slice(1).join(' '), maxWidth)];
+}
+
 function roundRect(ctx, x, y, width, height, radius) {
   const r = Math.min(radius, width / 2, height / 2);
   ctx.beginPath();
@@ -84,7 +102,7 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function traderSaleDate(seconds) {
+export function traderSaleDate(seconds) {
   const value = num(seconds);
   if (value <= 0) return 'Unknown';
 
@@ -100,7 +118,7 @@ function traderSaleDate(seconds) {
 
 // A row-sized stamp for multi-sale receipts, in Eastern Time like the full
 // date above so both layouts read the same way.
-function shortSaleDate(seconds) {
+export function shortSaleDate(seconds) {
   const value = num(seconds);
   if (value <= 0) return '';
 
@@ -110,6 +128,13 @@ function shortSaleDate(seconds) {
     hour: 'numeric', minute: '2-digit', timeZone: EASTERN, timeZoneName: 'short'
   });
   return `${date} · ${time}`;
+}
+
+// A list receipt is a catch-up document, not a single fresh sale, so it says
+// plainly which slice of sales it covers.
+export function defaultInvoiceHeadline(count) {
+  const total = Math.max(0, Number(count) || 0);
+  return `Last ${total} sale${total === 1 ? '' : 's'}.`;
 }
 
 // Buyers are grouped alphabetically and each buyer's sales are ordered by time,
@@ -134,78 +159,103 @@ export function groupSalesByBuyer(sales = []) {
     .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
 }
 
-function rowPlan(groups, single) {
-  if (single) return { body: [{ type: 'item', sale: groups[0].sales[0] }], hidden: 0 };
-
-  const body = [];
-  let itemRows = 0;
-  let hidden = 0;
-
-  for (const group of groups) {
-    const sales = [];
-
-    for (const sale of group.sales) {
-      if (itemRows >= MAX_INVOICE_ROWS) {
-        hidden += 1;
-        continue;
-      }
-      sales.push(sale);
-      itemRows += 1;
-    }
-
-    if (sales.length) {
-      body.push({ type: 'buyer', label: group.name }, ...sales.map((sale) => ({ type: 'item', sale })));
-    }
-  }
-
-  return { body, hidden };
+function columnLayout(single) {
+  const colQty = RIGHT - 320;
+  const itemX = single ? INNER_X + 16 : INNER_X + 16 + SOLD_COLUMN_W;
+  return {
+    colQty,
+    colUnit: RIGHT - 170,
+    itemX,
+    itemWidth: colQty - 60 - itemX
+  };
 }
 
 /**
- * Render a trader sale (or a multi-sale invoice) as a PNG document.
- *
- * @param {{sales?: object[], kind?: 'sale'|'invoice', caption?: string, footerNote?: string}} notice
- * @returns {Promise<Buffer>}
+ * Split sales into pages of rows the page can actually hold. A buyer heading is
+ * repeated on the next page when their rows continue there, and every sale
+ * appears exactly once across the returned pages.
  */
-export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', caption = '', footerNote = '' } = {}) {
+export function planReceiptPages(sales = [], { maxBodyHeight = MAX_PAGE_BODY_H } = {}) {
   const list = (Array.isArray(sales) ? sales : []).filter(Boolean);
-  if (!list.length) throw new Error('No trader sales to render.');
-
-  const single = kind !== 'invoice' && list.length === 1;
   const groups = groupSalesByBuyer(list);
-  const { body, hidden } = rowPlan(groups, single);
+  const measuring = createCanvas(8, 8).getContext('2d');
+  const { itemWidth } = columnLayout(false);
 
-  const first = list[0];
-  const guildName = String(first.guildName || '').trim() || 'GuildSync';
-  const gross = sum(list, 'price');
-  const tax = sum(list, 'tax');
-  const net = sum(list, 'net');
-  const quantity = sum(list, 'quantity');
+  const pages = [];
+  let rows = [];
+  let used = 0;
 
+  for (const group of groups) {
+    let headerPending = group.name;
+
+    for (const sale of group.sales) {
+      const lines = itemLines(measuring, sale.itemName, itemWidth);
+      const height = ROW_H + (lines.length - 1) * ROW_LINE_H;
+      const needed = (headerPending ? SECTION_H : 0) + height;
+
+      if (rows.length && used + needed > maxBodyHeight) {
+        pages.push(rows);
+        rows = [];
+        used = 0;
+      }
+
+      if (headerPending) {
+        rows.push({ type: 'buyer', label: headerPending });
+        used += SECTION_H;
+        headerPending = '';
+      }
+
+      rows.push({ type: 'item', sale, lines, height });
+      used += height;
+    }
+  }
+
+  if (rows.length) pages.push(rows);
+  return pages;
+}
+
+/** File names for the pages of one receipt, in page order. */
+export function traderReceiptFileNames(count = 1) {
+  const total = Math.max(1, Number(count) || 1);
+  if (total === 1) return [TRADER_INVOICE_FILE_NAME];
+
+  return Array.from({ length: total }, (_, index) =>
+    TRADER_INVOICE_FILE_NAME.replace(/\.png$/, `-${index + 1}.png`));
+}
+
+async function drawReceiptPage({
+  rows = [],
+  single = false,
+  first = {},
+  list = [],
+  groups = [],
+  headline = '',
+  footerNote = '',
+  pageIndex = 0,
+  pageCount = 1,
+  totals = { gross: 0, tax: 0, net: 0, quantity: 0 },
+  guildName = 'GuildSync'
+} = {}) {
+  // Page one carries the meta block; only the last page carries the totals.
+  const showMeta = single || pageIndex === 0;
+  const showFooter = single || pageIndex === pageCount - 1;
   const measuring = createCanvas(8, 8).getContext('2d');
   measuring.font = font(500, 17);
-  // A caller can replace the congratulations line; a search result is not a
-  // fresh sale, so it passes a neutral caption instead.
-  const headline = String(caption || '').trim() || (single
-    ? `Congratulations! You sold ${first.itemName || 'an item'} on the ${guildName} Trader — the details are below.`
-    : `Congratulations! You made ${list.length} trader sales on the ${guildName} Trader — the details are below.`);
   const headlineLines = wrapLines(measuring, headline, INNER_W);
 
-  const rowH = single ? 40 : 36;
-  const itemRowCount = body.filter((row) => row.type === 'item').length;
-  const sectionCount = body.filter((row) => row.type === 'buyer').length;
+  const bodyHeight = rows.reduce((total, row) => total + (row.type === 'buyer' ? SECTION_H : row.height), 0);
 
   const bandTop = CARD_X;
-  const congratsTop = bandTop + BAND_H + 34;
-  const metaTop = congratsTop + headlineLines.length * HEADLINE_LINE_H + 8;
-  const tableTop = metaTop + META_H + 14;
+  const headlineTop = bandTop + BAND_H + 34;
+  const afterHeadline = headlineTop + headlineLines.length * HEADLINE_LINE_H;
+  const metaTop = afterHeadline + 8;
+  const tableTop = showMeta ? metaTop + META_H + 14 : afterHeadline + 18;
   const rowsTop = tableTop + TABLE_HEADER_H;
-  const bodyHeight = itemRowCount * rowH + sectionCount * SECTION_H + (hidden ? 26 : 0);
   const rowsBottom = rowsTop + bodyHeight;
-  const paidBaseline = rowsBottom + 34;
-  const footerRule = rowsBottom + 60;
+  // A single-sale receipt also prints "Paid to" above the footer rule.
+  const footerRule = rowsBottom + (single ? 66 : 40);
   const footerBaseline = footerRule + 26;
-  const height = footerBaseline + 96;
+  const height = showFooter ? footerBaseline + 88 : rowsBottom + 30;
 
   const canvas = createCanvas(WIDTH * SCALE, height * SCALE);
   const ctx = canvas.getContext('2d');
@@ -246,57 +296,63 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', capt
   ctx.fillText('TRADER SALES RECEIPT', INNER_X, bandTop + 80);
 
   ctx.textAlign = 'right';
-  ctx.font = font(600, 11);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
-  ctx.fillText('NET PAYOUT', RIGHT, bandTop + 40);
-  ctx.font = font(700, 30);
-  ctx.fillStyle = C.gold;
-  ctx.fillText(gold(net), RIGHT, bandTop + 80);
+  if (showFooter) {
+    ctx.font = font(600, 11);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
+    ctx.fillText('NET PAYOUT', RIGHT, bandTop + 40);
+    ctx.font = font(700, 30);
+    ctx.fillStyle = C.gold;
+    ctx.fillText(gold(totals.net), RIGHT, bandTop + 80);
+  } else {
+    ctx.font = font(700, 16);
+    ctx.fillStyle = C.gold;
+    ctx.fillText(`PAGE ${pageIndex + 1} OF ${pageCount}`, RIGHT, bandTop + 62);
+  }
 
   // Headline
   ctx.textAlign = 'left';
   ctx.font = font(500, 17);
   ctx.fillStyle = C.ink;
   headlineLines.forEach((line, index) => {
-    ctx.fillText(line, INNER_X, congratsTop + index * HEADLINE_LINE_H);
+    ctx.fillText(line, INNER_X, headlineTop + index * HEADLINE_LINE_H);
   });
 
   // Meta columns
-  const metaColumns = single
-    ? [
-      { label: 'DATE', value: traderSaleDate(first.time) },
-      { label: 'TRANSACTION ID', value: `#${first.eventId || 'unknown'}` },
-      { label: 'BUYER', value: String(first.buyer || 'Unknown') }
-    ]
-    : [
-      { label: 'SALES', value: String(list.length) },
-      { label: 'BUYERS', value: String(groups.length) },
-      { label: 'ITEMS SOLD', value: String(quantity) }
-    ];
+  if (showMeta) {
+    const metaColumns = single
+      ? [
+        { label: 'DATE', value: traderSaleDate(first.time) },
+        { label: 'TRANSACTION ID', value: `#${first.eventId || 'unknown'}` },
+        { label: 'BUYER', value: String(first.buyer || 'Unknown') }
+      ]
+      : [
+        { label: 'SALES', value: String(list.length) },
+        { label: 'BUYERS', value: String(groups.length) },
+        { label: 'ITEMS SOLD', value: String(totals.quantity) }
+      ];
+    const metaWidth = INNER_W / 3;
 
-  const metaWidth = INNER_W / 3;
-  metaColumns.forEach((column, index) => {
-    const x = INNER_X + index * metaWidth;
-    ctx.font = font(700, 11);
-    ctx.fillStyle = C.muted;
-    ctx.fillText(column.label, x, metaTop + 12);
+    metaColumns.forEach((column, index) => {
+      const x = INNER_X + index * metaWidth;
+      ctx.font = font(700, 11);
+      ctx.fillStyle = C.muted;
+      ctx.fillText(column.label, x, metaTop + 12);
 
-    ctx.font = font(600, 16);
-    ctx.fillStyle = C.ink;
-    ctx.fillText(clipLine(ctx, column.value, metaWidth - 16), x, metaTop + 36);
-  });
+      ctx.font = font(600, 16);
+      ctx.fillStyle = C.ink;
+      ctx.fillText(clipLine(ctx, column.value, metaWidth - 16), x, metaTop + 36);
+    });
+  }
 
   // Table header
   ctx.fillStyle = C.stripe;
   ctx.fillRect(INNER_X, tableTop, INNER_W, TABLE_HEADER_H);
 
-  const colQty = RIGHT - 320;
-  const colUnit = RIGHT - 170;
+  const { colQty, colUnit, itemX } = columnLayout(single);
 
   const headerY = tableTop + 22;
   ctx.font = font(700, 11);
   ctx.fillStyle = C.muted;
-  const itemX = single ? INNER_X + 16 : INNER_X + 16 + TIME_COLUMN_W;
   ctx.textAlign = 'left';
   ctx.fillText(single ? 'ITEM' : 'SOLD', INNER_X + 16, headerY);
   if (!single) ctx.fillText('ITEM', itemX, headerY);
@@ -309,7 +365,8 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', capt
   ctx.strokeStyle = C.rule;
   ctx.lineWidth = 1;
   let cursor = rowsTop;
-  for (const row of body) {
+
+  for (const row of rows) {
     if (row.type === 'buyer') {
       ctx.fillStyle = C.gold;
       ctx.fillRect(INNER_X, cursor + 5, 3, SECTION_H - 12);
@@ -324,17 +381,20 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', capt
     }
 
     const sale = row.sale;
-    const textY = cursor + rowH / 2 + 5;
+    const textY = cursor + (single ? 26 : 23);
 
     ctx.textAlign = 'left';
     if (!single) {
       ctx.font = font(500, 13);
       ctx.fillStyle = C.muted;
-      ctx.fillText(clipLine(ctx, shortSaleDate(sale.time), TIME_COLUMN_W - 14), INNER_X + 16, textY);
+      ctx.fillText(clipLine(ctx, shortSaleDate(sale.time), SOLD_COLUMN_W - 14), INNER_X + 16, textY);
     }
+
     ctx.font = font(500, single ? 15 : 14);
     ctx.fillStyle = C.ink;
-    ctx.fillText(clipLine(ctx, sale.itemName || 'Item', colQty - 60 - itemX), itemX, textY);
+    row.lines.forEach((line, index) => {
+      ctx.fillText(line, itemX, textY + index * ROW_LINE_H);
+    });
 
     ctx.textAlign = 'right';
     ctx.fillStyle = C.ink;
@@ -344,26 +404,21 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', capt
     ctx.fillText(gold(sale.price), RIGHT, textY);
 
     ctx.beginPath();
-    ctx.moveTo(INNER_X, cursor + rowH - 1);
-    ctx.lineTo(RIGHT, cursor + rowH - 1);
+    ctx.moveTo(INNER_X, cursor + row.height - 1);
+    ctx.lineTo(RIGHT, cursor + row.height - 1);
     ctx.stroke();
 
-    cursor += rowH;
-  }
-
-  if (hidden) {
-    ctx.font = font(500, 13);
-    ctx.fillStyle = C.muted;
-    ctx.textAlign = 'left';
-    ctx.fillText(`…and ${hidden} more sale${hidden === 1 ? '' : 's'} not shown here.`, INNER_X + 16, cursor + 18);
+    cursor += row.height;
   }
 
   if (single && first.seller) {
     ctx.font = font(500, 13);
     ctx.fillStyle = C.muted;
     ctx.textAlign = 'left';
-    ctx.fillText(clipLine(ctx, `Paid to ${first.seller}`, INNER_W - 200), INNER_X, paidBaseline);
+    ctx.fillText(clipLine(ctx, `Paid to ${first.seller}`, INNER_W - 200), INNER_X, rowsBottom + 34);
   }
+
+  if (!showFooter) return canvas.encode('png');
 
   // Footer
   ctx.strokeStyle = C.rule;
@@ -391,9 +446,9 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', capt
   // arithmetic would be written: gross, less the guild tax, then the net.
   const totalsLabelRight = RIGHT - 160;
   const totalRows = [
-    { label: 'Gross sales', value: gold(gross), color: C.ink, size: 13, weight: 600 },
-    { label: 'Guild tax', value: tax > 0 ? `−${gold(tax)}` : gold(0), color: C.ink, size: 13, weight: 600 },
-    { label: 'Net profit', value: gold(net), color: C.band, size: 16, weight: 700 }
+    { label: 'Gross sales', value: gold(totals.gross), color: C.ink, size: 13, weight: 600 },
+    { label: 'Guild tax', value: totals.tax > 0 ? `−${gold(totals.tax)}` : gold(0), color: C.ink, size: 13, weight: 600 },
+    { label: 'Net profit', value: gold(totals.net), color: C.band, size: 16, weight: 700 }
   ];
 
   totalRows.forEach((row, index) => {
@@ -418,4 +473,71 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', capt
   });
 
   return canvas.encode('png');
+}
+
+/**
+ * Render trader sales as one or more PNG receipt pages.
+ *
+ * A single sale keeps the detailed receipt. A list is split across as many
+ * pages as it needs, with the totals and the footer on the last page only.
+ *
+ * @param {{sales?: object[], kind?: 'sale'|'invoice', caption?: string, footerNote?: string}} notice
+ * @returns {Promise<Buffer[]>}
+ */
+export async function renderTraderInvoiceImages({ sales = [], kind = 'sale', caption = '', footerNote = '' } = {}) {
+  const list = (Array.isArray(sales) ? sales : []).filter(Boolean);
+  if (!list.length) throw new Error('No trader sales to render.');
+
+  const single = kind !== 'invoice' && list.length === 1;
+  const groups = groupSalesByBuyer(list);
+  const first = list[0];
+  const guildName = String(first.guildName || '').trim() || 'GuildSync';
+  const totals = {
+    gross: sum(list, 'price'),
+    tax: sum(list, 'tax'),
+    net: sum(list, 'net'),
+    quantity: sum(list, 'quantity')
+  };
+
+  if (single) {
+    const measuring = createCanvas(8, 8).getContext('2d');
+    const { itemWidth } = columnLayout(true);
+    const lines = itemLines(measuring, first.itemName, itemWidth, 15);
+    const headline = String(caption || '').trim()
+      || `Congratulations! You sold ${first.itemName || 'an item'} on the ${guildName} Trader — the details are below.`;
+
+    return [await drawReceiptPage({
+      rows: [{ type: 'item', sale: first, lines, height: SINGLE_ROW_H + (lines.length - 1) * ROW_LINE_H }],
+      single: true,
+      first,
+      list,
+      groups,
+      headline,
+      footerNote,
+      totals,
+      guildName
+    })];
+  }
+
+  const pages = planReceiptPages(list);
+  const headline = String(caption || '').trim() || defaultInvoiceHeadline(list.length);
+  const images = [];
+
+  for (let index = 0; index < pages.length; index += 1) {
+    images.push(await drawReceiptPage({
+      rows: pages[index],
+      single: false,
+      first,
+      list,
+      groups,
+      headline,
+      footerNote,
+      totals,
+      guildName,
+      pageIndex: index,
+      pageCount: pages.length
+    }));
+  }
+
+  return images;
 }
