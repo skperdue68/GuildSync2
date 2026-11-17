@@ -368,10 +368,21 @@ export async function planTraderSaleNotices(db, sales = []) {
   return notices;
 }
 
-// How many matching sales /trader sales searches, and how many recent sales
-// /trader receipt looks at (it only ever sends the newest one).
+// How many matching sales /trader sales searches, how many recent sales it
+// lists when no item is named, and how many /trader receipt looks at (it only
+// ever sends the newest one). 50 is also the ceiling for a requested count.
 const SALE_SEARCH_LIMIT = 50;
+const RECENT_SALE_LIMIT = 10;
 const RECEIPT_SALE_LIMIT = 1;
+const MAX_SALE_LIMIT = 50;
+
+// A count comes from a Discord option, so it is clamped instead of trusted:
+// anything absent, zero, negative or above the ceiling falls back to the default.
+const saleLimit = (value, fallback) => {
+  const requested = Math.trunc(Number(value));
+  if (!Number.isFinite(requested) || requested < 1) return fallback;
+  return Math.min(requested, MAX_SALE_LIMIT);
+};
 
 // /trader receipt replays the newest sale already stored for the linked account
 // as if it had just happened, so the DM can be checked without waiting for a
@@ -420,6 +431,41 @@ export async function loadTraderSalesForReceipt(db, discordUserId, { limit = REC
   return { names: linkedNames, sales: (Array.isArray(rows) ? rows : []).map((row) => saleForNotice(row)) };
 }
 
+// /trader sales with no item name lists the linked account's newest sales of
+// anything, so the command still answers when the item is not known.
+export async function recentTraderSales(db, discordUserId, { limit = RECENT_SALE_LIMIT } = {}) {
+  const id = normalizeUserId(discordUserId);
+  if (!id) return { sales: [], names: [] };
+
+  const linkedNames = await getLinkedEsoNames(db, id);
+  if (!linkedNames.length) return { sales: [], names: [] };
+
+  const list = await linkedSaleKeys(db, linkedNames);
+  if (!list.length) return { sales: [], names: linkedNames };
+
+  const placeholders = list.map(() => '?').join(',');
+  const capped = saleLimit(limit, RECENT_SALE_LIMIT);
+  // One extra row tells us the list was cut off, so the reply can say so.
+  const [rows] = await db.execute(
+    `SELECT ${saleColumns}
+       FROM guildsync_trader_entries
+      WHERE LOWER(TRIM(LEADING '@' FROM seller)) IN (${placeholders})
+         OR LOWER(TRIM(LEADING '@' FROM seller_original)) IN (${placeholders})
+      ORDER BY event_timestamp DESC
+      LIMIT ${capped + 1}`,
+    [...list, ...list]
+  );
+
+  const found = Array.isArray(rows) ? rows : [];
+
+  return {
+    names: linkedNames,
+    sales: found.slice(0, capped).map((row) => saleForNotice(row)),
+    truncated: found.length > capped,
+    limit: capped
+  };
+}
+
 // /trader sales <part of an item name> returns the linked account's own sales of
 // every matching item, newest first, for a receipt of that item's history.
 export async function searchTraderSales(db, discordUserId, itemQuery, { limit = SALE_SEARCH_LIMIT } = {}) {
@@ -434,7 +480,7 @@ export async function searchTraderSales(db, discordUserId, itemQuery, { limit = 
   if (!list.length) return { sales: [], names: linkedNames };
 
   const placeholders = list.map(() => '?').join(',');
-  const capped = Number(limit) || SALE_SEARCH_LIMIT;
+  const capped = saleLimit(limit, SALE_SEARCH_LIMIT);
   // One extra row tells us the list was cut off, so the reply can say so.
   const [rows] = await db.execute(
     `SELECT ${saleColumns}
@@ -507,13 +553,14 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
       }
 
       if (action === 'sales') {
+        // The item is optional: without one the newest sales of anything are
+        // listed, capped by the requested count (10 unless the bot sends one).
         const item = String(payload?.item || '').trim();
-        if (!item) {
-          reply({ ok: false, message: 'Include part of an item name.' });
-          return;
-        }
+        const options = payload?.limit ? { limit: payload.limit } : {};
+        const { sales, names, truncated, limit } = item
+          ? await searchTraderSales(db, discordUserId, item, options)
+          : await recentTraderSales(db, discordUserId, options);
 
-        const { sales, names, truncated, limit } = await searchTraderSales(db, discordUserId, item);
         if (!names.length) {
           reply({ ok: false, linked: false });
           return;
@@ -523,7 +570,7 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
           ok: true,
           linked: true,
           eso_account_name: names[0],
-          item,
+          ...(item ? { item } : {}),
           sales,
           truncated,
           limit,

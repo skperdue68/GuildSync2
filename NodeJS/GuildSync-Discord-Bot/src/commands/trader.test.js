@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MessageFlags } from 'discord.js';
-import { data, execute, searchReceiptCaption, LINK_REQUIRED_MESSAGE } from './trader.js';
+import { data, execute, searchReceiptCaption, recentReceiptCaption, LINK_REQUIRED_MESSAGE } from './trader.js';
 import { renderTraderInvoiceImages } from '../trader-invoice-image.js';
 
-function fixture({ response, option = 'on', connected = true, item = null, guildId = null } = {}) {
+function fixture({ response, option = 'on', connected = true, item = null, count = null, guildId = null } = {}) {
   const replies = [];
   const calls = [];
   const defers = [];
@@ -13,7 +13,8 @@ function fixture({ response, option = 'on', connected = true, item = null, guild
     guildId,
     options: {
       getSubcommand: () => option,
-      getString: (name) => (name === 'item' ? item : null)
+      getString: (name) => (name === 'item' ? item : null),
+      getInteger: (name) => (name === 'count' ? count : null)
     },
     async deferReply(payload) { defers.push(payload); },
     async editReply(payload) { replies.push(payload); }
@@ -167,6 +168,89 @@ test('/trader sales admits when only the newest matches were searched', async ()
 
   assert.match(f.replies[0].content, /the newest 1 only, older sales exist/);
   assert.equal(f.replies[0].files.length, 1);
+});
+
+test('/trader sales makes the item optional and takes an optional count', () => {
+  const sales = data.toJSON().options.find((option) => option.name === 'sales');
+  const item = sales.options.find((option) => option.name === 'item');
+  const count = sales.options.find((option) => option.name === 'count');
+
+  assert.equal(item.required ?? false, false, 'the item is optional');
+  assert.equal(count.required ?? false, false, 'the count is optional');
+  assert.equal(count.type, 4, 'the count is an integer');
+  assert.equal(count.min_value, 1);
+  assert.equal(count.max_value, 50);
+});
+
+test('/trader sales without an item shows the newest sales of anything', async () => {
+  const second = { ...soldSale, eventId: 502, itemName: 'Dreugh Wax', time: 1794910600 };
+  const f = fixture({
+    option: 'sales',
+    response: { ok: true, linked: true, eso_account_name: '@Seller', sales: [second, soldSale], limit: 10 }
+  });
+  await execute(f.interaction, f.socket);
+
+  assert.deepEqual(f.calls[0].payload, { discord_user_id: '42', action: 'sales' }, 'no item and no count are sent');
+
+  const [freshness, line] = f.replies[0].content.split('\n');
+  assert.match(freshness, /^As of <t:\d+:f> /);
+  assert.equal(line, 'Your 2 most recent sales.');
+  assert.equal(f.replies[0].files.length, 1);
+});
+
+test('/trader sales passes the count on and says when it cut the list', async () => {
+  const f = fixture({
+    option: 'sales',
+    count: 5,
+    response: { ok: true, linked: true, sales: [soldSale], truncated: true, limit: 5 }
+  });
+  await execute(f.interaction, f.socket);
+
+  assert.deepEqual(f.calls[0].payload, { discord_user_id: '42', action: 'sales', limit: 5 });
+  assert.match(f.replies[0].content, /Your 1 most recent sale — older sales exist\./);
+});
+
+test('/trader sales applies the count to an item search too', async () => {
+  const second = { ...soldSale, eventId: 502, time: 1794910600 };
+  const f = fixture({
+    option: 'sales',
+    item: 'soul',
+    count: 5,
+    response: { ok: true, linked: true, item: 'soul', sales: [second, soldSale], truncated: true, limit: 5 }
+  });
+  await execute(f.interaction, f.socket);
+
+  assert.deepEqual(
+    f.calls[0].payload,
+    { discord_user_id: '42', action: 'sales', item: 'soul', limit: 5 },
+    'both the item and the count are sent'
+  );
+
+  const [freshness, line] = f.replies[0].content.split('\n');
+  assert.match(freshness, /^As of <t:\d+:f> /);
+  assert.equal(line, '2 sales matching “soul” — the newest 2 only, older sales exist.');
+  assert.equal(f.replies[0].files.length, 1);
+});
+
+test('a plain list of any item names the item when it is a single sale', () => {
+  assert.equal(recentReceiptCaption([soldSale]), 'Your most recent sale of Soul Gem.');
+  assert.equal(recentReceiptCaption([soldSale, soldSale]), 'Your last 2 sales.');
+  assert.equal(recentReceiptCaption([{ ...soldSale, itemName: '' }]), 'Your most recent sale.');
+
+  for (const caption of [recentReceiptCaption([soldSale]), recentReceiptCaption([soldSale, soldSale])]) {
+    assert.ok(!/congratulations/i.test(caption), 'a list is not a fresh sale');
+  }
+});
+
+test('/trader sales without an item explains an empty history', async () => {
+  const f = fixture({
+    option: 'sales',
+    response: { ok: true, linked: true, eso_account_name: '@Seller', sales: [] }
+  });
+  await execute(f.interaction, f.socket);
+
+  assert.equal(f.replies[0].content.split('\n').at(-1), 'There are no trader sales stored for your linked ESO account yet.');
+  assert.equal(f.replies[0].files, undefined);
 });
 
 test('a search receipt opens with a neutral caption, not a congratulations', () => {

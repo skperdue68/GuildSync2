@@ -43,12 +43,20 @@ export const data = new SlashCommandBuilder()
     .setDescription('Same as /trader off: stop sending me trader sale invoices.'))
   .addSubcommand((subcommand) => subcommand
     .setName('sales')
-    .setDescription('Show every trader sale of an item.')
+    .setDescription('Show your latest trader sales, or every sale of one item.')
     .addStringOption((option) => option
       .setName('item')
       .setDescription('Any part of the item name, spaces allowed.')
-      .setRequired(true)
-      .setMaxLength(100)))
+      .setRequired(false)
+      .setMaxLength(100))
+    .addIntegerOption((option) => option
+      .setName('count')
+      // Works with or without an item, and a limited list is always the newest
+      // sales first, so the wording says that instead of implying a plain list.
+      .setDescription('How many sales, newest first (default 10, or 50 for an item search).')
+      .setRequired(false)
+      .setMinValue(1)
+      .setMaxValue(50)))
   .addSubcommand((subcommand) => subcommand
     .setName('receipt')
     .setDescription('DM me a receipt for my most recent trader sale.'))
@@ -70,6 +78,18 @@ export function searchReceiptCaption(sales = [], item = '') {
   }
 
   return `Your ${list.length} sales matching “${term}”.`;
+}
+
+// Without an item the list is the newest sales of anything, so one sale is named
+// after its item instead of congratulating on a sale that is not fresh.
+export function recentReceiptCaption(sales = []) {
+  const list = Array.isArray(sales) ? sales.filter(Boolean) : [];
+
+  if (list.length === 1) {
+    return list[0].itemName ? `Your most recent sale of ${list[0].itemName}.` : 'Your most recent sale.';
+  }
+
+  return `Your last ${list.length} sale${list.length === 1 ? '' : 's'}.`;
 }
 
 // register/unregister are aliases so either wording works.
@@ -122,6 +142,7 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
   const item = action === 'sales'
     ? String(interaction.options.getString('item') || '').trim()
     : '';
+  const count = action === 'sales' ? interaction.options.getInteger('count') : null;
 
   // In a channel the answer is for the person who asked, receipts included; a
   // DM is already private and ignores the ephemeral flag.
@@ -132,7 +153,8 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
     const response = await request(guildSyncSocket, {
       discord_user_id: interaction.user?.id,
       action,
-      ...(item ? { item } : {})
+      ...(item ? { item } : {}),
+      ...(count ? { limit: count } : {})
     });
 
     warnIfBackendOutdated(response, log);
@@ -180,26 +202,38 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
 
       if (!sales.length) {
         await interaction.editReply({
-          content: `${infoLine}\nThere are no sales entries for an item named ${item}.`,
+          content: `${infoLine}\n${item
+            ? `There are no sales entries for an item named ${item}.`
+            : 'There are no trader sales stored for your linked ESO account yet.'}`,
           allowedMentions: { parse: [] }
         });
         return;
       }
 
       const truncated = Boolean(response.truncated);
+      const plural = sales.length === 1 ? '' : 's';
+
+      // With an item the reply is its history; without one it is the newest sales
+      // of anything, and the caption names the item when there is only one.
       await interaction.editReply(await receiptReply({
         infoLine,
-        line: truncated
-          ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
-          : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`,
+        line: item
+          ? (truncated
+            ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
+            : `${sales.length} sale${plural} matching “${item}”.`)
+          : (truncated
+            ? `Your ${sales.length} most recent sale${plural} — older sales exist.`
+            : `Your ${sales.length} most recent sale${plural}.`),
         sales,
-        caption: searchReceiptCaption(sales, item),
+        caption: item ? searchReceiptCaption(sales, item) : recentReceiptCaption(sales),
         footerNote: truncated
-          ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
+          ? (item
+            ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
+            : `Only the newest ${sales.length} sales are shown; older ones are not included.`)
           : ''
       }));
 
-      log(`Trader sales search for “${item}” returned ${sales.length} sale(s) for Discord user ${interaction.user?.id || 'unknown'}.`);
+      log(`Trader sales ${item ? `search for “${item}”` : 'list'} returned ${sales.length} sale(s) for Discord user ${interaction.user?.id || 'unknown'}.`);
       return;
     }
 
