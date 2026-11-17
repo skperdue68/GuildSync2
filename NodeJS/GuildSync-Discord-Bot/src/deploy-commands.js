@@ -7,15 +7,20 @@ import * as tickets from './commands/tickets.js';
 import * as trader from './commands/trader.js';
 import { createGsaCommandData, createGsrCommandData, createGsrAliasCommandData } from './commands/gsa-raffle.js';
 
-const commands = [
+// Guild-scoped commands. /trader is deliberately not in this list: Discord
+// does not merge a guild command with a global one of the same name, it shows
+// both, so registering it in both places gives you two identical /trader
+// entries in the picker.
+const guildCommands = [
   roles.data.toJSON(),
   raffle.data.toJSON(),
   tickets.data.toJSON(),
-  trader.data.toJSON(),
   createGsaCommandData().toJSON(),
   createGsrCommandData().toJSON(),
   createGsrAliasCommandData().toJSON(),
 ];
+
+const globalCommands = [trader.data.toJSON()];
 
 const {
   DISCORD_TOKEN,
@@ -33,23 +38,35 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 try {
   console.log('Registering GuildSync slash commands...');
 
+  // Unregister before registering. Both PUTs below replace their command set
+  // wholesale, so anything not in the lists above disappears; the explicit
+  // delete covers the case that matters here - an earlier deploy registered
+  // /trader in the guild as well, and that copy shows up beside the global one.
+  const existingGuildCommands = await rest.get(
+    Routes.applicationGuildCommands(DISCORD_CLIENT_ID, DISCORD_GUILD_ID)
+  );
+
+  for (const command of existingGuildCommands.filter(({ name }) => name === 'trader')) {
+    await rest.delete(
+      Routes.applicationGuildCommand(DISCORD_CLIENT_ID, DISCORD_GUILD_ID, command.id)
+    );
+    console.log(`Removed the leftover guild-scoped /${command.name}.`);
+  }
+
   await rest.put(
     Routes.applicationGuildCommands(DISCORD_CLIENT_ID, DISCORD_GUILD_ID),
-    { body: commands }
+    { body: guildCommands }
   );
 
-  // /trader is registered in both places: guild-scoped so it is there the
-  // moment this runs (a global command can take up to an hour to reach a
-  // client, and a stale per-guild integration toggle can hide it), and global
-  // so it also works in DMs. Discord shows the guild copy in the guild. This
-  // PUT replaces the whole global command set, which removes the retired
-  // global /sales command.
+  // /trader is global only: that is what makes it work in DMs, and it reaches
+  // every server the bot is in. This PUT replaces the whole global command set,
+  // which also removes the retired global /sales command.
   await rest.put(
     Routes.applicationCommands(DISCORD_CLIENT_ID),
-    { body: [trader.data.toJSON()] }
+    { body: globalCommands }
   );
 
-  console.log('Slash commands registered successfully. /trader is registered in the guild and globally, so it works in server channels and DMs.');
+  console.log(`Registered ${guildCommands.length} guild commands and ${globalCommands.length} global command. /trader is global, so it works in server channels and DMs.`);
 } catch (error) {
   console.error('Failed to register slash commands:');
   console.error(error);
