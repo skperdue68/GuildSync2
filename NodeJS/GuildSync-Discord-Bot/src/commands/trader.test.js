@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { data, execute, LINK_REQUIRED_MESSAGE } from './trader.js';
+import { data, execute, searchReceiptCaption, LINK_REQUIRED_MESSAGE } from './trader.js';
 
 function fixture({ response, option = 'on', connected = true, item = null } = {}) {
   const replies = [];
@@ -126,6 +126,19 @@ test('/trader sales admits when only the newest matches were searched', async ()
 
   assert.match(f.replies[0].content, /the newest 1 only, older sales exist/);
   assert.equal(f.replies[0].files.length, 1);
+});
+
+test('a search receipt opens with a neutral caption, not a congratulations', () => {
+  assert.equal(searchReceiptCaption([soldSale], 'soul gem'), 'Your sale of Soul Gem.');
+  assert.equal(
+    searchReceiptCaption([soldSale, soldSale], 'blueprint'),
+    'Your 2 sales matching “blueprint”.'
+  );
+  assert.equal(searchReceiptCaption([], 'soul gem'), 'Your 0 sales matching “soul gem”.');
+
+  for (const caption of [searchReceiptCaption([soldSale], 'soul gem'), searchReceiptCaption([soldSale, soldSale], 'x')]) {
+    assert.ok(!/congratulations/i.test(caption), 'a search result is not a fresh sale');
+  }
 });
 
 test('/trader sales reports an item that has no entries', async () => {

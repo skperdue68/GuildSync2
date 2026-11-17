@@ -101,6 +101,9 @@ test('the invoice graphic renders as a PNG for one sale and for many', async () 
   assert.ok(single.length > 2000, 'the PNG carries a real page');
   assert.equal(single.readUInt32BE(16), 1920, 'the receipt renders at 2x for the full-size view');
 
+  const captioned = await renderTraderInvoiceImage({ sales: [sale], kind: 'sale', caption: 'Your sale of Dreugh Wax.' });
+  assert.notDeepEqual(Buffer.from(captioned), Buffer.from(single), 'a custom caption replaces the congratulations line');
+
   const invoice = await renderTraderInvoiceImage({
     sales: [sale, { ...sale, eventId: 502, buyer: '@Other', time: 1780000600 }, { ...sale, eventId: 503, buyer: '@Third', time: 1780000700 }],
     kind: 'invoice'
