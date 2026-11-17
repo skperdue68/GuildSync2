@@ -5,10 +5,7 @@ const discordTimestamp = (value) => {
   return seconds > 0 ? `<t:${seconds}:f>` : 'Unknown time';
 };
 
-const saleLine = (sale) => {
-  const item = sale.itemName || 'Item';
-  return `• ${discordTimestamp(sale.time)} ${item} — ${gold(sale.net)} net (${gold(sale.price)} − ${gold(sale.tax)} tax)`;
-};
+const total = (sales, field) => sales.reduce((sum, sale) => sum + (Number(sale[field]) || 0), 0);
 
 export function buildTraderSaleEmbed(sale = {}) {
   return {
@@ -27,26 +24,73 @@ export function buildTraderSaleEmbed(sale = {}) {
   };
 }
 
-export function buildTraderDigestEmbed(sales = []) {
-  const list = Array.isArray(sales) ? sales : [];
-  const net = list.reduce((sum, sale) => sum + (Number(sale.net) || 0), 0);
-  const tax = list.reduce((sum, sale) => sum + (Number(sale.tax) || 0), 0);
-  const gross = list.reduce((sum, sale) => sum + (Number(sale.price) || 0), 0);
+const invoiceRow = (sale) =>
+  `• ${discordTimestamp(sale.time)} · ${sale.itemName || 'Item'} — ${Number(sale.quantity) || 0} × ${gold(sale.unitPrice)} = ${gold(sale.price)} − ${gold(sale.tax)} tax = ${gold(sale.net)} net`;
 
-  const lines = list.slice(0, 10).map(saleLine);
-  if (list.length > 10) lines.push(`…and ${list.length - 10} more sale${list.length - 10 === 1 ? '' : 's'}.`);
+function invoiceBuyerGroups(sales = []) {
+  const groups = new Map();
+
+  for (const sale of sales) {
+    const name = String(sale.buyer || '').trim() || 'Unknown buyer';
+    const key = name.toLowerCase();
+    if (!groups.has(key)) groups.set(key, { name, sales: [] });
+    groups.get(key).sales.push(sale);
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      sales: [...group.sales].sort((a, b) => (Number(a.time) || 0) - (Number(b.time) || 0) || (Number(a.eventId) || 0) - (Number(b.eventId) || 0))
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) || a.sales[0].time - b.sales[0].time);
+}
+
+// Discord caps an embed description at 4096 characters. Keep a small margin
+// and state how many sales were left out; totals always cover the whole import.
+const INVOICE_DESCRIPTION_LIMIT = 3900;
+
+export function buildTraderInvoiceEmbed(sales = []) {
+  const list = Array.isArray(sales) ? sales : [];
+  const groups = invoiceBuyerGroups(list);
+  const header = `**${list.length}** sale${list.length === 1 ? '' : 's'} to **${groups.length}** buyer${groups.length === 1 ? '' : 's'}.\n\n`;
+
+  let body = '';
+  let included = 0;
+
+  for (const group of groups) {
+    let section = `**${group.name}**\n`;
+    let stopped = false;
+
+    for (const sale of group.sales) {
+      const row = `${invoiceRow(sale)}\n`;
+      if (body.length + section.length + row.length + 2 > INVOICE_DESCRIPTION_LIMIT) {
+        stopped = true;
+        break;
+      }
+      section += row;
+      included += 1;
+    }
+
+    if (section !== `**${group.name}**\n`) body += `${section}\n`;
+    if (stopped) break;
+  }
+
+  if (included < list.length) {
+    body += `…and ${list.length - included} more sale${list.length - included === 1 ? '' : 's'} not shown.\n`;
+  }
 
   return {
-    color: 0x2b6cb0,
-    title: 'Trader catch-up summary',
-    description: `You had **${list.length}** trader sale${list.length === 1 ? '' : 's'} in this catch-up.\n\n${lines.join('\n') || 'No sales matched your subscription.'}`.slice(0, 4000),
+    color: 0x2f855a,
+    title: 'Trader sales invoice',
+    description: `${header}${body}`.trim().slice(0, 4000),
     fields: [
       { name: 'Sales', value: String(list.length), inline: true },
-      { name: 'Gross', value: gold(gross), inline: true },
-      { name: 'Tax', value: gold(tax), inline: true },
-      { name: 'Net', value: gold(net), inline: true }
+      { name: 'Quantity', value: String(total(list, 'quantity')), inline: true },
+      { name: 'Gross', value: gold(total(list, 'price')), inline: true },
+      { name: 'Tax', value: gold(total(list, 'tax')), inline: true },
+      { name: 'Net', value: gold(total(list, 'net')), inline: true }
     ],
-    footer: { text: 'GuildSyncTrader catch-up' }
+    footer: { text: [list[0]?.guildName, list[0]?.world].filter(Boolean).join(' · ') || 'GuildSyncTrader' }
   };
 }
 
@@ -57,7 +101,7 @@ export function startTraderSaleNotifications(client, socket, log = console.log) 
       const sales = Array.isArray(notice.sales) ? notice.sales : [];
       if (!discordUserId || !sales.length) return;
 
-      const embed = notice.kind === 'digest' ? buildTraderDigestEmbed(sales) : buildTraderSaleEmbed(sales[0]);
+      const embed = notice.kind === 'invoice' ? buildTraderInvoiceEmbed(sales) : buildTraderSaleEmbed(sales[0]);
       const user = await client.users.fetch(discordUserId);
       await user.send({ embeds: [embed] });
     } catch (error) {

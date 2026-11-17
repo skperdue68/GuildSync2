@@ -40,10 +40,13 @@ to link the account and who to contact for help. Subscriptions live in
 `guildsync_trader_sales_subscriptions` (one row per Discord user) and the linked ESO name is resolved
 when each sale is sent, so renames and re-links keep working.
 
-Sales imported live send one invoice-style DM per new sale (Discord timestamp, transaction ID, item,
-buyer, unit price × quantity = total − tax = net). Sales older than the subscription are skipped, so
-enabling notifications never floods someone with old history. Sales saved by `/gst catchup` are
-marked `catchUp` by the add-on and produce one digest DM per import instead of one DM per sale.
+Trader data arrives as one SavedVars batch, so each subscriber gets at most one DM per import. A
+batch with one matching sale keeps the original invoice-style DM (Discord timestamp, transaction ID,
+item, buyer, unit price × quantity = total − tax = net). Two or more matching sales become one
+combined invoice, grouped by buyer and then by sale time, with one row per item and a grand total for
+sales, quantity, gross, tax and net. This applies to live uploads and `/gst catchup` alike. Sales
+older than the subscription are skipped, so enabling notifications never floods someone with old
+history.
 
 ## Tests
 
@@ -54,9 +57,9 @@ marked `catchUp` by the add-on and produce one digest DM per import instead of o
 - A MariaDB 11.4.5 run confirmed the created schema, duplicate re-imports being ignored, the same
   eventId inserting once per guild, and `@OldName` renames updating trader seller and buyer while
   retaining the imported names in `seller_original` / `buyer_original`.
-- `trader-sales-subscriptions.test.js` covers link-gated subscriptions, per-sale notices, age
-  filtering, catch-up digests and the bot socket handler.
-- Bot tests cover `/sales` replies and the invoice/digest DM formatting.
+- `trader-sales-subscriptions.test.js` covers link-gated subscriptions, one notice per import, age
+  filtering, buyer/time ordering and the bot socket handler.
+- Bot tests cover `/sales` replies plus the single-sale and combined-invoice DM formatting.
 
 ## Still separate
 
