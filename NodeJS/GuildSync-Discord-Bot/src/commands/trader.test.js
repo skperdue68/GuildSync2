@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MessageFlags } from 'discord.js';
 import { data, execute, searchReceiptCaption, LINK_REQUIRED_MESSAGE } from './trader.js';
+import { renderTraderInvoiceImages } from '../trader-invoice-image.js';
 
 function fixture({ response, option = 'on', connected = true, item = null, guildId = null } = {}) {
   const replies = [];
@@ -67,16 +68,38 @@ test('turning invoices on and off reports the linked account', async () => {
   assert.match(off.replies[0].content, /\/trader on/);
 });
 
-test('/trader test asks the backend to replay the stored sales into a DM', async () => {
-  const f = fixture({ response: { ok: true, linked: true, eso_account_name: '@Seller', sales: 3 }, option: 'test' });
+test('/trader test renders the receipt into the reply instead of sending a DM', async () => {
+  const f = fixture({
+    option: 'test',
+    guildId: '761817',
+    response: { ok: true, linked: true, eso_account_name: '@Seller', sales: [soldSale], latest_entry_time: 1794900000 }
+  });
   await execute(f.interaction, f.socket);
 
   assert.equal(f.calls[0].event, 'guildsync:trader-sales-subscription');
   assert.deepEqual(f.calls[0].payload, { discord_user_id: '42', action: 'test' });
-  assert.match(f.replies[0].content, /test receipt with 3 sales/);
+  assert.deepEqual(f.defers[0].flags, [MessageFlags.Ephemeral], 'a channel answer stays private to the caller');
+  assert.match(f.replies[0].content, /Test receipt for your newest 1 sale\./);
+  assert.equal(f.replies[0].files.length, 1);
+  assert.equal(f.replies[0].files[0].name, 'trader-sales-receipt.png');
 });
 
-test('a test with nothing stored or no link explains why no DM arrived', async () => {
+test('a one-sale test receipt is captioned Last 1 sale, not a congratulations', async () => {
+  const f = fixture({
+    option: 'test',
+    response: { ok: true, linked: true, sales: [soldSale], latest_entry_time: 1794900000 }
+  });
+  await execute(f.interaction, f.socket);
+
+  const [neutral] = await renderTraderInvoiceImages({ sales: [soldSale], caption: 'Last 1 sale.' });
+  assert.deepEqual(
+    Buffer.from(f.replies[0].files[0].attachment),
+    Buffer.from(neutral),
+    'the rendered page matches a neutral-caption receipt, not the congratulations default'
+  );
+});
+
+test('a test with nothing stored or no link explains why there is nothing to show', async () => {
   const empty = fixture({
     response: { ok: false, linked: true, message: 'No trader sales are stored for your linked ESO account yet.' },
     option: 'test'
@@ -187,12 +210,12 @@ test('sales answers lead with how fresh the data is', async () => {
 test('/trader test and an empty search both lead with the freshness line', async () => {
   const testReply = fixture({
     option: 'test',
-    response: { ok: true, linked: true, sales: 2, latest_entry_time: 1794000000 }
+    response: { ok: true, linked: true, sales: [soldSale, { ...soldSale, eventId: 502 }], latest_entry_time: 1794000000 }
   });
   await execute(testReply.interaction, testReply.socket);
   assert.match(
     testReply.replies[0].content,
-    /^As of <t:\d+:f> — most recent GuildSync info at <t:1794000000:f>\.\nSent a test receipt with 2 sales/
+    /^As of <t:\d+:f> — most recent GuildSync info at <t:1794000000:f>\.\nTest receipt for your newest 2 sales\.$/
   );
 
   const none = fixture({

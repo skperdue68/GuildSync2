@@ -43,8 +43,9 @@ through `LOWER(item_name) LIKE LOWER(?)`, so it is case-insensitive whatever the
 It replies privately to the caller and never enters the DM queue. Only the newest 50 matching sales are
 searched, and both the reply and the receipt say so when the list was cut off instead of implying that
 is everything.
-`/trader test` sends the same receipt straight away for the newest stored sales of the linked account
-and ignores the subscription cutoff below, so the DM can be checked without waiting for a live sale.
+`/trader test` renders the same receipt for the newest stored sales of the linked account and answers
+where the command was typed: ephemerally in a channel, in the DM itself when the command was a DM. It
+ignores the subscription cutoff below, so the receipt can be checked without waiting for a live sale.
 It is a temporary testing aid and can be removed once the trader path is settled. Run the
 bot's `npm run deploy` once to register the global command (the same PUT removes the retired global
 `/sales` command). A
@@ -73,7 +74,7 @@ pushing the timezone out of view. The list is split across as many pages as the 
 repeats the buyer headings and the header shows `PAGE 2 OF 3`, while the totals, the footer and the
 NET PAYOUT figure appear on the last page only. All pages arrive together in the same DM, so no sale is
 dropped and no "and N more sales" line is needed. A single sale keeps the detailed one-page receipt.
-This applies to live uploads, `/trader test` and `/gst catchup` alike. Sales
+This applies to live uploads and `/gst catchup` alike. Sales
 older than the subscription are skipped, so enabling notifications never floods someone with old
 history.
 

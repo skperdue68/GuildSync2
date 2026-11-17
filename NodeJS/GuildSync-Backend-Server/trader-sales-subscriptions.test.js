@@ -8,7 +8,6 @@ import {
   planTraderSaleNotices,
   loadTraderSalesForTest,
   searchTraderSales,
-  buildTraderTestNotice,
   newestTraderEntryTime,
   registerTraderSalesSubscriptionSocket
 } from './trader-sales-subscriptions.js';
@@ -317,18 +316,11 @@ test('/trader sales returns the matches without sending a DM', async () => {
   assert.deepEqual(emitted, [], 'a search never sends a DM');
 });
 
-test('a test notice keeps sales that predate the subscription', () => {
-  const notice = buildTraderTestNotice('42', [sale({ eventId: 1, time: 900 }), sale({ eventId: 2, time: 950 })]);
-
-  assert.equal(notice.discord_user_id, '42');
-  assert.equal(notice.kind, 'invoice');
-  assert.deepEqual(notice.sales.map((item) => item.eventId), [1, 2], 'both sales are older than any subscription');
-});
-
-test('/trader test emits the notice to the bot and reports the sale count', async () => {
+test('/trader test returns the sales instead of sending a DM', async () => {
   const db = database();
   const execute = db.execute;
   db.execute = async (sql, args = []) => {
+    if (sql.includes('MAX(event_timestamp)')) return [[{ latest: 901 }]];
     if (sql.includes('FROM guildsync_trader_entries')) {
       return [[
         { event_id: 9, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 900 }
@@ -349,11 +341,10 @@ test('/trader test emits the notice to the bot and reports the sale count', asyn
   const result = await new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')({ action: 'test', discord_user_id: '42' }, resolve));
 
   assert.equal(result.ok, true);
-  assert.equal(result.sales, 1);
-  assert.equal(emitted.length, 1);
-  assert.equal(emitted[0].event, 'guildsync:trader-sale-notice');
-  assert.equal(emitted[0].payload.discord_user_id, '42');
-  assert.equal(emitted[0].payload.kind, 'sale');
+  assert.equal(result.sales.length, 1, 'the bot renders these itself, where the command was typed');
+  assert.equal(result.sales[0].itemName, 'Soul Gem');
+  assert.equal(result.latest_entry_time, 901, 'the reply is dated like every other receipt');
+  assert.deepEqual(emitted, [], 'a test receipt no longer leaves as a notice');
   assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO guildsync_trader_sales_subscriptions')), false, 'test never changes the subscription');
 });
 
@@ -399,9 +390,10 @@ test('/trader sales and /trader test both report the newest stored entry time', 
   assert.equal(found.ok, true);
   assert.equal(found.latest_entry_time, 4321);
 
-  await ask({ action: 'test', discord_user_id: '42' });
-  assert.equal(emitted.length, 1);
-  assert.equal(emitted[0].payload.latest_entry_time, 4321, 'the test receipt is dated too');
+  const testReply = await ask({ action: 'test', discord_user_id: '42' });
+  assert.equal(testReply.sales.length, 1);
+  assert.equal(testReply.latest_entry_time, 4321, 'the test receipt is dated too');
+  assert.deepEqual(emitted, [], 'the test receipt is rendered where the command was typed');
 });
 
 test('a live sale notice carries the newest stored entry time', async () => {

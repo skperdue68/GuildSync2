@@ -1,6 +1,6 @@
 import { AttachmentBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { Log } from '../helper.js';
-import { renderTraderInvoiceImages, traderReceiptFileNames } from '../trader-invoice-image.js';
+import { defaultInvoiceHeadline, renderTraderInvoiceImages, traderReceiptFileNames } from '../trader-invoice-image.js';
 import { traderInfoLine } from '../trader-info-line.js';
 
 export const LINK_REQUIRED_MESSAGE = [
@@ -36,7 +36,7 @@ export const data = new SlashCommandBuilder()
       .setMaxLength(100)))
   .addSubcommand((subcommand) => subcommand
     .setName('test')
-    .setDescription('Temporary: DM me a receipt for my newest stored trader sales.'))
+    .setDescription('Temporary: show a receipt for my newest stored trader sales.'))
   .setDMPermission(true);
 
 // A search result is not a fresh sale, so its receipt opens with a neutral
@@ -56,6 +56,22 @@ export function searchReceiptCaption(sales = [], item = '') {
 
 // register/unregister are aliases so either wording works.
 const ACTION_BY_OPTION = { on: 'on', register: 'on', off: 'off', unregister: 'off', sales: 'sales', test: 'test' };
+
+// Both receipt answers are built the same way: render the pages, name the files,
+// and put the freshness line above the reply line. The options and the wording
+// differ, so they are arguments instead of a second copy of this code.
+async function receiptReply({ infoLine, line, sales, caption = '', footerNote = '' }) {
+  // The renderer already shows the detailed single-sale receipt for exactly one
+  // sale and pages for a list, so no kind has to be chosen here.
+  const pages = await renderTraderInvoiceImages({ sales, caption, footerNote });
+  const names = traderReceiptFileNames(pages.length);
+
+  return {
+    content: `${infoLine}\n${line}`,
+    files: pages.map((png, index) => new AttachmentBuilder(png, { name: names[index] })),
+    allowedMentions: { parse: [] }
+  };
+}
 
 function request(socket, payload) {
   return new Promise((resolve, reject) => {
@@ -116,38 +132,36 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
       }
 
       const truncated = Boolean(response.truncated);
-      const pages = await renderTraderInvoiceImages({
+      await interaction.editReply(await receiptReply({
+        infoLine,
+        line: truncated
+          ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
+          : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`,
         sales,
-        kind: sales.length === 1 ? 'sale' : 'invoice',
         caption: searchReceiptCaption(sales, item),
         footerNote: truncated
           ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
           : ''
-      });
-      const names = traderReceiptFileNames(pages.length);
-      await interaction.editReply({
-        content: [
-          infoLine,
-          truncated
-            ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
-            : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`
-        ].join('\n'),
-        files: pages.map((png, index) => new AttachmentBuilder(png, { name: names[index] })),
-        allowedMentions: { parse: [] }
-      });
+      }));
 
       log(`Trader sales search for “${item}” returned ${sales.length} sale(s) for Discord user ${interaction.user?.id || 'unknown'}.`);
       return;
     }
 
     if (action === 'test') {
-      const count = Number(response.sales) || 0;
-      await interaction.editReply({
-        content: `${infoLine}\nSent a test receipt with ${count} sale${count === 1 ? '' : 's'} to your DMs.`,
-        allowedMentions: { parse: [] }
-      });
+      const sales = Array.isArray(response.sales) ? response.sales.filter(Boolean) : [];
 
-      log(`Trader test receipt sent to Discord user ${interaction.user?.id || 'unknown'} with ${count} sale(s).`);
+      // The receipt goes where the command was typed: this reply is ephemeral in
+      // a channel and is the DM itself when the command was sent in a DM. A test
+      // replay is not a fresh sale, so it is captioned like a list even for one.
+      await interaction.editReply(await receiptReply({
+        infoLine,
+        line: `Test receipt for your newest ${sales.length} sale${sales.length === 1 ? '' : 's'}.`,
+        sales,
+        caption: defaultInvoiceHeadline(sales.length)
+      }));
+
+      log(`Trader test receipt rendered for Discord user ${interaction.user?.id || 'unknown'} with ${sales.length} sale(s).`);
       return;
     }
 
