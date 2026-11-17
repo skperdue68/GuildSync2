@@ -51,7 +51,9 @@ export const data = new SlashCommandBuilder()
       .setMaxLength(100))
     .addIntegerOption((option) => option
       .setName('count')
-      .setDescription('How many sales to show (default 10, or 50 for an item search).')
+      // Works with or without an item, and a limited list is always the newest
+      // sales first, so the wording says that instead of implying a plain list.
+      .setDescription('How many sales, newest first (default 10, or 50 for an item search).')
       .setRequired(false)
       .setMinValue(1)
       .setMaxValue(50)))

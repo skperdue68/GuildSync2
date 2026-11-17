@@ -39,8 +39,10 @@ GuildSyncBanking is untouched.
 (spaces allowed) and answers with the same receipt, or `There are no sales entries for an item named
 <item>.` The item is optional: without it the reply lists the newest sales of anything (`Your 10 most
 recent sales.`), which is what you want when the item name is not known, and an empty history reads
-`There are no trader sales stored for your linked ESO account yet.` `count` caps the list and defaults
-to 10 for that plain list and to 50 for an item search; the backend clamps it to 1–50.
+`There are no trader sales stored for your linked ESO account yet.` `count` caps the list with or without
+an item, defaults to 10 for that plain list and to 50 for an item search, and the backend clamps it to
+1–50. A limited list is always the newest sales first, so `/trader sales item:soul count:5` is the five
+most recent Soul Gem sales.
 The receipt opens with a neutral caption (`Your sale of Soul Gem.`, `Your 2 sales matching “blueprint”.`,
 `Your last 2 sales.`) rather than the congratulations line, since a search or list result is not a fresh
 sale. The item match runs through `LOWER(item_name) LIKE LOWER(?)`, so it is case-insensitive whatever

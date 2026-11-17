@@ -398,6 +398,10 @@ test('/trader sales clamps the requested count and defaults to ten', async () =>
 
   const itemLimited = await ask({ action: 'sales', item: 'item', discord_user_id: '42', limit: 3 });
   assert.equal(itemLimited.limit, 3, 'an item search honours the count too');
+
+  const itemQuery = db.calls.find((call) => call.sql.includes('LIKE'));
+  assert.match(itemQuery.sql, /ORDER BY event_timestamp DESC/, 'a limited search is newest first');
+  assert.match(itemQuery.sql, /LIMIT 4/, 'one extra row detects the cut on an item search too');
 });
 
 test('/trader sales returns the matches without sending a DM', async () => {

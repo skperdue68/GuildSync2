@@ -210,6 +210,28 @@ test('/trader sales passes the count on and says when it cut the list', async ()
   assert.match(f.replies[0].content, /Your 1 most recent sale — older sales exist\./);
 });
 
+test('/trader sales applies the count to an item search too', async () => {
+  const second = { ...soldSale, eventId: 502, time: 1794910600 };
+  const f = fixture({
+    option: 'sales',
+    item: 'soul',
+    count: 5,
+    response: { ok: true, linked: true, item: 'soul', sales: [second, soldSale], truncated: true, limit: 5 }
+  });
+  await execute(f.interaction, f.socket);
+
+  assert.deepEqual(
+    f.calls[0].payload,
+    { discord_user_id: '42', action: 'sales', item: 'soul', limit: 5 },
+    'both the item and the count are sent'
+  );
+
+  const [freshness, line] = f.replies[0].content.split('\n');
+  assert.match(freshness, /^As of <t:\d+:f> /);
+  assert.equal(line, '2 sales matching “soul” — the newest 2 only, older sales exist.');
+  assert.equal(f.replies[0].files.length, 1);
+});
+
 test('a plain list of any item names the item when it is a single sale', () => {
   assert.equal(recentReceiptCaption([soldSale]), 'Your most recent sale of Soul Gem.');
   assert.equal(recentReceiptCaption([soldSale, soldSale]), 'Your last 2 sales.');
