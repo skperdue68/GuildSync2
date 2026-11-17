@@ -29,7 +29,6 @@ const MAX_PAGE_BODY_H = 620;
 const ROW_H = 36;
 const SINGLE_ROW_H = 40;
 const ROW_LINE_H = 16;
-const ITEM_MAX_LINES = 2;
 
 const C = {
   backdrop: '#11151b',
@@ -84,10 +83,10 @@ function wrapLines(ctx, text, maxWidth) {
 
 // Item names may wrap onto a second line so the date column can keep the whole
 // timestamp; anything past that is clipped rather than spilling out of its cell.
-function itemLines(ctx, itemName, maxWidth, { size = 14, maxLines = ITEM_MAX_LINES } = {}) {
+function itemLines(ctx, itemName, maxWidth, size = 14) {
   ctx.font = font(500, size);
   const lines = wrapLines(ctx, String(itemName || 'Item'), maxWidth);
-  if (lines.length <= maxLines) return lines;
+  if (lines.length <= 2) return lines;
 
   return [lines[0], clipLine(ctx, lines.slice(1).join(' '), maxWidth)];
 }
@@ -232,14 +231,14 @@ async function drawReceiptPage({
   groups = [],
   headline = '',
   footerNote = '',
-  showMeta = true,
-  showFooter = true,
-  showPayout = true,
   pageIndex = 0,
   pageCount = 1,
   totals = { gross: 0, tax: 0, net: 0, quantity: 0 },
   guildName = 'GuildSync'
 } = {}) {
+  // Page one carries the meta block; only the last page carries the totals.
+  const showMeta = single || pageIndex === 0;
+  const showFooter = single || pageIndex === pageCount - 1;
   const measuring = createCanvas(8, 8).getContext('2d');
   measuring.font = font(500, 17);
   const headlineLines = wrapLines(measuring, headline, INNER_W);
@@ -253,10 +252,10 @@ async function drawReceiptPage({
   const tableTop = showMeta ? metaTop + META_H + 14 : afterHeadline + 18;
   const rowsTop = tableTop + TABLE_HEADER_H;
   const rowsBottom = rowsTop + bodyHeight;
-  const paidBaseline = rowsBottom + 34;
-  const footerRule = rowsBottom + 60;
+  // A single-sale receipt also prints "Paid to" above the footer rule.
+  const footerRule = rowsBottom + (single ? 66 : 40);
   const footerBaseline = footerRule + 26;
-  const height = showFooter ? footerBaseline + 96 : rowsBottom + 30;
+  const height = showFooter ? footerBaseline + 88 : rowsBottom + 30;
 
   const canvas = createCanvas(WIDTH * SCALE, height * SCALE);
   const ctx = canvas.getContext('2d');
@@ -297,7 +296,7 @@ async function drawReceiptPage({
   ctx.fillText('TRADER SALES RECEIPT', INNER_X, bandTop + 80);
 
   ctx.textAlign = 'right';
-  if (showPayout) {
+  if (showFooter) {
     ctx.font = font(600, 11);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
     ctx.fillText('NET PAYOUT', RIGHT, bandTop + 40);
@@ -305,12 +304,9 @@ async function drawReceiptPage({
     ctx.fillStyle = C.gold;
     ctx.fillText(gold(totals.net), RIGHT, bandTop + 80);
   } else {
-    ctx.font = font(600, 11);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
-    ctx.fillText(`PAGE ${pageIndex + 1} OF ${pageCount}`, RIGHT, bandTop + 40);
-    ctx.font = font(700, 30);
+    ctx.font = font(700, 16);
     ctx.fillStyle = C.gold;
-    ctx.fillText(`${pageIndex + 1}/${pageCount}`, RIGHT, bandTop + 80);
+    ctx.fillText(`PAGE ${pageIndex + 1} OF ${pageCount}`, RIGHT, bandTop + 62);
   }
 
   // Headline
@@ -322,20 +318,20 @@ async function drawReceiptPage({
   });
 
   // Meta columns
-  const metaColumns = single
-    ? [
-      { label: 'DATE', value: traderSaleDate(first.time) },
-      { label: 'TRANSACTION ID', value: `#${first.eventId || 'unknown'}` },
-      { label: 'BUYER', value: String(first.buyer || 'Unknown') }
-    ]
-    : [
-      { label: 'SALES', value: String(list.length) },
-      { label: 'BUYERS', value: String(groups.length) },
-      { label: 'ITEMS SOLD', value: String(totals.quantity) }
-    ];
-
-  const metaWidth = INNER_W / 3;
   if (showMeta) {
+    const metaColumns = single
+      ? [
+        { label: 'DATE', value: traderSaleDate(first.time) },
+        { label: 'TRANSACTION ID', value: `#${first.eventId || 'unknown'}` },
+        { label: 'BUYER', value: String(first.buyer || 'Unknown') }
+      ]
+      : [
+        { label: 'SALES', value: String(list.length) },
+        { label: 'BUYERS', value: String(groups.length) },
+        { label: 'ITEMS SOLD', value: String(totals.quantity) }
+      ];
+    const metaWidth = INNER_W / 3;
+
     metaColumns.forEach((column, index) => {
       const x = INNER_X + index * metaWidth;
       ctx.font = font(700, 11);
@@ -419,7 +415,7 @@ async function drawReceiptPage({
     ctx.font = font(500, 13);
     ctx.fillStyle = C.muted;
     ctx.textAlign = 'left';
-    ctx.fillText(clipLine(ctx, `Paid to ${first.seller}`, INNER_W - 200), INNER_X, paidBaseline);
+    ctx.fillText(clipLine(ctx, `Paid to ${first.seller}`, INNER_W - 200), INNER_X, rowsBottom + 34);
   }
 
   if (!showFooter) return canvas.encode('png');
@@ -506,7 +502,7 @@ export async function renderTraderInvoiceImages({ sales = [], kind = 'sale', cap
   if (single) {
     const measuring = createCanvas(8, 8).getContext('2d');
     const { itemWidth } = columnLayout(true);
-    const lines = itemLines(measuring, first.itemName, itemWidth, { size: 15 });
+    const lines = itemLines(measuring, first.itemName, itemWidth, 15);
     const headline = String(caption || '').trim()
       || `Congratulations! You sold ${first.itemName || 'an item'} on the ${guildName} Trader — the details are below.`;
 
@@ -519,10 +515,7 @@ export async function renderTraderInvoiceImages({ sales = [], kind = 'sale', cap
       headline,
       footerNote,
       totals,
-      guildName,
-      showMeta: true,
-      showFooter: true,
-      showPayout: true
+      guildName
     })];
   }
 
@@ -541,9 +534,6 @@ export async function renderTraderInvoiceImages({ sales = [], kind = 'sale', cap
       footerNote,
       totals,
       guildName,
-      showMeta: index === 0,
-      showFooter: index === pages.length - 1,
-      showPayout: index === pages.length - 1,
       pageIndex: index,
       pageCount: pages.length
     }));
