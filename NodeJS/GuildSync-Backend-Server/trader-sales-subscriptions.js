@@ -205,7 +205,7 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
     }
 
     try {
-      const action = String(payload?.action || '').trim().toLowerCase();
+      let action = String(payload?.action || '').trim().toLowerCase();
       const discordUserId = normalizeUserId(payload?.discord_user_id);
 
       if (!discordUserId) {
@@ -224,8 +224,12 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
         return;
       }
 
+      // /trader register and /trader unregister are aliases for on and off.
+      if (action === 'register') action = 'on';
+      if (action === 'unregister') action = 'off';
+
       if (action !== 'on' && action !== 'off') {
-        reply({ ok: false, message: 'Use /sales on or /sales off.' });
+        reply({ ok: false, message: 'Use /trader on (or /trader register) or /trader off (or /trader unregister).' });
         return;
       }
 

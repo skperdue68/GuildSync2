@@ -166,7 +166,10 @@ const io = new Server(server, {
   cors: {
     origin: '*',
     methods: ['GET', 'POST']
-  }
+  },
+  // SavedVariables uploads send the whole Lua file in one socket message.
+  // Allow 25 MiB (matching the express.json limit) instead of the 1 MB default.
+  maxHttpBufferSize: 26214400
 });
 
 app.use(cors());
