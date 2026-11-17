@@ -265,6 +265,24 @@ test('a long receipt arrives as several pages in a single DM', async () => {
   assert.equal(sent[0].embeds, undefined);
 });
 
+test('a receipt DM says how fresh the data is, then the images', async () => {
+  const sent = [];
+  const handlers = new Map();
+  const socket = { on: (event, handler) => handlers.set(event, handler), off() {} };
+  const client = { users: { async fetch() { return { async send(message) { sent.push(message); } }; } } };
+  startTraderSaleNotifications(client, socket, () => {}, { enqueue: (task) => task() });
+
+  const handler = handlers.get('guildsync:trader-sale-notice');
+  await handler({ discord_user_id: '42', kind: 'sale', sales: [sale], latest_entry_time: 1780000501 });
+  await handler({ discord_user_id: '42', kind: 'sale', sales: [sale] });
+
+  assert.match(sent[0].content, /^As of <t:\d+:f> — most recent GuildSync info at <t:1780000501:f>\.$/);
+  assert.equal(sent[0].files.length, 1, 'the receipt still follows the line');
+  assert.equal(sent[0].embeds, undefined);
+
+  assert.match(sent[1].content, /the time of the most recent GuildSync info is unknown/, 'a notice without the field is not called empty');
+});
+
 test('the socket listener sends only the receipt image and deletes the temp file', async () => {
   const before = new Set(await fs.readdir(os.tmpdir()));
   const sent = [];

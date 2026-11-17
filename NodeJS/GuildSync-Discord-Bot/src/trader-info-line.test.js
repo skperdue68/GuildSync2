@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { traderInfoLine } from './trader-info-line.js';
+
+test('the info line stamps both times, so each reader sees them locally', () => {
+  assert.equal(
+    traderInfoLine({ now: 1794910000, latestEntryTime: 1794900000 }),
+    'As of <t:1794910000:f> — most recent GuildSync info at <t:1794900000:f>.'
+  );
+});
+
+test('an empty trader entries table says nothing is stored', () => {
+  assert.equal(
+    traderInfoLine({ now: 100, latestEntryTime: 0 }),
+    'As of <t:100:f> — no GuildSync trader info is stored yet.'
+  );
+});
+
+test('a missing timestamp is unknown, not an empty table', () => {
+  for (const missing of [undefined, null, '', 'not a time']) {
+    assert.equal(
+      traderInfoLine({ now: 100, latestEntryTime: missing }),
+      'As of <t:100:f> — the time of the most recent GuildSync info is unknown.',
+      `${String(missing)} is an older backend, not an empty table`
+    );
+  }
+
+  assert.equal(
+    traderInfoLine({ now: 100 }),
+    'As of <t:100:f> — the time of the most recent GuildSync info is unknown.',
+    'a payload without the field at all is unknown too'
+  );
+});
+
+test('an unknown clock falls back to the word now rather than <t:0:f>', () => {
+  assert.equal(
+    traderInfoLine({ now: 0, latestEntryTime: 50 }),
+    'As of now — most recent GuildSync info at <t:50:f>.'
+  );
+});

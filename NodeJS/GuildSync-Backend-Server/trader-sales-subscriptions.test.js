@@ -9,6 +9,7 @@ import {
   loadTraderSalesForTest,
   searchTraderSales,
   buildTraderTestNotice,
+  newestTraderEntryTime,
   registerTraderSalesSubscriptionSocket
 } from './trader-sales-subscriptions.js';
 
@@ -354,6 +355,66 @@ test('/trader test emits the notice to the bot and reports the sale count', asyn
   assert.equal(emitted[0].payload.discord_user_id, '42');
   assert.equal(emitted[0].payload.kind, 'sale');
   assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO guildsync_trader_sales_subscriptions')), false, 'test never changes the subscription');
+});
+
+test('the newest stored entry time comes from the trader entries table', async () => {
+  const db = database();
+  const execute = db.execute;
+  const sqls = [];
+  db.execute = async (sql, args = []) => {
+    sqls.push(sql);
+    if (sql.includes('MAX(event_timestamp)')) return [[{ latest: 4321 }]];
+    return execute.call(db, sql, args);
+  };
+
+  assert.equal(await newestTraderEntryTime(db), 4321);
+  assert.ok(sqls.some((sql) => sql.includes('MAX(event_timestamp)') && sql.includes('FROM guildsync_trader_entries')));
+
+  const empty = database();
+  assert.equal(await newestTraderEntryTime(empty), 0, 'an empty table reads as no known time');
+});
+
+test('/trader sales and /trader test both report the newest stored entry time', async () => {
+  const db = database();
+  const execute = db.execute;
+  db.execute = async (sql, args = []) => {
+    if (sql.includes('MAX(event_timestamp)')) return [[{ latest: 4321 }]];
+    if (sql.includes('FROM guildsync_trader_entries')) {
+      return [[{ event_id: 9, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 700 }]];
+    }
+    return execute.call(db, sql, args);
+  };
+
+  const handlers = new Map();
+  const emitted = [];
+  const socket = {
+    guildSyncAuthType: 'discord-bot',
+    on(event, handler) { handlers.set(event, handler); },
+    emit(event, payload) { emitted.push({ event, payload }); }
+  };
+  registerTraderSalesSubscriptionSocket(socket, { db });
+  const ask = (payload) => new Promise((resolve) => handlers.get('guildsync:trader-sales-subscription')(payload, resolve));
+
+  const found = await ask({ action: 'sales', item: 'soul', discord_user_id: '42' });
+  assert.equal(found.ok, true);
+  assert.equal(found.latest_entry_time, 4321);
+
+  await ask({ action: 'test', discord_user_id: '42' });
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].payload.latest_entry_time, 4321, 'the test receipt is dated too');
+});
+
+test('a live sale notice carries the newest stored entry time', async () => {
+  const db = database({ subscribers: [{ discord_user_id: '42', subscribed_at: 0 }] });
+  const execute = db.execute;
+  db.execute = async (sql, args = []) => {
+    if (sql.includes('MAX(event_timestamp)')) return [[{ latest: 999 }]];
+    return execute.call(db, sql, args);
+  };
+
+  const notices = await planTraderSaleNotices(db, [sale({ seller: '@Seller' })]);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].latest_entry_time, 999);
 });
 
 test('subscription rows are not created for an unknown action', async () => {
