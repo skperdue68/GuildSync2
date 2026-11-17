@@ -37,7 +37,9 @@ GuildSyncBanking is untouched.
 `/trader register` and `/trader unregister` are accepted as aliases for the same two actions.
 `/trader sales <item>` searches the linked account's own sales for any part of an item name (spaces
 allowed) and answers with the same receipt, or `There are no sales entries for an item named <item>.`
-It replies privately to the caller and never enters the DM queue.
+It replies privately to the caller and never enters the DM queue. Only the newest 50 matching sales are
+searched, and both the reply and the receipt say so when the list was cut off instead of implying that
+is everything.
 `/trader test` sends the same receipt straight away for the newest stored sales of the linked account
 and ignores the subscription cutoff below, so the DM can be checked without waiting for a live sale.
 It is a temporary testing aid and can be removed once the trader path is settled. Run the
@@ -55,7 +57,7 @@ guild name and NET PAYOUT total in the header band. The bottom right corner stac
 tax and net profit one under the other, right aligned, with the net emphasised; the guild name and the
 transaction number (one sale) or the sale and buyer count (several sales) sit to its left. The PNG is drawn at
 2× resolution, so the inline preview stays modest while opening the image shows a full-size, sharp
-receipt. The bot writes that PNG to the OS temp directory, attaches it with `attachment://`, and
+receipt. Times are Eastern Time, labelled with the current EST or EDT. The bot writes that PNG to the OS temp directory, attaches it with `attachment://`, and
 deletes the file as soon as Discord has the message. Notices are queued instead of sent in a
 burst: about two seconds between DMs, then a one to two minute pause after every five, so a
 catch-up import is never mistaken for spam. If rendering fails, the DM falls back to a

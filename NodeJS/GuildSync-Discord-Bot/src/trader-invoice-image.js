@@ -19,7 +19,7 @@ const CONGRATS_LINE_H = 24;
 const META_H = 62;
 const TABLE_HEADER_H = 34;
 const SECTION_H = 26;
-const TIME_COLUMN_W = 132;
+const TIME_COLUMN_W = 150;
 const MAX_INVOICE_ROWS = 16;
 
 const C = {
@@ -33,6 +33,10 @@ const C = {
   stripe: '#f3efe5',
   white: '#ffffff'
 };
+
+// Trader times are shown in Eastern Time with the current EST/EDT label, since
+// the receipt is a picture and cannot follow each viewer's own timezone.
+const EASTERN = 'America/New_York';
 
 const font = (weight, size) => `${weight} ${size}px "Segoe UI", "DejaVu Sans", Arial, sans-serif`;
 const gold = (value) => `${Math.round(Number(value) || 0).toLocaleString('en-US')}g`;
@@ -86,23 +90,25 @@ function traderSaleDate(seconds) {
 
   const when = new Date(value * 1000);
   const date = when.toLocaleDateString('en-US', {
-    year: 'numeric', month: 'short', day: '2-digit', timeZone: 'UTC'
+    year: 'numeric', month: 'short', day: '2-digit', timeZone: EASTERN
   });
   const time = when.toLocaleTimeString('en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC'
+    hour: '2-digit', minute: '2-digit', hour12: true, timeZone: EASTERN, timeZoneName: 'short'
   });
-  return `${date}, ${time} UTC`;
+  return `${date}, ${time}`;
 }
 
-// A row-sized stamp for multi-sale receipts, in the bot host's local time so a
-// row reads like the moment the item sold rather than a UTC conversion.
+// A row-sized stamp for multi-sale receipts, in Eastern Time like the full
+// date above so both layouts read the same way.
 function shortSaleDate(seconds) {
   const value = num(seconds);
   if (value <= 0) return '';
 
   const when = new Date(value * 1000);
-  const date = when.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
-  const time = when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const date = when.toLocaleDateString('en-US', { month: 'short', day: '2-digit', timeZone: EASTERN });
+  const time = when.toLocaleTimeString('en-US', {
+    hour: 'numeric', minute: '2-digit', timeZone: EASTERN, timeZoneName: 'short'
+  });
   return `${date} · ${time}`;
 }
 
@@ -158,10 +164,10 @@ function rowPlan(groups, single) {
 /**
  * Render a trader sale (or a multi-sale invoice) as a PNG document.
  *
- * @param {{sales?: object[], kind?: 'sale'|'invoice'}} notice
+ * @param {{sales?: object[], kind?: 'sale'|'invoice', footerNote?: string}} notice
  * @returns {Promise<Buffer>}
  */
-export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {}) {
+export async function renderTraderInvoiceImage({ sales = [], kind = 'sale', footerNote = '' } = {}) {
   const list = (Array.isArray(sales) ? sales : []).filter(Boolean);
   if (!list.length) throw new Error('No trader sales to render.');
 
@@ -373,6 +379,11 @@ export async function renderTraderInvoiceImage({ sales = [], kind = 'sale' } = {
     INNER_X,
     footerBaseline + 20
   );
+
+  const note = String(footerNote || '').trim();
+  if (note) {
+    ctx.fillText(clipLine(ctx, note, INNER_W - 380), INNER_X, footerBaseline + 40);
+  }
 
   // The totals sit at the bottom right, one amount under the other the way the
   // arithmetic would be written: gross, less the guild tax, then the net.

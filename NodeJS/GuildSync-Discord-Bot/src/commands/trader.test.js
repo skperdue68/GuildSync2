@@ -116,6 +116,18 @@ test('/trader sales sends the partial item name and returns a receipt image', as
   assert.equal(f.replies[0].files[0].name, 'trader-sales-receipt.png');
 });
 
+test('/trader sales admits when only the newest matches were searched', async () => {
+  const f = fixture({
+    option: 'sales',
+    item: 'soul',
+    response: { ok: true, linked: true, eso_account_name: '@Seller', sales: [soldSale], truncated: true, limit: 50 }
+  });
+  await execute(f.interaction, f.socket);
+
+  assert.match(f.replies[0].content, /the newest 1 only, older sales exist/);
+  assert.equal(f.replies[0].files.length, 1);
+});
+
 test('/trader sales reports an item that has no entries', async () => {
   const f = fixture({
     option: 'sales',

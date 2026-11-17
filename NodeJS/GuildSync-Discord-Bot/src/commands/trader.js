@@ -93,9 +93,18 @@ export async function execute(interaction, guildSyncSocket, log = Log) {
         return;
       }
 
-      const png = await renderTraderInvoiceImage({ sales, kind: sales.length === 1 ? 'sale' : 'invoice' });
+      const truncated = Boolean(response.truncated);
+      const png = await renderTraderInvoiceImage({
+        sales,
+        kind: sales.length === 1 ? 'sale' : 'invoice',
+        footerNote: truncated
+          ? `Only the newest ${sales.length} matching sales are searched; older ones are not included.`
+          : ''
+      });
       await interaction.editReply({
-        content: `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`,
+        content: truncated
+          ? `${sales.length} sales matching “${item}” — the newest ${sales.length} only, older sales exist.`
+          : `${sales.length} sale${sales.length === 1 ? '' : 's'} matching “${item}”.`,
         files: [new AttachmentBuilder(png, { name: TRADER_INVOICE_FILE_NAME })],
         allowedMentions: { parse: [] }
       });

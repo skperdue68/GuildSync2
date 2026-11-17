@@ -240,23 +240,7 @@ export async function loadTraderSalesForTest(db, discordUserId, { limit = TEST_S
     [...list, ...list]
   );
 
-  return {
-    names: linkedNames,
-    sales: (Array.isArray(rows) ? rows : []).map((row) => ({
-      eventId: row.event_id,
-      guildName: row.guild_name,
-      world: row.world,
-      seller: row.seller,
-      buyer: row.buyer,
-      itemName: row.item_name,
-      quantity: row.quantity,
-      price: row.price,
-      unitPrice: row.unit_price,
-      tax: row.tax,
-      net: row.net,
-      eventTimestamp: row.event_timestamp
-    }))
-  };
+  return { names: linkedNames, sales: (Array.isArray(rows) ? rows : []).map((row) => saleForNotice(row)) };
 }
 
 // A test notice is a normal notice with the age filter disabled.
@@ -282,6 +266,8 @@ export async function searchTraderSales(db, discordUserId, itemQuery, { limit = 
   if (!list.length) return { sales: [], names: linkedNames };
 
   const placeholders = list.map(() => '?').join(',');
+  const capped = Number(limit) || TEST_SALE_LIMIT;
+  // One extra row tells us the list was cut off, so the reply can say so.
   const [rows] = await db.execute(
     `SELECT ${saleColumns}
        FROM guildsync_trader_entries
@@ -289,13 +275,17 @@ export async function searchTraderSales(db, discordUserId, itemQuery, { limit = 
           OR LOWER(TRIM(LEADING '@' FROM seller_original)) IN (${placeholders}))
         AND item_name LIKE ?
       ORDER BY event_timestamp DESC
-      LIMIT ${Number(limit) || TEST_SALE_LIMIT}`,
+      LIMIT ${capped + 1}`,
     [...list, ...list, `%${escapeLike(term)}%`]
   );
 
+  const found = Array.isArray(rows) ? rows : [];
+
   return {
     names: linkedNames,
-    sales: (Array.isArray(rows) ? rows : []).map((row) => saleForNotice(row))
+    sales: found.slice(0, capped).map((row) => saleForNotice(row)),
+    truncated: found.length > capped,
+    limit: capped
   };
 }
 
@@ -337,13 +327,13 @@ export function registerTraderSalesSubscriptionSocket(socket, { db } = {}) {
           return;
         }
 
-        const { sales, names } = await searchTraderSales(db, discordUserId, item);
+        const { sales, names, truncated, limit } = await searchTraderSales(db, discordUserId, item);
         if (!names.length) {
           reply({ ok: false, linked: false });
           return;
         }
 
-        reply({ ok: true, linked: true, eso_account_name: names[0], item, sales });
+        reply({ ok: true, linked: true, eso_account_name: names[0], item, sales, truncated, limit });
         return;
       }
 

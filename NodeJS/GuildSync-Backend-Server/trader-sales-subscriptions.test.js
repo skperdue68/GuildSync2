@@ -189,7 +189,7 @@ test('/trader test loads the newest stored sales for the linked account', async 
   const { sales, names } = await loadTraderSalesForTest(db, '42', { limit: 5 });
   assert.deepEqual(names, ['@Seller']);
   assert.deepEqual(sales.map((sale) => sale.eventId), [9, 8]);
-  assert.equal(sales[0].eventTimestamp, 900);
+  assert.equal(sales[0].time, 900, 'rows are normalised through saleForNotice');
 
   const query = db.calls.find((call) => call.sql.includes('FROM guildsync_trader_entries'));
   assert.match(query.sql, /ORDER BY event_timestamp DESC/);
@@ -208,10 +208,12 @@ test('/trader sales matches part of an item name for the linked account', async 
     return execute.call(db, sql, args);
   };
 
-  const { sales } = await searchTraderSales(db, '42', '  Soul  ');
+  const { sales, truncated, limit } = await searchTraderSales(db, '42', '  Soul  ');
   assert.equal(sales.length, 1);
   assert.equal(sales[0].itemName, 'Soul Gem');
-  assert.equal(sales[0].time, 700);
+  assert.equal(sales[0].time, 700, 'rows are normalised through saleForNotice');
+  assert.equal(truncated, false);
+  assert.equal(limit, 50);
 
   const call = db.calls.find((entry) => entry.sql.includes('FROM guildsync_trader_entries'));
   assert.ok(call.sql.includes('item_name LIKE ?'));
@@ -235,6 +237,31 @@ test('/trader sales escapes LIKE wildcards in the item query', async () => {
 
   const call = db.calls.find((entry) => entry.sql.includes('FROM guildsync_trader_entries'));
   assert.equal(call.args.at(-1), '%50\\%\\_off%');
+});
+
+test('/trader sales says when only the newest matches were searched', async () => {
+  const db = database();
+  const execute = db.execute;
+  const row = (id) => ({
+    event_id: id, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller',
+    buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15,
+    tax: 0, net: 15, event_timestamp: 700 + id
+  });
+  db.execute = async (sql, args = []) => {
+    if (sql.includes('FROM guildsync_trader_entries')) {
+      db.calls.push({ sql, args });
+      return [[row(1), row(2)]];
+    }
+    return execute.call(db, sql, args);
+  };
+
+  const capped = await searchTraderSales(db, '42', 'soul', { limit: 1 });
+  assert.equal(capped.sales.length, 1);
+  assert.equal(capped.truncated, true);
+  assert.equal(capped.limit, 1);
+
+  const call = db.calls.find((entry) => entry.sql.includes('FROM guildsync_trader_entries'));
+  assert.ok(call.sql.includes('LIMIT 2'), 'one extra row is fetched to detect the cut');
 });
 
 test('/trader sales returns the matches without sending a DM', async () => {
@@ -262,6 +289,8 @@ test('/trader sales returns the matches without sending a DM', async () => {
   assert.equal(result.item, 'soul');
   assert.equal(result.sales.length, 1);
   assert.equal(result.sales[0].itemName, 'Soul Gem');
+  assert.equal(result.truncated, false);
+  assert.equal(result.limit, 50);
   assert.deepEqual(emitted, [], 'a search never sends a DM');
 });
 
