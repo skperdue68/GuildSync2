@@ -320,6 +320,7 @@ test('/trader test returns the sales instead of sending a DM', async () => {
   const db = database();
   const execute = db.execute;
   db.execute = async (sql, args = []) => {
+    if (sql.includes('MAX(event_timestamp)')) return [[{ latest: 901 }]];
     if (sql.includes('FROM guildsync_trader_entries')) {
       return [[
         { event_id: 9, guild_name: 'Example Guild', world: 'EU Megaserver', seller: '@Seller', buyer: '@Buyer', item_name: 'Soul Gem', quantity: 1, price: 15, unit_price: 15, tax: 0, net: 15, event_timestamp: 900 }
@@ -342,6 +343,7 @@ test('/trader test returns the sales instead of sending a DM', async () => {
   assert.equal(result.ok, true);
   assert.equal(result.sales.length, 1, 'the bot renders these itself, where the command was typed');
   assert.equal(result.sales[0].itemName, 'Soul Gem');
+  assert.equal(result.latest_entry_time, 901, 'the reply is dated like every other receipt');
   assert.deepEqual(emitted, [], 'a test receipt no longer leaves as a notice');
   assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO guildsync_trader_sales_subscriptions')), false, 'test never changes the subscription');
 });
