@@ -154,15 +154,17 @@ test('activity SQL bounds original event timestamps without deleting history',as
   assert.ok(!calls.some(([sql])=>/DELETE|UPDATE/i.test(sql)));
 });
 
-test('weekly trader rankings use a rolling seven-day window from each request time',async()=>{
+test('trader rankings fetch one rolling 30-day window from each request time',async()=>{
  const handlers={},calls=[];let time=2000000;
  const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncUser:{role:'viewer'}};
  registerCommunityStatisticsSocket(socket,{db:{execute:async(...args)=>{calls.push(args);return [[]];}},loadBanking:async()=>[],now:()=>time});
  let result;await handlers['guildsync:request-community-statistics']({},r=>result=r);
- const bounds=()=>calls.filter(([sql])=>sql.includes('FROM guildsync_trader_entries')).at(-1)[1];
- assert.deepEqual(bounds(),[time-7*86400,time]);
+ const query=()=>calls.filter(([sql])=>sql.includes('FROM guildsync_trader_entries')).at(-1);
+ assert.deepEqual(query()[1],[time-30*86400,time]);
+ assert.match(query()[0],/buyer/);
+ assert.ok(!calls.some(([sql])=>sql.includes('event_timestamp >=')),'the narrower windows are applied in the builder');
  time+=86400;await handlers['guildsync:request-community-statistics']({},r=>result=r);
- assert.deepEqual(bounds(),[time-7*86400,time]);
- assert.ok(bounds()[0]>2000000-7*86400);
+ assert.deepEqual(query()[1],[time-30*86400,time]);
+ assert.ok(query()[1][0]>2000000-30*86400);
 });
 
