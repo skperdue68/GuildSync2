@@ -1,6 +1,7 @@
 const LEADERBOARD_LIMIT=5;
-// Rolling window measured back from each request, not a calendar week.
-const TRADER_WINDOW_SECONDS=7*24*60*60;
+// Rolling windows measured back from each request time, not calendar periods.
+const WEEK_SECONDS=7*24*60*60;
+const MONTH_SECONDS=30*24*60*60;
 const positive=n=>Number.isFinite(Number(n))?Math.max(0,Number(n)):0;
 const label=r=>r.server_nickname||r.global_name||r.username||r.account_name||r.discord_id||'Unknown';
 const typeOf=t=>['monthly','50/50','5050'].includes(String(t).toLowerCase())?'monthly':['biweekly','bi-weekly','bi weekly'].includes(String(t).toLowerCase())?'biweekly':null;
@@ -42,11 +43,21 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const spending=r=>{const n=positive(r.amount),digit=Math.trunc(n)%10;return [1,3].includes(digit)&&n>digit?n-digit:n;};
  const recentPurchases=purchases.filter(r=>Number(r.time)>=now-90*86400);
  add('raffle-spending','Raffle spending (last 90 days, Top '+LEADERBOARD_LIMIT+')','Recorded ticket purchases in the last 90 days across both raffles, excluding +1/+3 markers; retained banking history only.','gold',leaders(recentPurchases,r=>r.displayName,spending));
- // Guild trader sales stay in row form; only the seller ranking leaves the backend, never gold totals.
- const weekSales=traderSales.filter(r=>Number(r.event_timestamp)>=now-TRADER_WINDOW_SECONDS&&Number(r.event_timestamp)<=now&&positive(r.quantity)>0).map(r=>({...r,account_name:String(r.seller||'').trim()}));
+ // Trader cards publish names only; gold totals stay on the server.
+ const traderWindow=seconds=>traderSales.filter(r=>Number(r.event_timestamp)>=now-seconds&&Number(r.event_timestamp)<=now);
+ const nameAs=(rows,field)=>rows.map(r=>({...r,account_name:String(r[field]||r[field+'_original']||'').trim()}));
  const earned=r=>positive(r.net)||positive(r.price);
+ const weekSales=nameAs(traderWindow(WEEK_SECONDS).filter(r=>positive(r.quantity)>0),'seller');
  add('trader-sales','Highest guild trader sales (last 7 days, Top '+LEADERBOARD_LIMIT+')','Guild trader sales in the last 7 days, ranked by gold earned. Sale totals are private and are not listed.','',leaders(weekSales,r=>r.account_name,earned).map(r=>({name:r.name})),{hideValue:true});
  add('trader-items','Most items sold (last 7 days, Top '+LEADERBOARD_LIMIT+')','Items sold through the guild trader in the last 7 days, totalled by quantity. Gold amounts are not listed.','items',leaders(weekSales,r=>r.account_name,r=>positive(r.quantity)));
+ // Buyer rankings over 30 days, matched on both sides against the current roster.
+ const members=new Set(current.map(r=>String(r.account_name||'').trim().toLowerCase()).filter(Boolean));
+ const isMember=name=>members.has(String(name||'').trim().toLowerCase());
+ const monthSales=traderWindow(MONTH_SECONDS).filter(r=>isMember(r.seller));
+ // Rank by what the buyer paid (price), not the seller's post-tax proceeds.
+ const topBuyers=guildBuyers=>leaders(nameAs(monthSales.filter(r=>isMember(r.buyer||r.buyer_original)===guildBuyers),'buyer'),r=>r.account_name,r=>positive(r.price)).map(r=>({name:r.name}));
+ add('trader-member-buyers','Guild member buyers (last 30 days, Top '+LEADERBOARD_LIMIT+')','Gold spent by current guild members on items listed by other current members in the last 30 days. Amounts are not listed.','',topBuyers(true),{hideValue:true});
+ add('trader-visitor-buyers','Non-member buyers (last 30 days, Top '+LEADERBOARD_LIMIT+')','Gold spent on guild trader items in the last 30 days by buyers who are not current guild members. Amounts are not listed.','',topBuyers(false),{hideValue:true});
  return {
   generatedAt:new Date(now*1000).toISOString(),
   trackingSince,
@@ -92,15 +103,15 @@ export function registerCommunityStatisticsSocket(socket, {
       const [meta] = await db.execute(`
         SELECT metadata_value FROM guildsync_community_statistics_metadata WHERE metadata_key = 'discord_activity_since'
       `);
-      // The trader query shares the rolling bounds above; event_datetime is the indexed
-      // pre-filter and the builder re-checks the same window on event_timestamp.
+      // One fetch covers the widest trader window; event_datetime is the indexed
+      // pre-filter and the builder applies each card's window on event_timestamp.
       const [banking, windows, [traderSales]] = await Promise.all([
         loadBanking(db), loadWindows(db, time),
         db.execute(`
-          SELECT seller, quantity, net, price, event_timestamp
+          SELECT seller, buyer, buyer_original, quantity, net, price, event_timestamp
           FROM guildsync_trader_entries
           WHERE event_datetime >= FROM_UNIXTIME(?) AND event_datetime <= FROM_UNIXTIME(?)
-        `, [time - TRADER_WINDOW_SECONDS, time])
+        `, [time - MONTH_SECONDS, time])
       ]);
       reply({ok: true, report: buildCommunityStatistics({
         now: time, trackingSince: meta[0]?.metadata_value || null,
