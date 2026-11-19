@@ -22,6 +22,9 @@ export async function restoreReturningMemberRank(guild,payload,{rankRefs='',offi
   const mention=officer?`<@&${officer.id}>`:'Consigliere (role could not be resolved)';
   const applicant=safe(payload.applicantAccount)||'This member';
   const result=notice=>({notice:`**Returning member:** ${applicant} ${notice} ${mention}`,roleMentions:officer?[officer.id]:[]});
+  // An outcome that asks nothing of an officer (the rank is already correct) is pure
+  // information, so it is posted without pinging the officer role.
+  const settled=notice=>({notice:`**Returning member:** ${applicant} ${notice}`,roleMentions:[]});
   // Every notice opens with the applicant and the rank we already know about so
   // officers do not have to look either up, then says what happened on Discord.
   const rawRank=safe(historical.rankName);
@@ -61,10 +64,10 @@ export async function restoreReturningMemberRank(guild,payload,{rankRefs='',offi
       const esoSide=safe(historical.rosterRank).trim(),esoSideRank=esoSide?rankOf({id:'',name:esoSide}):-1;
       if(esoSide && canonical(esoSide)===canonical(highest.name)) {
         log(`Returning member ${payload.applicantAccount}: Discord ${member.id} holds ${highest.name}, equivalent to ESO ${esoSide}; no promotion advised.`);
-        return result(`has no ESO rank change on record, and their Discord **${safe(highest.name)}** already matches their **${esoSide}** ESO rank, so no in-game promotion is needed.`);
+        return settled(`has no ESO rank change on record, and their Discord **${safe(highest.name)}** already matches their **${esoSide}** ESO rank, so no in-game promotion is needed.`);
       }
       if(esoSide && esoSideRank>=0 && rankOf(highest)<esoSideRank)
-        return result(`has no ESO rank change on record, and their **${esoSide}** ESO rank is already above their Discord **${safe(highest.name)}**, so no in-game promotion is needed.`);
+        return settled(`has no ESO rank change on record, and their **${esoSide}** ESO rank is already above their Discord **${safe(highest.name)}**, so no in-game promotion is needed.`);
       const entry=Math.min(...all.map(rankOf).filter(index=>index>=0));
       if(rankOf(highest)<=entry)return result(`has no ESO rank on record and holds only **${safe(highest.name)}** in Discord. An officer should confirm the in-game rank.`);
       log(`Returning member ${payload.applicantAccount}: no ESO rank on record; Discord ${member.id} holds ${highest.name}.`);
