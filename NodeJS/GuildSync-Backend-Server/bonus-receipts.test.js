@@ -40,6 +40,15 @@ test('receipt includes purchased count, bonus percentage and Eastern deadline, b
  assert.equal(record.bonusTickets, 20);
 });
 
+test('the default body keeps one blank line above the transaction ID with or without bonus lines', async () => {
+ for (const time of ['2026-09-14T12:00:00Z', '2026-09-20T12:00:00Z', '2026-09-26T12:00:00Z']) {
+  const body = (await receipt({ time })).body;
+  assert.match(body, /\n\nTransaction ID: 123/);
+  assert.doesNotMatch(body, /\n\n\nTransaction ID/);
+  assert.doesNotMatch(body, /\{bonus_note_block\}|\{bonus_block\}|\{note_block\}/);
+ }
+});
+
 test('monthly receipt uses its own tiers and later purchases use the applicable lower rate', async () => {
  assert.match((await receipt({ type: 'monthly', time: '2026-08-31T12:00:00Z' })).body, /Bonus Tickets: 40/);
  assert.match((await receipt({ time: '2026-09-20T12:00:00Z' })).body, /10%.*before.*September 22, 2026/);
