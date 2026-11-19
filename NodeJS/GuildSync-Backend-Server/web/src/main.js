@@ -889,6 +889,8 @@ function refreshActiveTabData(tab = activeGuildSyncTab) {
     : tab === 'eso-members' ? rosterDataLoading : tab === 'more' ? bankingDataLoading : false;
   if (loading) { pendingTabDataRefreshes.add(tab); return; }
   pendingTabDataRefreshes.delete(tab);
+  // Reports & Admin reloads Community Highlights on every tab click, even when collapsed.
+  if (tab === 'settings') communityStatisticsPanel.load(document);
   if (tab === 'discord-members') refreshDiscordData({ silent: true });
   if (tab === 'eso-members') {
     rosterAutoRefreshAttempted = true;

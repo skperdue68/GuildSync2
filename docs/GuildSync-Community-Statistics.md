@@ -1,10 +1,10 @@
-# Community highlights and automatic spreadsheet recovery
+# Community Highlights and automatic spreadsheet recovery
 
-## Community highlights
+## Community Highlights
 
-Open Reports and Admin, then Community highlights. The section requests fresh data every time it opens, including when returning to Reports and Admin with the section already expanded. Refresh remains available. Updates replace only the section results and preserve the page position; requests already in progress are reused. All approved Viewer, User, and Admin accounts can read it. No editing or account management privileges are granted by this report.
+Open Reports and Admin, then Community Highlights. The section requests fresh data every time it opens, including when returning to Reports and Admin with the section already expanded, and clicking the Reports and Admin tab reloads it even while the section is collapsed. The guild trader rankings always measure rolling seven-day windows: exactly 7 × 24 hours back from the time of that request, so the cut-off moves with the clock instead of resetting on a calendar week. Refresh remains available. Updates replace only the section results and preserve the page position; requests already in progress are reused. All approved Viewer, User, and Admin accounts can read it. No editing or account management privileges are granted by this report.
 
-Highlights include longest and newest recorded current guild memberships, Busiest Discord Users (posts plus reactions given), Most Posts, Most Reactions Given, the top five current Bi-Weekly and 50/50 purchased-ticket leaders, and the top five raffle spenders over the last 90 days. Discord activity uses a rolling 30-day window. ESO and Discord join rankings appear at the end. Community totals show current roster sizes, recorded post/reaction activity, and raffle spending.
+Highlights include longest and newest recorded current guild memberships, Busiest Discord Users (posts plus reactions given), Most Posts, Most Reactions Given, the top five current Bi-Weekly and 50/50 purchased-ticket leaders, the top five raffle spenders over the last 90 days, and two guild trader rankings over the last 7 days: highest sales and most items sold, each limited to the top five sellers. Discord activity uses a rolling 30-day window. The guild trader sales ranking lists sellers only; gold amounts are never shown, while the item ranking totals the quantity each seller sold. ESO and Discord join rankings appear at the end. Community totals show current roster sizes, recorded post/reaction activity, and raffle spending.
 
 Colors, other report sections, and the main roster/banking screens are unchanged. The section uses the existing Reports accordion. Cached results and pending requests are discarded when the authenticated session changes.
 
