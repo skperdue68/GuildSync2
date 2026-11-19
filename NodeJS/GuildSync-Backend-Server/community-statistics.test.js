@@ -81,7 +81,7 @@ test('report selections only use columns from actual startup table definitions',
  const schema=await readFile(new URL('./guildsync-database-actions.js',import.meta.url),'utf8');
  const ownSchema=await readFile(new URL('./community-statistics.js',import.meta.url),'utf8');
  const tables=new Map();
- for(const name of ['guildsync_roster_members','guildsync_roster_events','discord_members','discord_member_history','guildsync_discord_interactions','guildsync_discord_activity','guildsync_community_statistics_metadata']){
+ for(const name of ['guildsync_roster_members','guildsync_roster_events','discord_members','discord_member_history','guildsync_discord_interactions','guildsync_discord_activity','guildsync_community_statistics_metadata','guildsync_trader_entries']){
   const start=(schema+'\n'+ownSchema).indexOf('CREATE TABLE IF NOT EXISTS '+name+' (');
   assert.ok(start>=0,'Missing CREATE '+name);
   const definition=(schema+'\n'+ownSchema).slice(start).match(/\(([\s\S]*?)\)\s*(?:CHARACTER|`)/)[1];
@@ -151,5 +151,18 @@ test('activity SQL bounds original event timestamps without deleting history',as
  let result;await handlers['guildsync:request-community-statistics']({},r=>result=r);
  assert.equal(result.ok,true);const query=calls.find(([sql])=>sql.includes('FROM guildsync_discord_activity'));
  assert.match(query[0],/recorded_at >= FROM_UNIXTIME\(\?\)/);assert.match(query[0],/recorded_at <= FROM_UNIXTIME\(\?\)/);assert.deepEqual(query[1],[now-30*86400,now]);
- assert.ok(!calls.some(([sql])=>/DELETE|UPDATE/i.test(sql)));
+  assert.ok(!calls.some(([sql])=>/DELETE|UPDATE/i.test(sql)));
 });
+
+test('weekly trader rankings use a rolling seven-day window from each request time',async()=>{
+ const handlers={},calls=[];let time=2000000;
+ const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncUser:{role:'viewer'}};
+ registerCommunityStatisticsSocket(socket,{db:{execute:async(...args)=>{calls.push(args);return [[]];}},loadBanking:async()=>[],now:()=>time});
+ let result;await handlers['guildsync:request-community-statistics']({},r=>result=r);
+ const bounds=()=>calls.filter(([sql])=>sql.includes('FROM guildsync_trader_entries')).at(-1)[1];
+ assert.deepEqual(bounds(),[time-7*86400,time]);
+ time+=86400;await handlers['guildsync:request-community-statistics']({},r=>result=r);
+ assert.deepEqual(bounds(),[time-7*86400,time]);
+ assert.ok(bounds()[0]>2000000-7*86400);
+});
+

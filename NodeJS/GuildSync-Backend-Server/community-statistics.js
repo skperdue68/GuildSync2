@@ -1,4 +1,6 @@
 const LEADERBOARD_LIMIT=5;
+// Rolling window measured back from each request, not a calendar week.
+const TRADER_WINDOW_SECONDS=7*24*60*60;
 const positive=n=>Number.isFinite(Number(n))?Math.max(0,Number(n)):0;
 const label=r=>r.server_nickname||r.global_name||r.username||r.account_name||r.discord_id||'Unknown';
 const typeOf=t=>['monthly','50/50','5050'].includes(String(t).toLowerCase())?'monthly':['biweekly','bi-weekly','bi weekly'].includes(String(t).toLowerCase())?'biweekly':null;
@@ -10,11 +12,11 @@ export async function initializeCommunityStatisticsSchema(db){
  await db.query(`CREATE TABLE IF NOT EXISTS guildsync_discord_activity (guild_id VARCHAR(32) NOT NULL, event_key VARCHAR(64) NOT NULL, discord_id VARCHAR(32) NOT NULL, display_name VARCHAR(255) NOT NULL, activity_type VARCHAR(16) NOT NULL, recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (guild_id,event_key), INDEX idx_community_activity_actor (discord_id,activity_type)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
  await db.query(`INSERT IGNORE INTO guildsync_community_statistics_metadata (metadata_key,metadata_value) VALUES ('discord_activity_since', DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%dT%H:%i:%sZ'))`);
 }
-export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),trackingSince=null,roster=[],rosterEvents=[],discordMembers=[],discordHistory=[],activity=[],banking=[],windows=[]}={}){
+export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),trackingSince=null,roster=[],rosterEvents=[],discordMembers=[],discordHistory=[],activity=[],banking=[],windows=[],traderSales=[]}={}){
  const highlights=[];
  const membershipIds=new Set(['guild-joins','discord-joins']);
- const add=(id,title,description,unit,rows)=>{
-   const card={id,title,description,unit,rows};
+ const add=(id,title,description,unit,rows,options={})=>{
+   const card={id,title,description,unit,rows,...options};
    // Keep the two membership sources at the end as other highlights are added.
    const membershipIndex=highlights.findIndex(item=>membershipIds.has(item.id));
    if(!membershipIds.has(id)&&membershipIndex>=0)highlights.splice(membershipIndex,0,card);
@@ -40,6 +42,11 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const spending=r=>{const n=positive(r.amount),digit=Math.trunc(n)%10;return [1,3].includes(digit)&&n>digit?n-digit:n;};
  const recentPurchases=purchases.filter(r=>Number(r.time)>=now-90*86400);
  add('raffle-spending','Raffle spending (last 90 days, Top '+LEADERBOARD_LIMIT+')','Recorded ticket purchases in the last 90 days across both raffles, excluding +1/+3 markers; retained banking history only.','gold',leaders(recentPurchases,r=>r.displayName,spending));
+ // Guild trader sales stay in row form; only the seller ranking leaves the backend, never gold totals.
+ const weekSales=traderSales.filter(r=>Number(r.event_timestamp)>=now-TRADER_WINDOW_SECONDS&&Number(r.event_timestamp)<=now&&positive(r.quantity)>0).map(r=>({...r,account_name:String(r.seller||'').trim()}));
+ const earned=r=>positive(r.net)||positive(r.price);
+ add('trader-sales','Highest guild trader sales (last 7 days, Top '+LEADERBOARD_LIMIT+')','Guild trader sales in the last 7 days, ranked by gold earned. Sale totals are private and are not listed.','',leaders(weekSales,r=>r.account_name,earned).map(r=>({name:r.name})),{hideValue:true});
+ add('trader-items','Most items sold (last 7 days, Top '+LEADERBOARD_LIMIT+')','Items sold through the guild trader in the last 7 days, totalled by quantity. Gold amounts are not listed.','items',leaders(weekSales,r=>r.account_name,r=>positive(r.quantity)));
  return {
   generatedAt:new Date(now*1000).toISOString(),
   trackingSince,
@@ -85,10 +92,19 @@ export function registerCommunityStatisticsSocket(socket, {
       const [meta] = await db.execute(`
         SELECT metadata_value FROM guildsync_community_statistics_metadata WHERE metadata_key = 'discord_activity_since'
       `);
-      const [banking, windows] = await Promise.all([loadBanking(db), loadWindows(db, time)]);
+      // The trader query shares the rolling bounds above; event_datetime is the indexed
+      // pre-filter and the builder re-checks the same window on event_timestamp.
+      const [banking, windows, [traderSales]] = await Promise.all([
+        loadBanking(db), loadWindows(db, time),
+        db.execute(`
+          SELECT seller, quantity, net, price, event_timestamp
+          FROM guildsync_trader_entries
+          WHERE event_datetime >= FROM_UNIXTIME(?) AND event_datetime <= FROM_UNIXTIME(?)
+        `, [time - TRADER_WINDOW_SECONDS, time])
+      ]);
       reply({ok: true, report: buildCommunityStatistics({
         now: time, trackingSince: meta[0]?.metadata_value || null,
-        roster, rosterEvents, discordMembers, discordHistory, activity, banking, windows
+        roster, rosterEvents, discordMembers, discordHistory, activity, banking, windows, traderSales
       })});
     } catch {
       reply({ok: false, message: 'Community statistics could not be loaded.'});
