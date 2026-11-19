@@ -50,16 +50,46 @@ export function calculateRaffleBonus({ purchasedTickets, purchaseTimestamp, sale
   }
   const totalHours = tiers.reduce((sum, tier) => sum + tier.hours, 0);
   const elapsed = Math.max(0, (purchase - (salesEnd - totalHours * 3600)) / 3600);
-  let cutoff = 0;
-  let percent = 0;
-  for (const tier of tiers) {
-    cutoff += tier.hours;
-    if (elapsed < cutoff) {
-      percent = tier.percent;
-      break;
-    }
-  }
+  const tier = selectBonusTier(tiers, elapsed);
+  const percent = tier.percent;
   const bonusTickets = enabled ? Math.floor(paid * percent / 100) : 0;
   return { purchasedTickets: paid, bonusPercent: enabled ? percent : 0, bonusTickets, totalTickets: paid + bonusTickets,
-    ...(enabled && percent > 0 ? { bonusExpiresAt: Math.min(salesEnd, salesEnd - totalHours * 3600 + cutoff * 3600) } : {}) };
+    ...(enabled && percent > 0 ? { bonusExpiresAt: Math.min(salesEnd, salesEnd - totalHours * 3600 + tier.endsAtHours * 3600) } : {}) };
+}
+
+// Which bonus period a purchase falls in: the tiers run back to back from the start
+// of the bonus window, so elapsed hours pick one by its cumulative boundaries.
+function selectBonusTier(tiers, elapsedHours) {
+  let start = 0;
+  for (let index = 0; index < tiers.length; index += 1) {
+    const end = start + tiers[index].hours;
+    if (elapsedHours < end) {
+      return { index, percent: tiers[index].percent, startsAtHours: start, endsAtHours: end };
+    }
+    start = end;
+  }
+  return { index: tiers.length, percent: 0, startsAtHours: start, endsAtHours: start };
+}
+
+// The next better period above the one a purchase landed in. Receipts quote its
+// percentage and its deadline (the last moment that percentage was available) and
+// say how many extra tickets it would have paid; isHighestTier is false when an even
+// better percentage came before that deadline.
+export function nextRaffleBonus({ purchasedTickets, purchaseTimestamp, salesStart, salesEnd, tiers, enabled = true }) {
+  const paid = Math.max(0, Math.floor(Number(purchasedTickets) || 0));
+  const none = { purchasedTickets: paid, bonusPercent: 0, bonusTickets: 0, expiresAt: null, isHighestTier: true };
+  const purchase = Number(purchaseTimestamp);
+  if (!enabled || !Number.isFinite(purchase) || purchase < salesStart || purchase >= salesEnd) return none;
+  const totalHours = tiers.reduce((sum, tier) => sum + tier.hours, 0);
+  const elapsed = Math.max(0, (purchase - (salesEnd - totalHours * 3600)) / 3600);
+  const current = selectBonusTier(tiers, elapsed);
+  if (current.index <= 0) return none;
+  const target = tiers[current.index - 1];
+  return {
+    purchasedTickets: paid,
+    bonusPercent: target.percent,
+    bonusTickets: Math.floor(paid * target.percent / 100),
+    expiresAt: Math.min(salesEnd, salesEnd - totalHours * 3600 + current.startsAtHours * 3600),
+    isHighestTier: current.index === 1
+  };
 }

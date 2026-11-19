@@ -134,7 +134,7 @@ Other gold deposits are recorded as other deposits. Bonus tickets do not add pri
 
 Early purchase bonuses are optional and can be enabled separately for each raffle type or individual raffle. The administrator sets the time periods and percentages in GuildSync's **Raffle Bonus Settings**. Earlier purchases can receive higher bonuses; the final period has 0%. Bonus tickets round down **for each purchase**. For example, 5 purchased tickets with a 20% bonus earns 1 extra, for 6 total. Manually added ticket entries do not earn an additional early purchase bonus.
 
-When a purchase has a positive bonus percentage, its ESO receipt includes the percentage, the buy-before deadline, bonus tickets, and total tickets. At 0%, that section is omitted. The settings selector marks enabled raffles **(Bonuses)** and removes that label when disabled.
+When a purchase has a positive bonus percentage, its ESO receipt includes the percentage, the buy-before deadline, bonus tickets, and total tickets. At 0%, that section is omitted. If the purchase landed in a lower bonus period, the receipt also ends with an early purchase nudge naming the next better percentage, its deadline, and the extra tickets an earlier purchase would have earned, plus a note when an even better percentage came before that deadline. Purchases made in the best period get no nudge. The settings selector marks enabled raffles **(Bonuses)** and removes that label when disabled.
 
 ## What happens to the spreadsheets
 

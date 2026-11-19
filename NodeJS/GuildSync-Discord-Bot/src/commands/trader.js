@@ -19,11 +19,10 @@ function warnIfBackendOutdated(response, log) {
 }
 
 export const LINK_REQUIRED_MESSAGE = [
-  'I cannot send trader sale invoices until your Discord account is linked to an ESO account.',
+  'I cannot send trader sale receipts until your Discord account is linked to an ESO account.',
   '',
   '1. Set your Discord username to match your @ESO name so GuildSync can link it automatically.',
-  '2. Create the link in GuildSync if you can, or ask an officer to link it for you.',
-  '3. If you cannot create the link, or you believe it is already linked, contact @evainefaye for help.'
+  '2. If you believe it is already linked, or are otherwise having issues contact @evainefaye for support, she is your only support person for this system.'
 ].join('\n');
 
 export const data = new SlashCommandBuilder()
