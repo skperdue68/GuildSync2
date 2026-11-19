@@ -47,8 +47,39 @@ test('monthly receipt uses its own tiers and later purchases use the applicable 
 
 test('disabled, zero-percent and manual receipts omit the bonus block', async () => {
  for (const options of [{ enabled: false }, { time: '2026-09-26T12:00:00Z' }, { source: 'ManualBiweeklyTicket' }]) {
-  assert.doesNotMatch((await receipt(options)).body, /Bonus|Total Tickets|buying before/i);
+  assert.doesNotMatch((await receipt(options)).body, /Early Purchase Bonus|Bonus Tickets|Total Tickets|buying before/i);
  }
+});
+
+test('a purchase that missed the highest bonus is told the higher percentage and how many tickets buying early cost', async () => {
+ const record = await receipt({ time: '2026-09-20T12:00:00Z' });
+ assert.equal(record.bonusUpsellPercent, 20);
+ assert.equal(record.bonusUpsellTickets, 10);
+ assert.match(record.body, /If you had bought your tickets by September 17, 2026 at 7:00 PM ET you could have earned 10 more tickets with the 20% bonus!! Buy Early!!$/);
+ assert.doesNotMatch(record.body, /even more if bought earlier/);
+});
+
+test('a purchase below the next bonus period is nudged to that percentage and told more was possible earlier', async () => {
+ const record = await receipt({ time: '2026-09-24T12:00:00Z' });
+ assert.equal(record.bonusUpsellPercent, 10);
+ assert.equal(record.bonusUpsellTickets, 5);
+ assert.match(record.body, /If you had bought your tickets by September 22, 2026 at 7:00 PM ET you could have earned 5 more tickets with the 10% bonus, and even more if bought earlier than that!! Buy Early!!$/);
+});
+
+test('the best bonus period, a disabled bonus and manual entries get no early-purchase nudge', async () => {
+ for (const options of [{ time: '2026-09-14T12:00:00Z' }, { enabled: false }, { source: 'ManualBiweeklyTicket' }]) {
+  const record = await receipt(options);
+  assert.equal(record.bonusUpsellTickets, 0);
+  assert.doesNotMatch(record.body, /Buy Early|bought your tickets/);
+ }
+});
+
+test('custom templates place the early-purchase nudge once and never leave the placeholder', async () => {
+ const placed = await receipt({ time: '2026-09-20T12:00:00Z', template: 'Purchased {tickets}.\n{bonus_upsell}' });
+ assert.equal(placed.body.match(/Buy Early/g).length, 1);
+ assert.doesNotMatch(placed.body, /\{bonus_upsell\}/);
+ const appended = await receipt({ time: '2026-09-20T12:00:00Z', template: 'Purchased {tickets}.' });
+ assert.equal(appended.body.match(/Buy Early/g).length, 1);
 });
 
 test('raffle override is used and custom templates get one bonus block', async () => {

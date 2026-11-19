@@ -199,6 +199,10 @@ Prize summaries remove marker gold. Bi-Weekly uses half of eligible deposits rou
 
 Receipts show the actual deposit/ticket cost, including its +1/+3 marker. When bonus percentage is positive, the backend adds the early purchase percentage and deadline, bonus tickets, and total tickets. At 0%, the bonus block is empty and not appended. A positive percentage can legitimately produce 0 bonus tickets for a small purchase because of rounding.
 
+When the raffle has bonuses on and the purchase fell in a lower period, the receipt also ends with an early purchase nudge, for example `If you had bought your tickets by September 17, 2026 at 7:00 PM ET you could have earned 10 more tickets with the 20% bonus!! Buy Early!!`. It names the next better percentage, the last moment that percentage was available, and the extra tickets an earlier purchase would have earned. When an even better percentage came before that deadline the sentence adds `and even more if bought earlier than that`, so the quoted period is never presented as the best one. A purchase inside the highest percentage gets no nudge, and neither does a disabled raffle or a manual ticket entry.
+
+`{bonus_upsell}` places that sentence in a custom body template, and `{bonus_upsell_tickets}` and `{bonus_upsell_deadline}` expose its numbers separately. Without the placeholder the sentence is appended at the bottom of the body, after the signature, so existing customized templates receive it too.
+
 1. An authorized desktop operator checks out unsent receipt mail from the backend.
 2. The desktop persists pending batches and waits until **ESO is fully closed** before writing its SavedVariables mail queue. `/reloadui` alone does not satisfy that safety check.
 3. It backs up the file, preserves other banking data, writes distinct request IDs, verifies them, and records queue-written status with the backend.

@@ -15,7 +15,7 @@ import mysql from 'mysql2/promise';
 import {releaseExpiredDepositMailCheckouts} from './deposit-mail-lease.js';
 import { bankingSource } from './banking-source.js';
 import { randomUUID, createHash } from 'node:crypto';
-import { DEFAULT_BONUS_TIERS, parseBonusTiers, calculateRaffleBonus, selectRaffleBonusSettings } from './raffle-bonus.js';
+import { DEFAULT_BONUS_TIERS, parseBonusTiers, calculateRaffleBonus, nextRaffleBonus, selectRaffleBonusSettings } from './raffle-bonus.js';
 import { syncBankingEntriesToGoogleSheets, googleSheetsBankingConfig } from './google-sheets-banking-sync.js';
 
 
@@ -181,6 +181,10 @@ function renderDepositMailTemplate(template, row = {}) {
     total_tickets: formatDepositMailAmount(row.totalTickets ?? row.ticket_quantity),
     bonus_deadline: row.bonusDeadline || '',
     bonus_block: row.bonusBlock || '',
+    bonus_upsell: row.bonusUpsellBlock || '',
+    bonus_upsell_block: row.bonusUpsellBlock || '',
+    bonus_upsell_tickets: formatDepositMailAmount(row.bonusUpsellTickets),
+    bonus_upsell_deadline: row.bonusUpsellDeadline || '',
     ticket_gold_cost: formatDepositMailAmount(ticketGoldCost),
     gold_cost: formatDepositMailAmount(ticketGoldCost),
     raw_ticket_gold_cost: String(ticketGoldCost),
@@ -206,24 +210,51 @@ function renderDepositMailTemplate(template, row = {}) {
   }).trim();
 }
 
+function formatDepositMailBonusDeadline(timestamp) {
+  const seconds = Number(timestamp);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true
+  }).format(new Date(seconds * 1000)) + ' ET';
+}
+
+// Early-purchase nudge for a receipt: only when this raffle has bonuses on and the
+// purchase did not land in the best (first, highest-percentage) tier. It quotes the
+// next better percentage and its deadline, and notes that a still better percentage
+// was available before that deadline.
+function getDepositMailBonusUpsellBlock(bonus = {}) {
+  const missed = Math.trunc(Number(bonus.bonusUpsellTickets) || 0);
+  const percent = Number(bonus.bonusUpsellPercent);
+  const deadline = formatDepositMailBonusDeadline(bonus.bonusUpsellExpiresAt);
+  if (missed <= 0 || !(percent > 0) || !deadline) return '';
+
+  const earlier = bonus.bonusUpsellHasHigherTier ? ', and even more if bought earlier than that' : '';
+  return `If you had bought your tickets by ${deadline} you could have earned ${formatDepositMailAmount(missed)} more ticket${missed === 1 ? '' : 's'} with the ${percent}% bonus${earlier}!! Buy Early!!`;
+}
+
 function addRenderedDepositMailContent(row = {}, versions = [], overrides = []) {
   const normalized = normalizeDepositMailRow(row);
   const bonus = calculateBankingEntryBonus(normalized, versions, overrides);
-  const bonusDeadline = bonus.bonusPercent > 0 ? new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric',
-    hour: 'numeric', minute: '2-digit', hour12: true
-  }).format(new Date(bonus.bonusExpiresAt * 1000)) + ' ET' : '';
+  const bonusDeadline = formatDepositMailBonusDeadline(bonus.bonusExpiresAt);
   const bonusBlock = bonus.bonusPercent > 0 ? [
     `Early Purchase Bonus: ${bonus.bonusPercent}% for buying before ${bonusDeadline}.`,
     `Bonus Tickets: ${formatDepositMailAmount(bonus.bonusTickets)}`,
     `Total Tickets: ${formatDepositMailAmount(bonus.totalTickets)}`
   ].join('\n') : '';
+  // The nudge is a footer of its own: it is appended at the bottom of the body
+  // (after the signature) unless the template asks for it with {bonus_upsell}.
+  const bonusUpsellDeadline = formatDepositMailBonusDeadline(bonus.bonusUpsellExpiresAt);
+  const bonusUpsellBlock = getDepositMailBonusUpsellBlock(bonus);
   const recipient = getForcedDepositMailRecipient() || normalizeDepositMailRecipient(row.account_name || row.display_name || row.recipient || '');
   const templateRow = {
     ...row,
     ...bonus,
     bonusDeadline,
     bonusBlock,
+    bonusUpsellDeadline,
+    bonusUpsellBlock,
     recipient,
     account_name: recipient,
     display_name: recipient
@@ -232,8 +263,11 @@ function addRenderedDepositMailContent(row = {}, versions = [], overrides = []) 
   const bodyTemplate = getDepositMailBodyTemplate();
   const renderedBody = renderDepositMailTemplate(bodyTemplate, templateRow);
   // Existing customized templates also receive the new receipt information.
-  const body = bonusBlock && !bodyTemplate.includes('{bonus_block}')
+  let body = bonusBlock && !bodyTemplate.includes('{bonus_block}')
     ? renderedBody + '\n\n' + bonusBlock : renderedBody;
+  if (bonusUpsellBlock && !bodyTemplate.includes('{bonus_upsell}')) {
+    body += '\n\n' + bonusUpsellBlock;
+  }
   return {
     ...normalized,
     ...bonus,
@@ -2341,7 +2375,8 @@ export async function getBankingDataJSON(applicationDB, bonusVersions = null) {
 function calculateBankingEntryBonus(entry, versions, overrides = []) {
     const type = normalizeDepositMailTicketType(entry.type);
     const paid = Math.max(0, Math.floor(Number(entry.ticketAmount) || 0));
-    const noBonus = { purchasedTickets: paid, bonusPercent: 0, bonusTickets: 0, totalTickets: paid, bonusEnabled: false };
+    const noBonus = { purchasedTickets: paid, bonusPercent: 0, bonusTickets: 0, totalTickets: paid, bonusEnabled: false,
+      bonusUpsellPercent: 0, bonusUpsellTickets: 0, bonusUpsellExpiresAt: null, bonusUpsellHasHigherTier: false };
     if (type !== 'monthly' && type !== 'biweekly') {
       return noBonus;
     }
@@ -2369,7 +2404,22 @@ function calculateBankingEntryBonus(entry, versions, overrides = []) {
       tiers: policy.tiers,
       enabled: policy.enabled
     });
-    return { ...result, bonusEnabled: policy.enabled };
+    // The next better bonus period, so the receipt can quote the higher percentage
+    // the delay cost and whether an even better percentage came before it.
+    const next = nextRaffleBonus({
+      purchasedTickets: paid,
+      purchaseTimestamp: entry.time,
+      salesStart: windowInfo.salesStart,
+      salesEnd: windowInfo.salesEnd,
+      tiers: policy.tiers,
+      enabled: policy.enabled
+    });
+    const bonusUpsellTickets = policy.enabled ? Math.max(0, next.bonusTickets - result.bonusTickets) : 0;
+    return { ...result, bonusEnabled: policy.enabled,
+      bonusUpsellPercent: bonusUpsellTickets > 0 ? next.bonusPercent : 0,
+      bonusUpsellTickets,
+      bonusUpsellExpiresAt: bonusUpsellTickets > 0 ? next.expiresAt || null : null,
+      bonusUpsellHasHigherTier: bonusUpsellTickets > 0 && !next.isHighestTier };
 }
 
 

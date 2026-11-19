@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateRaffleBonus, parseBonusTiers, selectBonusPolicy, selectRafflePolicy, selectRaffleBonusSettings } from './raffle-bonus.js';
+import { calculateRaffleBonus, nextRaffleBonus, parseBonusTiers, selectBonusPolicy, selectRafflePolicy, selectRaffleBonusSettings } from './raffle-bonus.js';
 
 test('biweekly bonus steps down on elapsed-hour boundaries and rounds per purchase', () => {
   const tiers = parseBonusTiers('120:20,120:10,72:5,24:0');
@@ -34,6 +34,24 @@ test('monthly extra days use the earliest rate while final day always has zero b
 test('invalid configuration fails clearly', () => {
   assert.throws(() => parseBonusTiers('120:20,24:10'), /zero bonus/);
   assert.throws(() => parseBonusTiers('120:20,0:0'), /positive hours/);
+});
+
+test('the early-purchase nudge targets the next better period and flags a better one before it', () => {
+  const tiers = parseBonusTiers('120:20,120:10,72:5,24:0');
+  const start = 1000000;
+  const salesEnd = start + 336 * 3600;
+  const at = (hours, enabled = true) => nextRaffleBonus({ purchasedTickets: 100,
+    purchaseTimestamp: start + hours * 3600, salesStart: start, salesEnd, tiers, enabled });
+  const none = { purchasedTickets: 100, bonusPercent: 0, bonusTickets: 0, expiresAt: null, isHighestTier: true };
+  assert.deepEqual(at(0), none);
+  assert.deepEqual(at(121), { purchasedTickets: 100, bonusPercent: 20, bonusTickets: 20,
+    expiresAt: start + 120 * 3600, isHighestTier: true });
+  assert.deepEqual(at(241), { purchasedTickets: 100, bonusPercent: 10, bonusTickets: 10,
+    expiresAt: start + 240 * 3600, isHighestTier: false });
+  assert.equal(at(320).bonusPercent, 5);
+  assert.equal(at(320).expiresAt, start + 312 * 3600);
+  assert.deepEqual(at(400), none);
+  assert.deepEqual(at(241, false), none);
 });
 
 test('disabling bonuses keeps purchased tickets and awards none', () => {
