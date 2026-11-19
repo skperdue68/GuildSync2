@@ -54,6 +54,9 @@ test('30-day buyer rankings split current members from non-members and never pub
  assert.equal(visitors.hideValue,true);
  assert.deepEqual(visitors.rows.map(r=>r.name),['Outsider','OldOutsider']);
  assert.ok(visitors.rows.every(r=>!('value' in r)),'gold values must not reach the report payload');
+ // No trader card may carry gold or per-sale amounts in any field.
+ const privateCards=report.highlights.filter(h=>['trader-sales','trader-member-buyers','trader-visitor-buyers'].includes(h.id));
+ assert.doesNotMatch(JSON.stringify(privateCards),/"(value|price|net|tax)":/);
  const ids=report.highlights.map(h=>h.id);
  assert.ok(ids.indexOf('trader-items')<ids.indexOf('trader-member-buyers'));
  assert.ok(ids.indexOf('trader-member-buyers')<ids.indexOf('trader-visitor-buyers'));
