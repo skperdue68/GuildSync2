@@ -39,6 +39,7 @@ test('30-day buyer rankings split current members from non-members and never pub
   {seller:'Seller',buyer:'Bob',quantity:3,price:7000,net:500,event_timestamp:now-2},
   {seller:'Seller',buyer:'Outsider',quantity:1,price:3000,net:2700,event_timestamp:now-3},
   {seller:'Former',buyer:'Alice',quantity:9,price:90000,net:90000,event_timestamp:now},
+  {seller:'Former',buyer:'Walkin',quantity:1,price:2000,net:1800,event_timestamp:now-4},
   {seller:'Seller',buyer:'OldOutsider',quantity:1,price:700,net:600,event_timestamp:now-month},
   {seller:'Seller',buyer:'TooOld',quantity:1,price:60000,net:60000,event_timestamp:now-month-1},
   {seller:'Seller',buyer:'Future',quantity:1,price:60000,net:60000,event_timestamp:now+1}
@@ -52,7 +53,8 @@ test('30-day buyer rankings split current members from non-members and never pub
  assert.ok(members.rows.every(r=>!('value' in r)),'gold values must not reach the report payload');
  const visitors=report.highlights.find(h=>h.id==='trader-visitor-buyers');
  assert.equal(visitors.hideValue,true);
- assert.deepEqual(visitors.rows.map(r=>r.name),['Outsider','OldOutsider']);
+ // Anyone off the roster counts, even when a member who has since left listed the item.
+ assert.deepEqual(visitors.rows.map(r=>r.name),['Outsider','Walkin','OldOutsider']);
  assert.ok(visitors.rows.every(r=>!('value' in r)),'gold values must not reach the report payload');
  // No trader card may carry gold or per-sale amounts in any field.
  const privateCards=report.highlights.filter(h=>['trader-sales','trader-member-buyers','trader-visitor-buyers'].includes(h.id));

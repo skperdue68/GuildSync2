@@ -50,14 +50,15 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const weekSales=nameAs(traderWindow(WEEK_SECONDS).filter(r=>positive(r.quantity)>0),'seller');
  add('trader-sales','Highest guild trader sales (last 7 days, Top '+LEADERBOARD_LIMIT+')','Guild trader sales in the last 7 days, ranked by gold earned. Sale totals are private and are not listed.','',leaders(weekSales,r=>r.account_name,earned).map(r=>({name:r.name})),{hideValue:true});
  add('trader-items','Most items sold (last 7 days, Top '+LEADERBOARD_LIMIT+')','Items sold through the guild trader in the last 7 days, totalled by quantity. Gold amounts are not listed.','items',leaders(weekSales,r=>r.account_name,r=>positive(r.quantity)));
- // Buyer rankings over 30 days, matched on both sides against the current roster.
+ // Buyer rankings over 30 days: members are matched on both sides, outsiders by buyer only.
  const members=new Set(current.map(r=>String(r.account_name||'').trim().toLowerCase()).filter(Boolean));
  const isMember=name=>members.has(String(name||'').trim().toLowerCase());
- const monthSales=traderWindow(MONTH_SECONDS).filter(r=>isMember(r.seller));
+ const buyerOf=row=>row.buyer||row.buyer_original;
+ const monthSales=traderWindow(MONTH_SECONDS);
  // Rank by what the buyer paid (price), not the seller's post-tax proceeds.
- const topBuyers=guildBuyers=>leaders(nameAs(monthSales.filter(r=>isMember(r.buyer||r.buyer_original)===guildBuyers),'buyer'),r=>r.account_name,r=>positive(r.price)).map(r=>({name:r.name}));
- add('trader-member-buyers','Guild member buyers (last 30 days, Top '+LEADERBOARD_LIMIT+')','Gold spent by current guild members on items listed by other current members in the last 30 days. Amounts are not listed.','',topBuyers(true),{hideValue:true});
- add('trader-visitor-buyers','Non-member buyers (last 30 days, Top '+LEADERBOARD_LIMIT+')','Gold spent on guild trader items in the last 30 days by buyers who are not current guild members. Amounts are not listed.','',topBuyers(false),{hideValue:true});
+ const topBuyers=rows=>leaders(nameAs(rows,'buyer'),r=>r.account_name,r=>positive(r.price)).map(r=>({name:r.name}));
+ add('trader-member-buyers','Guild member buyers (last 30 days, Top '+LEADERBOARD_LIMIT+')','Gold spent by current guild members on items listed by another current member in the last 30 days. Amounts are not listed.','',topBuyers(monthSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),{hideValue:true});
+ add('trader-visitor-buyers','Non-member buyers (last 30 days, Top '+LEADERBOARD_LIMIT+')','Gold spent at the guild trader in the last 30 days by buyers who are not current guild members, whoever listed the item. Amounts are not listed.','',topBuyers(monthSales.filter(r=>!isMember(buyerOf(r)))),{hideValue:true});
  return {
   generatedAt:new Date(now*1000).toISOString(),
   trackingSince,
