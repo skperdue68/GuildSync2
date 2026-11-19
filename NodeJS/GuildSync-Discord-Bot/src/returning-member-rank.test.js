@@ -128,18 +128,22 @@ test('an equivalent Discord rank and ESO roster rank need no promotion advice',a
  assert.equal(g.calls.length,0);
  assert.match(result.notice,/has no ESO rank change on record, and their Discord \*\*Associates\*\* already matches their \*\*Associate\*\* ESO rank, so no in-game promotion is needed/);
  assert.doesNotMatch(result.notice,/should be promoted in game/);
- assert.deepEqual(result.roleMentions,['5']);
+ // Nothing is asked of an officer here, so the post must not ping the role.
+ assert.deepEqual(result.roleMentions,[]);
+ assert.doesNotMatch(result.notice,/<@&\d+>|Consigliere/);
 });
 
 test('a Discord rank above the ESO roster rank is still advised, one below is not',async()=>{
  const above=guild({existing:['3']});
  const higher=await restoreReturningMemberRank(above,{applicantAccount:'Alice',returningMember:{rankName:'',rosterRank:'Associate',discordUserIds:['100']}});
  assert.match(higher.notice,/holds \*\*Soldiers\*\* in Discord and should be promoted in game to match/);
+ assert.deepEqual(higher.roleMentions,['5']);
  assert.equal(above.calls.length,0);
  const below=guild({existing:['2']});
  const lower=await restoreReturningMemberRank(below,{applicantAccount:'Alice',returningMember:{rankName:'',rosterRank:'Soldier',discordUserIds:['100']}});
  assert.match(lower.notice,/their \*\*Soldier\*\* ESO rank is already above their Discord \*\*Associates\*\*, so no in-game promotion is needed/);
  assert.doesNotMatch(lower.notice,/should be promoted in game/);
+ assert.deepEqual(lower.roleMentions,[]);
  assert.equal(below.calls.length,0);
 });
 
