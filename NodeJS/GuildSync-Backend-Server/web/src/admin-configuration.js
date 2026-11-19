@@ -20,8 +20,9 @@ export function receiptPreview(template,{body=false}={}){
  const values={recipient:'@ExampleMember',account_name:'@ExampleMember',display_name:'@ExampleMember',amount:'10,001',deposit_amount:'10,001',raw_amount:'10001',raw_deposit_amount:'10001',event_id:'123456789',ticket_quantity:'20',tickets:'20',purchased_tickets:'20',bonus_percent:'20',bonus_tickets:'4',total_tickets:'24',bonus_deadline:'October 9, 2026 at 7:00 PM Eastern',bonus_block:`Early Purchase Bonus: 20% for purchases before October 9, 2026 at 7:00 PM ET.
 Bonus Tickets: 4
 Total Tickets: 24`,bonus_upsell:'If you had bought your tickets by October 9, 2026 at 7:00 PM ET you could have earned 1 more ticket with the 20% bonus!! Buy Early!!',bonus_upsell_block:'If you had bought your tickets by October 9, 2026 at 7:00 PM ET you could have earned 1 more ticket with the 20% bonus!! Buy Early!!',bonus_upsell_tickets:'1',bonus_upsell_deadline:'October 9, 2026 at 7:00 PM ET',note:'',note_block:'',ticket_type:'Bi-Weekly',ticket_type_raw:'biweekly',transaction_type:'biweekly',ticket_gold_cost:'10,001',gold_cost:'10,001',raw_gold_cost:'10001',raw_ticket_gold_cost:'10001',purchase_date:'October 5, 2026',data_source:'Guild bank',event_datetime:'2026-10-05T12:00:00Z',event_timestamp:'1791201600',raffle_datetime_eastern:'October 10, 2026 at 8:00 PM Eastern',raffle_date_time_eastern:'October 10, 2026 at 8:00 PM Eastern',raffle_datetime:'October 10, 2026 at 8:00 PM Eastern',mail_request_id:'example',mail_batch_id:'example'};
+ values.bonus_note_block=values.bonus_block?values.bonus_block+'\n':'';
  const rendered=String(template).replace(/{([a-zA-Z0-9_]+)}/g,(match,key)=>values[key] ?? match);
- return body&&!String(template).includes('{bonus_block}')?rendered+'\n\n'+values.bonus_block:rendered;
+ return body&&!/{(bonus_block|bonus_note_block)}/.test(String(template))?rendered+'\n\n'+values.bonus_block:rendered;
 }
 export function wireReportAccordions(accordion,{refresh=false,root=document}={}){
  const update=()=>{

@@ -212,13 +212,13 @@ When the raffle has bonuses on and the purchase fell in a lower period, the rece
 
 The add-on's `sent` acknowledgement means **the SendMail call was issued**, not that ESO confirmed server delivery. There is no `/gsb mail` or receipt-resend slash command. The browser app cannot write local queues.
 
-Receipt templates are optional backend settings. `{bonus_block}` is the conditional section; an existing template without that placeholder has the positive-bonus block appended automatically. If customizing a template, use `{bonus_block}` to avoid an unconditional 0% section. Available placeholders:
+Receipt templates are optional backend settings. `{bonus_note_block}` is the built-in combined section: bonus deadline, percentage, bonus tickets and total plus any note, carrying one blank line above the transaction ID whether or not either part is present. `{bonus_block}` is the bonus details alone. An existing template containing neither placeholder has the positive-bonus block appended automatically. If customizing a template, use `{bonus_block}` to avoid an unconditional 0% section. Available placeholders:
 
 | Group | Placeholders |
 | --- | --- |
 | Recipient/type | `{recipient}`, `{account_name}`, `{display_name}`, `{ticket_type}`, `{ticket_type_raw}`, `{transaction_type}` |
 | Deposit/cost | `{amount}`, `{deposit_amount}`, `{ticket_gold_cost}`, `{gold_cost}`, `{raw_amount}`, `{raw_deposit_amount}`, `{raw_ticket_gold_cost}`, `{raw_gold_cost}` |
-| Tickets/bonus | `{ticket_quantity}`, `{tickets}`, `{purchased_tickets}`, `{bonus_percent}`, `{bonus_tickets}`, `{total_tickets}`, `{bonus_deadline}`, `{bonus_block}` |
+| Tickets/bonus | `{ticket_quantity}`, `{tickets}`, `{purchased_tickets}`, `{bonus_percent}`, `{bonus_tickets}`, `{total_tickets}`, `{bonus_deadline}`, `{bonus_block}`, `{bonus_note_block}` |
 | Dates | `{purchase_date}`, `{raffle_datetime_eastern}`, `{raffle_date_time_eastern}`, `{raffle_datetime}`, `{event_datetime}`, `{event_timestamp}` |
 | Context | `{event_id}`, `{data_source}`, `{note}`, `{note_block}`, `{mail_request_id}`, `{mail_batch_id}` |
 
@@ -319,7 +319,7 @@ Obsolete backend settings no longer read: `GUILDSYNC_GOOGLE_OAUTH_CLIENT_ID`, `G
 | `GUILDSYNC_MONTHLY_BONUS_TIERS` | Optional; `168:40,168:20,168:10,144:5,24:0` | Initial 50/50 schedule (`monthly` internal name). |
 | `GUILDSYNC_DEPOSIT_MAIL_FORCE_RECIPIENT` | Optional; blank | Testing override sends all checked-out receipts to one account; leave blank for normal recipients. |
 | `GUILDSYNC_DEPOSIT_MAIL_SUBJECT_TEMPLATE` | Optional; built-in raffle receipt subject | Receipt subject template. |
-| `GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE` | Optional; built-in thank-you/receipt body | Receipt body template; use conditional `{bonus_block}` for bonus details. |
+| `GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE` | Optional; built-in thank-you/receipt body | Receipt body template; use the conditional `{bonus_note_block}` for bonus details plus note, or `{bonus_block}` for bonus details alone. |
 
 See the placeholder table above. Node dotenv double-quoted templates can contain escaped `\n` for line breaks. Unknown receipt placeholders remain literal, whereas onboarding template placeholders are validated. There is no receipt delivery toggle in these variables; queue checkout/delivery is an operator workflow.
 
