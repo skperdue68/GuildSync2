@@ -27,9 +27,7 @@ const DEFAULT_DEPOSIT_MAIL_BODY_TEMPLATE = [
   '',
   'We received your guild bank deposit of {amount} gold.',
   'Ticket Credit Earned: {ticket_quantity}',
-  '{bonus_block}',
-  '{note_block}',
-  '',
+  '{bonus_note_block}',
   'Transaction ID: {event_id}',
   '',
   '-- Alphabet Mafia'
@@ -181,6 +179,7 @@ function renderDepositMailTemplate(template, row = {}) {
     total_tickets: formatDepositMailAmount(row.totalTickets ?? row.ticket_quantity),
     bonus_deadline: row.bonusDeadline || '',
     bonus_block: row.bonusBlock || '',
+    bonus_note_block: row.bonusNoteBlock || '',
     bonus_upsell: row.bonusUpsellBlock || '',
     bonus_upsell_block: row.bonusUpsellBlock || '',
     bonus_upsell_tickets: formatDepositMailAmount(row.bonusUpsellTickets),
@@ -247,12 +246,18 @@ function addRenderedDepositMailContent(row = {}, versions = [], overrides = []) 
   // (after the signature) unless the template asks for it with {bonus_upsell}.
   const bonusUpsellDeadline = formatDepositMailBonusDeadline(bonus.bonusUpsellExpiresAt);
   const bonusUpsellBlock = getDepositMailBonusUpsellBlock(bonus);
+  // One placeholder for the optional bonus and note lines: it supplies the blank
+  // line that follows them, so the two empty lines the separate placeholders left
+  // above the transaction ID become one, and a receipt with neither keeps one.
+  const bonusNoteBlock = [bonusBlock, getDepositMailNoteBlock(row)].filter(Boolean).join('\n');
+  const bonusNoteBlockValue = bonusNoteBlock ? `${bonusNoteBlock}\n` : '';
   const recipient = getForcedDepositMailRecipient() || normalizeDepositMailRecipient(row.account_name || row.display_name || row.recipient || '');
   const templateRow = {
     ...row,
     ...bonus,
     bonusDeadline,
     bonusBlock,
+    bonusNoteBlock: bonusNoteBlockValue,
     bonusUpsellDeadline,
     bonusUpsellBlock,
     recipient,
@@ -262,8 +267,10 @@ function addRenderedDepositMailContent(row = {}, versions = [], overrides = []) 
   const subject = renderDepositMailTemplate(getDepositMailSubjectTemplate(), templateRow);
   const bodyTemplate = getDepositMailBodyTemplate();
   const renderedBody = renderDepositMailTemplate(bodyTemplate, templateRow);
-  // Existing customized templates also receive the new receipt information.
-  let body = bonusBlock && !bodyTemplate.includes('{bonus_block}')
+  // Existing customized templates also receive the new receipt information, unless
+  // they place the block themselves with either placeholder.
+  const placesBonusBlock = bodyTemplate.includes('{bonus_block}') || bodyTemplate.includes('{bonus_note_block}');
+  let body = bonusBlock && !placesBonusBlock
     ? renderedBody + '\n\n' + bonusBlock : renderedBody;
   if (bonusUpsellBlock && !bodyTemplate.includes('{bonus_upsell}')) {
     body += '\n\n' + bonusUpsellBlock;
