@@ -18,6 +18,47 @@ export function selectRafflePolicy(policies, type, salesEnd, now = Math.floor(Da
   return selectBonusPolicy(policies, type, Math.min(now, salesEnd - 1));
 }
 
+// A purchase keeps the policy that was in force when it was made, so changing bonus
+// settings in the middle of an open raffle only changes later purchases instead of
+// re-scoring entries that were already bought (and possibly already receipted).
+// Purchases recorded before bonus tracking began fall back to the earliest saved
+// policy for that raffle type.
+export function selectPurchasePolicy(policies, type, purchaseTimestamp) {
+  const selected = selectBonusPolicy(policies, type, purchaseTimestamp);
+  if (selected) return selected;
+  return policies
+    .filter((policy) => policy.type === type)
+    .reduce((earliest, policy) => (!earliest || policy.effectiveFrom < earliest.effectiveFrom ? policy : earliest), null);
+}
+
+// Total hours a bonus ladder covers, counting back from the sales cutoff.
+export function bonusLadderHours(tiers) {
+  return (Array.isArray(tiers) ? tiers : []).reduce((sum, tier) => sum + Number(tier.hours || 0), 0);
+}
+
+// The bonus periods a purchase can still earn after the one it landed in, with the
+// last moment each percentage is available. Receipts and raffle posts list these so
+// the whole ladder is visible instead of only the next step.
+export function remainingBonusLadder({ purchaseTimestamp, salesStart, salesEnd, tiers, enabled = true }) {
+  if (!enabled) return [];
+  const purchase = Number(purchaseTimestamp);
+  if (!Number.isFinite(purchase) || purchase < salesStart || purchase >= salesEnd) return [];
+  const totalHours = bonusLadderHours(tiers);
+  if (!totalHours) return [];
+  const elapsed = Math.max(0, (purchase - (salesEnd - totalHours * 3600)) / 3600);
+  const current = selectBonusTier(tiers, elapsed);
+  const ladder = [];
+  let cumulative = 0;
+  for (let index = 0; index < tiers.length; index += 1) {
+    cumulative += Number(tiers[index].hours || 0);
+    const percent = Number(tiers[index].percent) || 0;
+    if (index > current.index && percent > 0) {
+      ladder.push({ percent, expiresAt: Math.min(salesEnd, Math.floor(salesEnd - (totalHours - cumulative) * 3600)) });
+    }
+  }
+  return ladder;
+}
+
 export function selectRaffleBonusSettings(policies, overrides, type, salesEnd, now = Math.floor(Date.now() / 1000)) {
   return overrides.find((item) => item.type === type && item.salesEnd === salesEnd) ||
     selectRafflePolicy(policies, type, salesEnd, now);

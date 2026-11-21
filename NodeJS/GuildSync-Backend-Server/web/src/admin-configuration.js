@@ -16,13 +16,16 @@ export function formatConfigurationValue(setting,value) {
  if(setting.type==='select')return ({private_thread:'Private thread (public fallback)',channel:'Channel or thread'})[value] || String(value);
  return value===undefined || value===null || value===''?'Not configured':String(value);
 }
-export function receiptPreview(template,{body=false}={}){
- const values={recipient:'@ExampleMember',account_name:'@ExampleMember',display_name:'@ExampleMember',amount:'10,001',deposit_amount:'10,001',raw_amount:'10001',raw_deposit_amount:'10001',event_id:'123456789',ticket_quantity:'20',tickets:'20',purchased_tickets:'20',bonus_percent:'20',bonus_tickets:'4',total_tickets:'24',bonus_deadline:'October 9, 2026 at 7:00 PM Eastern',bonus_block:`Early Purchase Bonus: 20% for purchases before October 9, 2026 at 7:00 PM ET.
+export function receiptPreview(template,{body=false,values={}}={}){
+ const defaults={recipient:'@ExampleMember',account_name:'@ExampleMember',display_name:'@ExampleMember',amount:'10,001',deposit_amount:'10,001',raw_amount:'10001',raw_deposit_amount:'10001',event_id:'123456789',related_transaction_id:'',ticket_quantity:'20',tickets:'20',purchased_tickets:'20',bonus_percent:'20',bonus_tickets:'4',total_tickets:'24',bonus_deadline:'October 9, 2026 at 7:00 PM Eastern',bonus_label:'20% bonus · +4 · 24 total',bonus_schedule:'10% until October 3, 2026 at 7:00 PM ET, then 5% until October 8, 2026 at 7:00 PM ET',bonus_block:`Early Purchase Bonus: 20% for purchases before October 9, 2026 at 7:00 PM ET.
 Bonus Tickets: 4
 Total Tickets: 24`,bonus_upsell:'If you had bought your tickets by October 9, 2026 at 7:00 PM ET you could have earned 1 more ticket with the 20% bonus!! Buy Early!!',bonus_upsell_block:'If you had bought your tickets by October 9, 2026 at 7:00 PM ET you could have earned 1 more ticket with the 20% bonus!! Buy Early!!',bonus_upsell_tickets:'1',bonus_upsell_deadline:'October 9, 2026 at 7:00 PM ET',note:'',note_block:'',ticket_type:'Bi-Weekly',ticket_type_raw:'biweekly',transaction_type:'biweekly',ticket_gold_cost:'10,001',gold_cost:'10,001',raw_gold_cost:'10001',raw_ticket_gold_cost:'10001',purchase_date:'October 5, 2026',data_source:'Guild bank',event_datetime:'2026-10-05T12:00:00Z',event_timestamp:'1791201600',raffle_datetime_eastern:'October 10, 2026 at 8:00 PM Eastern',raffle_date_time_eastern:'October 10, 2026 at 8:00 PM Eastern',raffle_datetime:'October 10, 2026 at 8:00 PM Eastern',mail_request_id:'example',mail_batch_id:'example'};
- values.bonus_note_block=values.bonus_block?values.bonus_block+'\n':'';
- const rendered=String(template).replace(/{([a-zA-Z0-9_]+)}/g,(match,key)=>values[key] ?? match);
- return body&&!/{(bonus_block|bonus_note_block)}/.test(String(template))?rendered+'\n\n'+values.bonus_block:rendered;
+ // A real purchase supplies every placeholder; without one the canned example above
+ // shows the shape of the receipt (20% bonus, four bonus tickets).
+ const merged={...defaults,...values};
+ if(merged.bonus_note_block===undefined)merged.bonus_note_block=merged.bonus_block?merged.bonus_block+'\n':'';
+ const rendered=String(template).replace(/{([a-zA-Z0-9_]+)}/g,(match,key)=>merged[key] ?? match);
+ return body&&!/{(bonus_block|bonus_note_block)}/.test(String(template))?rendered+'\n\n'+merged.bonus_block:rendered;
 }
 export function wireReportAccordions(accordion,{refresh=false,root=document}={}){
  const update=()=>{
@@ -49,6 +52,15 @@ function optionLabel(setting,value) {
 }
 export function createConfigurationPanel({canEdit=()=>false}={}){
  let configuration=null,changes={},loading=false,message='',saving=false;
+ // Real receipts for the preview: recent purchases rendered by the backend with the
+ // current bonus policy, so the example shows actual tickets, dates and bonuses.
+ let previews=[],previewIndex=0,previewError='',previewLoading=false;
+ const previewValues=()=>previews[previewIndex]?.values || {};
+ const previewControls=()=>`<div class="configuration-preview-controls">
+  <button type="button" data-config-preview-load ${previewLoading?'disabled':''}>${previewLoading?'Loading purchases...':'Preview with recent purchases'}</button>
+  ${previews.length?`<label>Preview purchase<select data-config-preview-select>${previews.map((preview,index)=>`<option value="${index}" ${index===previewIndex?'selected':''}>${escape(preview.label)}</option>`).join('')}</select></label>`:''}
+  ${previewError?`<p role="status">${escape(previewError)}</p>`:''}
+ </div>`;
  const input=(setting,draft)=>{
   if(!canEdit())return `<output class="configuration-readonly-value" id="config-${escape(setting.key)}" aria-describedby="config-help-${escape(setting.key)}">${escape(formatConfigurationValue(setting,draft.value))}</output>`;
   const attrs=`data-config-value="${escape(setting.key)}" id="config-${escape(setting.key)}" aria-describedby="config-help-${escape(setting.key)}" `;
@@ -74,6 +86,7 @@ export function createConfigurationPanel({canEdit=()=>false}={}){
      const settings=configuration.settings.filter(setting=>setting.group===group);
      const sections=[...new Set(settings.map(setting=>setting.section || ''))];
      return `<fieldset class="configuration-group" ${saving?'disabled':''}><legend>${escape(group)}</legend>
+      ${group==='Receipt messages'&&editable?previewControls():''}
       ${sections.map((section,index)=>`<section class="configuration-subgroup" ${section?`aria-labelledby="config-section-${groupIndex}-${index}"`:''}>
        ${section?`<h4 id="config-section-${groupIndex}-${index}">${escape(section)}</h4>`:''}
        ${settings.filter(setting=>(setting.section || '')===section).map(setting=>{
@@ -87,7 +100,7 @@ export function createConfigurationPanel({canEdit=()=>false}={}){
           ${editable&&hasTwoOptions(setting)?'':`<div class="configuration-default-value"><span>Default value</span><output>${escape(formatConfigurationValue(setting,setting.defaultValue))}</output>${editable?`<button type="button" class="configuration-default" data-config-default="${escape(setting.key)}" aria-label="Return ${escape(setting.label)} to default: ${escape(formatConfigurationValue(setting,setting.defaultValue))}">Return to default</button>`:''}</div>`}
          </div>
          ${setting.placeholders?`<small>Placeholders: ${setting.placeholders.map(k=>escape('{'+k+'}')).join(', ')}</small>`:''}
-         ${setting.group==='Receipt messages'?`<label>Example preview (20% bonus)<pre data-config-preview="${escape(setting.key)}">${escape(receiptPreview(draft.value,{body:setting.key.endsWith('BODY_TEMPLATE')}))}</pre></label>`:''}
+         ${setting.group==='Receipt messages'?`<label>${previews.length?'Preview with a real purchase':'Example preview (20% bonus)'}<pre data-config-preview="${escape(setting.key)}">${escape(receiptPreview(draft.value,{body:setting.key.endsWith('BODY_TEMPLATE'),values:previewValues()}))}</pre></label>`:''}
         </div>`;
        }).join('')}
       </section>`).join('')}
@@ -106,11 +119,25 @@ export function createConfigurationPanel({canEdit=()=>false}={}){
   if(!configuration&&!loading&&!message)void load();
   document.getElementById('reloadAdminConfiguration')?.addEventListener('click',()=>void load());
   if(!canEdit())return;
+  const loadPreviews=async()=>{
+   if(previewLoading)return;previewLoading=true;previewError='';rerender();
+   try{
+    const response=await request('guildsync:request-receipt-previews',{limit:3});
+    if(!response?.ok)throw Error(response?.message || 'Could not load receipt previews.');
+    previews=Array.isArray(response.examples)?response.examples:[];previewIndex=0;
+    if(!previews.length)previewError='No recent raffle purchases are available for a preview.';
+   }catch(error){previewError=error.message;}
+   finally{previewLoading=false;rerender();}
+  };
+  document.querySelector?.('[data-config-preview-load]')?.addEventListener('click',()=>{if(canEdit())void loadPreviews();});
+  document.querySelector?.('[data-config-preview-select]')?.addEventListener('change',event=>{
+   const index=Number(event.target?.value);if(Number.isInteger(index)&&index>=0&&index<previews.length){previewIndex=index;rerender();}
+  });
   for(const element of document.querySelectorAll('[data-config-value]'))element.addEventListener('input',()=>{
    if(!canEdit())return;
    const key=element.dataset.configValue;const setting=configuration.settings.find(s=>s.key===key);changes[key]=isDefaultValue(setting,element.value)?null:element.value;
    const source=document.querySelector(`[data-config-source="${key}"]`);if(source)source.textContent=draftSetting(setting,changes).source;
-   const preview=document.querySelector(`[data-config-preview="${key}"]`);if(preview)preview.textContent=receiptPreview(element.value,{body:key.endsWith('BODY_TEMPLATE')});
+   const preview=document.querySelector(`[data-config-preview="${key}"]`);if(preview)preview.textContent=receiptPreview(element.value,{body:key.endsWith('BODY_TEMPLATE'),values:previewValues()});
   });
   for(const element of document.querySelectorAll('[data-config-default]'))element.addEventListener('click',()=>{if(!canEdit())return;changes[element.dataset.configDefault]=null;rerender();});
   const save=async()=>{
@@ -133,5 +160,5 @@ export function createConfigurationPanel({canEdit=()=>false}={}){
    event.preventDefault();await save();
   });
  };
- return {render,wire,clear(){configuration=null;changes={};message='';}};
+ return {render,wire,clear(){configuration=null;changes={};message='';previews=[];previewIndex=0;previewError='';previewLoading=false;}};
 }

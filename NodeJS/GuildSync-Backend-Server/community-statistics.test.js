@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildCommunityStatistics, registerCommunityStatisticsSocket, initializeCommunityStatisticsSchema} from './community-statistics.js';
+import {buildCommunityStatistics, registerCommunityStatisticsSocket, initializeCommunityStatisticsSchema, buyerRaffleWindow} from './community-statistics.js';
 test('history counts real joins only; tenure uses latest recorded join, not snapshot',()=>{
  const report=buildCommunityStatistics({now:200000,roster:[{account_name:'A',in_roster:1,joined_timestamp:'1'}],rosterEvents:[{account_name:'A',event_type:'joined',event_timestamp:'100000'},{account_name:'A',event_type:'joined',event_timestamp:'150000'}],discordHistory:[{discord_id:'1',username:'Snapshot',event_type:'joined_server',source:'bulk_sync'},{discord_id:'2',username:'Live',event_type:'joined_server',source:'live_event'}]});
  assert.equal(report.highlights.find(x=>x.id==='guild-joins').rows[0].value,2);
@@ -154,17 +154,36 @@ test('activity SQL bounds original event timestamps without deleting history',as
   assert.ok(!calls.some(([sql])=>/DELETE|UPDATE/i.test(sql)));
 });
 
-test('trader rankings fetch one rolling 30-day window from each request time',async()=>{
+test('one trader fetch covers the 14-day seller window and the current 50/50 raffle',async()=>{
  const handlers={},calls=[];let time=2000000;
  const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncUser:{role:'viewer'}};
  registerCommunityStatisticsSocket(socket,{db:{execute:async(...args)=>{calls.push(args);return [[]];}},loadBanking:async()=>[],now:()=>time});
  let result;await handlers['guildsync:request-community-statistics']({},r=>result=r);
  const query=()=>calls.filter(([sql])=>sql.includes('FROM guildsync_trader_entries')).at(-1);
- assert.deepEqual(query()[1],[time-30*86400,time]);
+ // A 50/50 raffle can span four to six weeks, so the fetch reaches back to its start.
+ const expectedStart=Math.min(time-14*86400,buyerRaffleWindow(time).salesStart);
+ assert.deepEqual(query()[1],[expectedStart,time]);
+ assert.ok(query()[1][0]<=buyerRaffleWindow(time).salesStart,'the raffle start is always fetched');
  assert.match(query()[0],/buyer/);
- assert.ok(!calls.some(([sql])=>sql.includes('event_timestamp >=')),'the narrower windows are applied in the builder');
+ assert.ok(!calls.some(([sql])=>sql.includes('event_timestamp >=')),'the per-card windows are applied in the builder');
  time+=86400;await handlers['guildsync:request-community-statistics']({},r=>result=r);
- assert.deepEqual(query()[1],[time-30*86400,time]);
- assert.ok(query()[1][0]>2000000-30*86400);
+ assert.deepEqual(query()[1],[Math.min(time-14*86400,buyerRaffleWindow(time).salesStart),time]);
 });
 
+
+test('the bonus card reports current-raffle bonus tickets and participation',()=>{
+ const end=30000000,start=end-336*3600;
+ const banking=[
+  {displayName:'Alice',type:'biweekly',time:end-300*3600,purchasedTickets:10,amount:5001},
+  {displayName:'Bob',type:'biweekly',time:end-200*3600,purchasedTickets:10,amount:5001},
+  {displayName:'Manual',type:'biweekly',time:end-100*3600,purchasedTickets:50,amount:5001,dataSource:'ManualBiweeklyTicket'}
+ ];
+ const tiers=[{hours:120,percent:20},{hours:120,percent:10},{hours:72,percent:5},{hours:24,percent:0}];
+ const report=buildCommunityStatistics({now:end-100,windows:[{type:'biweekly',salesStart:start,salesEnd:end}],banking,
+  bonusPolicies:[{type:'biweekly',effectiveFrom:0,enabled:true,tiers}]});
+ const card=report.highlights.find(h=>h.id==='raffle-bonus');
+ assert.equal(card.title,'Bonus Tickets Awarded (current raffles)');
+ assert.equal(card.unit,'bonus tickets');
+ assert.deepEqual(card.rows.map(r=>[r.name,r.value]),[['Bi-Weekly',3]]);
+ assert.match(card.rows[0].detail,/2 of 2 buyers earned bonus tickets/);
+});

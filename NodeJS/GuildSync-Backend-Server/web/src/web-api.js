@@ -156,6 +156,22 @@ export async function SetGuildSyncSavedVarsWatchFileEnabled() {
   return GetGuildSyncFileWatcherStatus();
 }
 
+// The folder is stored with the GuildSync account, so the web profile menu can set it
+// for the desktop client even though the browser never reads local files.
+export async function GetSavedVarsDirSetting() {
+  return {
+    savedVarsDir: '',
+    defaultSavedVarsDir: '',
+    legacySavedVarsDir: '',
+    configured: false,
+    readOnly: true
+  };
+}
+
+export async function SetSavedVarsDirSetting() {
+  return GetSavedVarsDirSetting();
+}
+
 export async function CollectGuildSyncBankingData() {
   throw new Error('File watching is not available in the web interface. Drag and drop GuildSync SavedVariables files onto the GuildSync web window.');
 }

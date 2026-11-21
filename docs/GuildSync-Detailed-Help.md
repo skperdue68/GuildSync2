@@ -191,15 +191,19 @@ Bonus settings live in **Reports & Admin → Raffle Bonus Settings** in GuildSyn
 
 Tier syntax is sequential `hours:percent` blocks, 1–12 blocks, positive whole hours, percentage 0–100, nonincreasing percentages, final tier 0%. Default schedule duration is capped at 336 hours for Bi-Weekly and 672 hours for 50/50. Individual raffle overrides validate tier syntax and require existing purchases, but do not enforce that duration cap. Tiers are aligned to sales end; the configured durations work backward from that cutoff. Default Bi-Weekly: `120:20,120:10,72:5,24:0`. Default 50/50: `168:40,168:20,168:10,144:5,24:0`. Those schedules end with 24 hours of 0% bonus. Do not use a fixed weekly schedule for 50/50.
 
-The calculation is `floor(base tickets × bonus percent / 100)` per purchase; total tickets = purchased + bonus. Manual ticket entries never receive an additional calculated bonus. Bonus does not increase deposited gold/prize pools. Saved policy versions apply across an open raffle; completed policy selection is frozen at sales end. Per-raffle overrides take precedence and can intentionally revise historical calculations. `.env` bonus values are bootstrap defaults only once saved database settings exist.
+The calculation is `floor(base tickets × bonus percent / 100)` per purchase; total tickets = purchased + bonus. Manual ticket entries never receive an additional calculated bonus. Bonus does not increase deposited gold/prize pools. Each purchase keeps the policy that was in force when it was made, so saving new settings in the middle of an open raffle only changes later purchases instead of re-scoring entries that were already bought and receipted; purchases recorded before bonus tracking began use the earliest saved policy. Per-raffle overrides remain a deliberate admin choice for one raffle and can intentionally revise historical calculations. A ladder shorter than the raffle is allowed, but saving it warns that purchases made earlier than the covered hours earn no bonus. `.env` bonus values are bootstrap defaults only once saved database settings exist.
 
 Prize summaries remove marker gold. Bi-Weekly uses half of eligible deposits rounded up to whole 200,000-gold draws; 50/50 uses half rounded down to whole gold. These are prize totals, not total deposited gold.
 
 ### ESO receipt mail
 
-Receipts show the actual deposit/ticket cost, including its +1/+3 marker. When bonus percentage is positive, the backend adds the early purchase percentage and deadline, bonus tickets, and total tickets. At 0%, the bonus block is empty and not appended. A positive percentage can legitimately produce 0 bonus tickets for a small purchase because of rounding.
+`{related_transaction_id}` is the other side of a moved banking entry: the original transaction ID on the replacement entry, or the replacement ID on the original. It is blank for ordinary deposits, which is why it is not in the default body. Receipts show the actual deposit/ticket cost, including its +1/+3 marker. When bonus percentage is positive, the backend adds the early purchase percentage and deadline, bonus tickets, total tickets, and the bonus schedule still available after this purchase. At 0%, the bonus block is empty and not appended. A positive percentage can legitimately produce 0 bonus tickets for a small purchase because of rounding; that receipt says so instead of leaving the zero unexplained.
 
-When the raffle has bonuses on and the purchase fell in a lower period, the receipt also ends with an early purchase nudge, for example `If you had bought your tickets by September 17, 2026 at 7:00 PM ET you could have earned 10 more tickets with the 20% bonus!! Buy Early!!`. It names the next better percentage, the last moment that percentage was available, and the extra tickets an earlier purchase would have earned. When an even better percentage came before that deadline the sentence adds `and even more if bought earlier than that`, so the quoted period is never presented as the best one. A purchase inside the highest percentage gets no nudge, and neither does a disabled raffle or a manual ticket entry.
+The bonus schedule line lists every later percentage and its deadline, for example `Bonus schedule: 10% until September 22, 2026 at 7:00 PM ET, then 5% until September 25, 2026 at 7:00 PM ET.` Raffle posts from the bot show the same full ladder.
+
+When the raffle has bonuses on and the purchase fell in a lower period, the receipt also ends with an early purchase nudge, for example `If you had bought your tickets by September 17, 2026 at 7:00 PM ET you could have earned 10 more tickets with the 20% bonus!! Buy Early!!`. It names the next better percentage, the last moment that percentage was available, and the extra tickets an earlier purchase would have earned. When an even better percentage came before that deadline the sentence adds `and even more if bought earlier than that`, so the quoted period is never presented as the best one. A purchase inside the highest percentage gets no nudge, and neither does a disabled raffle or a manual ticket entry. A small purchase whose better period rounds to the same ticket count is still nudged with the higher percentage instead of being skipped. Each member receives at most one nudge per raffle, so repeat deposits stay quiet. Set `GUILDSYNC_DEPOSIT_MAIL_BONUS_NUDGE_ENABLED=false` (or the matching Administrator Configuration setting) to remove the footer entirely.
+
+Checking out mail stores the bonus percentage, bonus tickets, total tickets, remaining schedule and nudge that were actually rendered on each entry. Banking tables, exports, spreadsheet cells and raffle totals keep showing those mailed numbers, so later settings changes cannot make a sent receipt disagree with the records. The Administrator Configuration receipt templates include a **Preview with recent purchases** button, which renders the edited template against real recent purchases (their tickets, dates and bonuses) instead of a canned example.
 
 `{bonus_upsell}` places that sentence in a custom body template, and `{bonus_upsell_tickets}` and `{bonus_upsell_deadline}` expose its numbers separately. Without the placeholder the sentence is appended at the bottom of the body, after the signature, so existing customized templates receive it too.
 
@@ -218,9 +222,9 @@ Receipt templates are optional backend settings. `{bonus_note_block}` is the bui
 | --- | --- |
 | Recipient/type | `{recipient}`, `{account_name}`, `{display_name}`, `{ticket_type}`, `{ticket_type_raw}`, `{transaction_type}` |
 | Deposit/cost | `{amount}`, `{deposit_amount}`, `{ticket_gold_cost}`, `{gold_cost}`, `{raw_amount}`, `{raw_deposit_amount}`, `{raw_ticket_gold_cost}`, `{raw_gold_cost}` |
-| Tickets/bonus | `{ticket_quantity}`, `{tickets}`, `{purchased_tickets}`, `{bonus_percent}`, `{bonus_tickets}`, `{total_tickets}`, `{bonus_deadline}`, `{bonus_block}`, `{bonus_note_block}` |
+| Tickets/bonus | `{ticket_quantity}`, `{tickets}`, `{purchased_tickets}`, `{bonus_percent}`, `{bonus_tickets}`, `{total_tickets}`, `{bonus_deadline}`, `{bonus_label}`, `{bonus_schedule}`, `{bonus_block}`, `{bonus_note_block}`, `{bonus_upsell}`, `{bonus_upsell_tickets}`, `{bonus_upsell_deadline}` |
 | Dates | `{purchase_date}`, `{raffle_datetime_eastern}`, `{raffle_date_time_eastern}`, `{raffle_datetime}`, `{event_datetime}`, `{event_timestamp}` |
-| Context | `{event_id}`, `{data_source}`, `{note}`, `{note_block}`, `{mail_request_id}`, `{mail_batch_id}` |
+| Context | `{event_id}`, `{related_transaction_id}`, `{data_source}`, `{note}`, `{note_block}`, `{mail_request_id}`, `{mail_batch_id}` |
 
 ## Discord links and onboarding
 
@@ -396,7 +400,6 @@ Desktop files load in order: executable-directory `.env`, executable-directory `
 
 | Setting | Status / default | Purpose |
 | --- | --- | --- |
-| `SAVED_VARS_DIR` | Optional; user `Documents/Elder Scrolls Online/live/SavedVariables` | SavedVariables directory; useful for moved Documents folders, macOS, or Proton paths. |
 | `SAVED_VARS_BANKING_FILE_NAME` | Optional; `GuildSyncBanking.lua` | Banking export filename. |
 | `SAVED_VARS_ROSTER_FILE_NAME` | Optional; `GuildSyncRoster.lua` | Roster export filename. |
 | `SAVED_VARS_APPLICATIONS_FILE_NAME` | Optional; `GuildSyncApplications.lua` | Application export filename. |
@@ -410,7 +413,7 @@ Desktop files load in order: executable-directory `.env`, executable-directory `
 | `GUILDSYNC_AUTH_SERVER_URL` | Optional; packaged deployment URL | Backend authentication origin. |
 | `GUILDSYNC_SOCKET_URL` | Optional; packaged deployment URL | Backend Socket.IO origin. |
 
-The profile's three watcher switches are saved application preferences, not `.env` flags. In-game debug settings and welcome templates are ESO SavedVariables settings, also not server `.env` flags.
+The ESO SavedVariables folder is not a `.env` setting: it belongs to your GuildSync account. Open the profile menu and choose **User Settings** to change it; the value is stored in `guildsync_user_settings` and the desktop client uses it when you sign in. Leave it blank for the default `Documents/Elder Scrolls Online/live/SavedVariables`; a leading `~` expands to your home folder and moved Documents folders, macOS and Proton paths all work. A `SAVED_VARS_DIR` left in `GuildSyncSettings.txt` is copied into the account the first time you sign in and is not read afterwards. The profile's three watcher switches are saved application preferences, not `.env` flags. In-game debug settings and welcome templates are ESO SavedVariables settings, also not server `.env` flags.
 
 ## Deployment and troubleshooting
 

@@ -7,6 +7,11 @@ const adminEvents = new Set([
   'guildsync:request-users','guildsync:request-pending-users','guildsync:change-user',
   'guildsync:save-admin-configuration','guildsync:save-raffle-bonus-settings'
 ]);
+// Every approved account owns its own preferences, so a viewer can keep a SavedVariables
+// folder ready for a later promotion without gaining any data-editing rights.
+const selfServiceEvents = new Set([
+  'guildsync:request-user-settings','guildsync:save-user-settings'
+]);
 const ingestionEvents = new Set([
   'guildsync:upload-savedvars-raw','guildsync:sending-banking-data','guildsync:sending-roster-data','guildsync:sending-trader-data',
   'guildsync:gsa-post-application','guildsync:eso-guild-application-message',
@@ -14,6 +19,7 @@ const ingestionEvents = new Set([
 ]);
 export function canPerformGuildSyncEvent(role,event) {
   if (!GUILDSYNC_ROLES.includes(role)) return false;
+  if (selfServiceEvents.has(event)) return true;
   if (event==='guildsync:voice-mute-access'||event==='guildsync:voice-mute-hotkey')return true;
   if (isReadOnlyGuildSyncEvent(event) || ingestionEvents.has(event)) return true;
   if (adminEvents.has(event)) return role === 'admin';

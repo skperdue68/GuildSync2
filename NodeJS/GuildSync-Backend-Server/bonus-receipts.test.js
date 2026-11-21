@@ -6,15 +6,24 @@ process.env.MARIADB_USER ||= 'test';
 process.env.MARIADB_PASSWORD ||= 'test';
 const { checkoutDepositMail } = await import('./guildsync-database-actions.js');
 
-async function receipt({ type = 'biweekly', enabled = true, time = '2026-09-14T12:00:00Z', source = 'GuildBank', override, template } = {}) {
+let lastCheckoutQueries = [];
+
+async function receipt({ type = 'biweekly', enabled = true, time = '2026-09-14T12:00:00Z', source = 'GuildBank', override, template,
+ tickets = 100, nudged = false, note = null } = {}) {
+ lastCheckoutQueries = [];
  const oldTemplate = process.env.GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE;
  if (template) process.env.GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE = template;
  else delete process.env.GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE;
  const tiers = parseBonusTiers(type === 'biweekly' ? '120:20,120:10,72:5,24:0' : '168:40,168:20,168:10,144:5,24:0');
- const row = { event_id: '123', transaction_type: type, account_name: '@Member', event_timestamp: Date.parse(time)/1000, deposit_amount: 10001, ticket_quantity: 100, data_source: source };
+ const row = { event_id: '123', transaction_type: type, account_name: '@Member', event_timestamp: Date.parse(time)/1000, deposit_amount: 10001, ticket_quantity: tickets, data_source: source, note };
  const db = {
   async getConnection() { return db; }, async beginTransaction() {}, async commit() {}, async rollback() {}, release() {},
-  async query(sql) {
+  async query(sql, args = []) {
+   lastCheckoutQueries.push({ sql, args });
+   // By default no earlier receipt for this member/raffle has carried the nudge.
+   if (sql.includes('bonus_nudge_sent = 1')) {
+    return [nudged ? [{ account_name: '@Member', transaction_type: type, event_timestamp: row.event_timestamp }] : []];
+   }
    if (sql.includes('SELECT event_id')) return [[{ event_id: '123' }]];
    if (sql.includes('SELECT')) return [[row]];
    return [{ affectedRows: 1 }];
@@ -99,4 +108,114 @@ test('raffle override is used and custom templates get one bonus block', async (
  const placed = await receipt({ ...options, template: 'Purchased {tickets}.\n{bonus_block}' });
  assert.equal(placed.body.match(/Bonus Tickets:/g).length, 1);
  assert.doesNotMatch(placed.body, /\{bonus_block\}/);
+});
+
+test('a receipt lists the rest of the bonus schedule after this purchase', async () => {
+ const body = (await receipt({ time: '2026-09-14T12:00:00Z' })).body;
+ assert.match(body, /Bonus schedule: 10% until September 22, 2026 at 7:00 PM ET, then 5% until September 25, 2026 at 7:00 PM ET\./);
+ const later = (await receipt({ time: '2026-09-21T12:00:00Z' })).body;
+ assert.match(later, /Bonus schedule: 5% until September 25, 2026 at 7:00 PM ET\./);
+});
+
+test('a small purchase explains rounding and is still nudged toward the better percentage', async () => {
+ const record = await receipt({ time: '2026-09-20T12:00:00Z', tickets: 2 });
+ assert.equal(record.bonusPercent, 10);
+ assert.equal(record.bonusTickets, 0);
+ assert.match(record.body, /Bonuses round down, so this purchase was too small to earn bonus tickets\./);
+ assert.equal(record.bonusUpsellPercent, 20);
+ assert.equal(record.bonusUpsellTickets, 0);
+ assert.match(record.body, /you could have earned the 20% bonus instead of 10%!! Buy Early!!$/);
+});
+
+test('each member is nudged at most once per raffle', async () => {
+ assert.match((await receipt({ time: '2026-09-20T12:00:00Z' })).body, /Buy Early/);
+ const second = await receipt({ time: '2026-09-21T12:00:00Z', nudged: true });
+ assert.equal(second.bonusUpsellTickets, 0);
+ assert.equal(second.bonusUpsellPercent, 0);
+ assert.doesNotMatch(second.body, /Buy Early|bought your tickets/);
+});
+
+test('checkout stores the mailed bonus numbers and the nudge flag with each entry', async () => {
+ await receipt({ time: '2026-09-20T12:00:00Z' });
+ const write = lastCheckoutQueries.find(({ sql }) => sql.includes('mailed_bonus_json'));
+ assert.ok(write, 'checkout must persist the mailed snapshot');
+ assert.equal(write.args[2], '123');
+ assert.equal(write.args[1], 1);
+ const snapshot = JSON.parse(write.args[0]);
+ assert.equal(snapshot.bonusPercent, 10);
+ assert.equal(snapshot.bonusTickets, 10);
+ assert.equal(snapshot.totalTickets, 110);
+ assert.equal(snapshot.bonusUpsellPercent, 20);
+ assert.equal(snapshot.bonusLadder.length, 1);
+});
+
+test('the nudge can be switched off for every receipt', async () => {
+ process.env.GUILDSYNC_DEPOSIT_MAIL_BONUS_NUDGE_ENABLED = 'false';
+ try {
+  const record = await receipt({ time: '2026-09-20T12:00:00Z' });
+  assert.equal(record.bonusUpsellTickets, 0);
+  assert.doesNotMatch(record.body, /Buy Early/);
+ } finally {
+  delete process.env.GUILDSYNC_DEPOSIT_MAIL_BONUS_NUDGE_ENABLED;
+ }
+});
+
+test('banking data shows the numbers that were mailed instead of recalculating', async () => {
+ process.env.MARIADB_USER ||= 'test';
+ process.env.MARIADB_PASSWORD ||= 'test';
+ const { getBankingDataJSON } = await import('./guildsync-database-actions.js');
+ const entry = { type: 'biweekly', eventId: '1', time: 1, displayName: '@Member', amount: 10001,
+  ticketAmount: 100, dataSource: 'GuildBank',
+  mailedBonusJson: JSON.stringify({ purchasedTickets: 100, bonusPercent: 20, bonusTickets: 20,
+   totalTickets: 120, bonusEnabled: true, bonusUpsellPercent: 0, bonusUpsellTickets: 0,
+   bonusLadder: [{ percent: 10, expiresAt: 2 }] }) };
+ const db = { execute: async sql => {
+  if (sql.includes('guildsync_raffle_bonus_overrides')) return [[]];
+  if (sql.includes('guildsync_raffle_bonus_versions')) return [[]];
+  return [[{ banking_json: JSON.stringify([entry]) }]];
+ } };
+ const [result] = await getBankingDataJSON(db);
+ assert.equal(result.bonusPercent, 20);
+ assert.equal(result.bonusTickets, 20);
+ assert.equal(result.totalTickets, 120);
+ assert.equal(result.bonusSource, 'mailed');
+ assert.equal('mailedBonusJson' in result, false);
+});
+
+test('real receipt previews use recent purchases and keep their real bonus numbers', async () => {
+ process.env.MARIADB_USER ||= 'test';
+ process.env.MARIADB_PASSWORD ||= 'test';
+ const { getDepositMailPreviewExamples } = await import('./guildsync-database-actions.js');
+ const tiers = parseBonusTiers('120:20,120:10,72:5,24:0');
+ const rows = [
+  { event_id: '1', transaction_type: 'biweekly', account_name: '@Member', event_timestamp: Date.parse('2026-09-20T12:00:00Z') / 1000,
+   deposit_amount: 5001, ticket_quantity: 2, data_source: 'GuildBank', note: null },
+  { event_id: '2', transaction_type: 'biweekly', account_name: '@Member', event_timestamp: Date.parse('2026-09-14T12:00:00Z') / 1000,
+   deposit_amount: 200001, ticket_quantity: 100, data_source: 'GuildBank', note: null }
+ ];
+ const db = { execute: async sql => {
+  if (sql.includes('guildsync_raffle_bonus_overrides')) return [[]];
+  if (sql.includes('guildsync_raffle_bonus_versions')) return [[{ raffle_type: 'biweekly', effective_from: 1, enabled: 1, tiers_json: JSON.stringify(tiers) }]];
+  return [rows];
+ } };
+ const { examples } = await getDepositMailPreviewExamples(db);
+ assert.ok(examples.length >= 1);
+ const small = examples.find(example => example.values.ticket_quantity === '2');
+ assert.ok(small, 'a small purchase should be available as a real preview');
+ assert.equal(small.values.bonus_tickets, '0');
+ assert.match(small.values.bonus_block, /10%/);
+ assert.match(small.values.bonus_block, /Bonuses round down/);
+ assert.match(small.label, /Bi-Weekly/);
+});
+
+test('moved entries expose the other side of the move as a related transaction ID', async () => {
+ const moved = await receipt({ note: 'Moved from 50/50 to Bi-Weekly by Officer.\nRef 987654', time: '2026-09-20T12:00:00Z',
+  template: 'Tickets {tickets}. Ref {related_transaction_id}' });
+ assert.match(moved.body, /Ref 987654/);
+ assert.doesNotMatch(moved.body, /\{related_transaction_id\}/);
+ const original = await receipt({ note: 'Moved to 50/50. Replacement ManualMove123', time: '2026-09-20T12:00:00Z',
+  template: 'Ref {related_transaction_id}' });
+ assert.match(original.body, /Ref ManualMove123/);
+ const ordinary = await receipt({ time: '2026-09-20T12:00:00Z', template: 'Ref[{related_transaction_id}]' });
+ assert.match(ordinary.body, /Ref\[\]/);
 });

@@ -1,11 +1,39 @@
+import {calculateRaffleBonus, selectPurchasePolicy} from './raffle-bonus.js';
+import {monthlySalesEndAtOrAfter, previousMonthlySalesEnd} from './raffle-schedule.js';
+
 const LEADERBOARD_LIMIT=5;
-// Rolling windows measured back from each request time, not calendar periods.
-const WEEK_SECONDS=7*24*60*60;
-const MONTH_SECONDS=30*24*60*60;
+// Seller cards use rolling windows measured back from each request time, not calendar
+// periods. The two buyer cards follow the 50/50 raffle instead.
+const TRADER_WINDOW_SECONDS=14*24*60*60;
+// A closed 50/50 raffle keeps its buyer standings on the cards until the configured
+// linger passes, so they can still be quoted after the cutoff; the next refresh after
+// that shows the new raffle. Administrators change this live; three hours is the default.
+export const DEFAULT_BUYER_RAFFLE_LINGER_HOURS=3;
+export const MAX_BUYER_RAFFLE_LINGER_HOURS=168;
+export function buyerRaffleLingerSeconds(env=process.env){
+ const raw=env?.GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS;
+ const hours=Number(raw);
+ return String(raw ?? '').trim()!==''&&Number.isFinite(hours)&&hours>=0&&hours<=MAX_BUYER_RAFFLE_LINGER_HOURS
+  ? Math.round(hours*3600) : DEFAULT_BUYER_RAFFLE_LINGER_HOURS*3600;
+}
+function buyerRaffleLingerNote(seconds){
+ if(!seconds)return 'A closed raffle is replaced at the next refresh.';
+ const hours=seconds/3600;
+ const text=Number.isInteger(hours)?String(hours):hours.toFixed(1);
+ return `A closed raffle stays listed for ${text} hour${hours===1?'':'s'}, then resets to the next one.`;
+}
 const positive=n=>Number.isFinite(Number(n))?Math.max(0,Number(n)):0;
 const label=r=>r.server_nickname||r.global_name||r.username||r.account_name||r.discord_id||'Unknown';
 const typeOf=t=>['monthly','50/50','5050'].includes(String(t).toLowerCase())?'monthly':['biweekly','bi-weekly','bi weekly'].includes(String(t).toLowerCase())?'biweekly':null;
 function leaders(rows,key,value){const totals=new Map();for(const r of rows){const id=String(key(r)||'').toLowerCase();if(!id)continue;const previous=totals.get(id)||{name:label(r),value:0,detail:''};previous.value+=value(r);totals.set(id,previous);}return [...totals.values()].filter(r=>r.value>0).sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name)).slice(0,LEADERBOARD_LIMIT);}
+// The 50/50 raffle period the buyer cards count: the previous raffle cutoff through the
+// current one, so each raffle stands alone instead of sliding forward day by day.
+// Measuring back by the configured linger is what keeps a just-closed raffle readable.
+export function buyerRaffleWindow(now=Math.floor(Date.now()/1000),env=process.env){
+ const lingerSeconds=buyerRaffleLingerSeconds(env);
+ const salesEnd=monthlySalesEndAtOrAfter(Number(now)-lingerSeconds);
+ return {type:'monthly',salesEnd,salesStart:previousMonthlySalesEnd(salesEnd)+1,lingerSeconds};
+}
 export async function initializeCommunityStatisticsSchema(db){
  await db.query(`CREATE TABLE IF NOT EXISTS guildsync_community_statistics_metadata (metadata_key VARCHAR(64) PRIMARY KEY, metadata_value VARCHAR(64) NOT NULL)`);
  await db.query(`INSERT IGNORE INTO guildsync_community_statistics_metadata (metadata_key,metadata_value) VALUES ('tracking_since', DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%dT%H:%i:%sZ'))`);
@@ -13,7 +41,7 @@ export async function initializeCommunityStatisticsSchema(db){
  await db.query(`CREATE TABLE IF NOT EXISTS guildsync_discord_activity (guild_id VARCHAR(32) NOT NULL, event_key VARCHAR(64) NOT NULL, discord_id VARCHAR(32) NOT NULL, display_name VARCHAR(255) NOT NULL, activity_type VARCHAR(16) NOT NULL, recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (guild_id,event_key), INDEX idx_community_activity_actor (discord_id,activity_type)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
  await db.query(`INSERT IGNORE INTO guildsync_community_statistics_metadata (metadata_key,metadata_value) VALUES ('discord_activity_since', DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%dT%H:%i:%sZ'))`);
 }
-export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),trackingSince=null,roster=[],rosterEvents=[],discordMembers=[],discordHistory=[],activity=[],banking=[],windows=[],traderSales=[]}={}){
+export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),trackingSince=null,roster=[],rosterEvents=[],discordMembers=[],discordHistory=[],activity=[],banking=[],windows=[],traderSales=[],bonusPolicies=[],bonusOverrides=[],env=process.env}={}){
  const highlights=[];
  const membershipIds=new Set(['guild-joins','discord-joins']);
  const add=(id,title,description,unit,rows,options={})=>{
@@ -40,6 +68,29 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  add('discord-reactions','Most Reactions Given','Emoji reactions given in the last 30 days, including likes. Each member/message/emoji counts once; removing a reaction does not subtract it.','reactions',leaders(recordedActivity.filter(r=>r.activity_type==='reaction'),r=>r.discord_id,r=>positive(r.activity_count)));
  const purchases=banking.filter(r=>typeOf(r.type)&&positive(r.purchasedTickets)>0&&Number(r.time)>0&&Number(r.time)<=now).map(r=>({...r,account_name:r.displayName}));
  for(const w of windows){const rows=purchases.filter(r=>typeOf(r.type)===w.type&&Number(r.time)>=w.salesStart&&Number(r.time)<=w.salesEnd);add('tickets-'+w.type,'Current '+(w.type==='monthly'?'50/50':'Bi-weekly')+' ticket purchasers (Top '+LEADERBOARD_LIMIT+')','Purchased tickets only; bonus tickets excluded.','tickets',leaders(rows,r=>r.displayName,r=>positive(r.purchasedTickets)));}
+ // Bonus tickets actually earned in the raffles currently on sale: participation and
+ // the bonus cost, scored with the same per-purchase policy the receipts use. Manual
+ // ticket entries already carry a discretionary count and are left out.
+ const bonusRows=windows.map(w=>{
+  const label=w.type==='monthly'?'50/50':'Bi-Weekly';
+  const rowsInWindow=purchases.filter(r=>typeOf(r.type)===w.type&&Number(r.time)>=w.salesStart&&Number(r.time)<=w.salesEnd&&positive(r.purchasedTickets)>0&&!/^manual/i.test(String(r.dataSource||'')));
+  const override=bonusOverrides.find(o=>o.type===w.type&&Number(o.salesEnd)===Number(w.salesEnd));
+  const buyers=new Set(rowsInWindow.map(r=>String(r.displayName||'').trim().toLowerCase()).filter(Boolean));
+  const earning=new Set();
+  let bonusTickets=0;
+  for(const r of rowsInWindow){
+   const policy=override||selectPurchasePolicy(bonusPolicies,w.type,Number(r.time));
+   if(!policy?.enabled||!Array.isArray(policy.tiers))continue;
+   const result=calculateRaffleBonus({purchasedTickets:positive(r.purchasedTickets),purchaseTimestamp:Number(r.time),salesStart:w.salesStart,salesEnd:w.salesEnd,tiers:policy.tiers,enabled:true});
+   if(!(result.bonusTickets>0))continue;
+   bonusTickets+=result.bonusTickets;
+   earning.add(String(r.displayName||'').trim().toLowerCase());
+  }
+  return {name:label,value:bonusTickets,detail:buyers.size
+   ? `${earning.size} of ${buyers.size} buyers earned bonus tickets`
+   : 'No ticket buyers yet in this raffle'};
+ });
+ if(bonusRows.length)add('raffle-bonus','Bonus Tickets Awarded (current raffles)','Early-purchase bonus tickets earned in each raffle currently on sale, scored with the bonus settings in force when each purchase was made. Manual ticket entries are excluded.','bonus tickets',bonusRows);
  const spending=r=>{const n=positive(r.amount),digit=Math.trunc(n)%10;return [1,3].includes(digit)&&n>digit?n-digit:n;};
  const recentPurchases=purchases.filter(r=>Number(r.time)>=now-90*86400);
  add('raffle-spending','Raffle spending (last 90 days, Top '+LEADERBOARD_LIMIT+')','Recorded ticket purchases in the last 90 days across both raffles, excluding +1/+3 markers; retained banking history only.','gold',leaders(recentPurchases,r=>r.displayName,spending));
@@ -47,18 +98,25 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const traderWindow=seconds=>traderSales.filter(r=>Number(r.event_timestamp)>=now-seconds&&Number(r.event_timestamp)<=now);
  const nameAs=(rows,field)=>rows.map(r=>({...r,account_name:String(r[field]||r[field+'_original']||'').trim()}));
  const earned=r=>positive(r.net)||positive(r.price);
- const weekSales=nameAs(traderWindow(WEEK_SECONDS).filter(r=>positive(r.quantity)>0),'seller');
- add('trader-sales','Highest guild trader sales (last 7 days, Top '+LEADERBOARD_LIMIT+')','Guild trader sales in the last 7 days, ranked by gold earned. Sale totals are private and are not listed.','',leaders(weekSales,r=>r.account_name,earned).map(r=>({name:r.name})),{hideValue:true});
- add('trader-items','Most items sold (last 7 days, Top '+LEADERBOARD_LIMIT+')','Items sold through the guild trader in the last 7 days, totalled by quantity. Gold amounts are not listed.','items',leaders(weekSales,r=>r.account_name,r=>positive(r.quantity)));
- // Buyer rankings over 30 days: members are matched on both sides, outsiders by buyer only.
+ const recentSales=nameAs(traderWindow(TRADER_WINDOW_SECONDS),'seller');
+ const tradedSales=recentSales.filter(r=>positive(r.quantity)>0);
+ // Card titles carry a little guild-market flavour; each description still spells out
+ // exactly what is counted, so the theme never replaces the meaning.
+ add('trader-sales','Market Moguls (last 14 days, Top '+LEADERBOARD_LIMIT+')','Highest gold earned on guild trader sales in the last 14 days. Sale totals are private and are not listed.','',leaders(tradedSales,r=>r.account_name,earned).map(r=>({name:r.name})),{hideValue:true});
+ add('trader-items','Pack Mules (last 14 days, Top '+LEADERBOARD_LIMIT+')','Most items sold through the guild trader in the last 14 days, totalled by quantity. Gold amounts are not listed.','items',leaders(tradedSales,r=>r.account_name,r=>positive(r.quantity)));
+ // Buyer rankings over the 50/50 raffle period: members are matched on both sides, outsiders by buyer only.
  const members=new Set(current.map(r=>String(r.account_name||'').trim().toLowerCase()).filter(Boolean));
  const isMember=name=>members.has(String(name||'').trim().toLowerCase());
  const buyerOf=row=>row.buyer||row.buyer_original;
- const monthSales=traderWindow(MONTH_SECONDS);
+ // Buyers count within the current 50/50 raffle, from the previous cutoff to this one.
+ const raffleWindow=buyerRaffleWindow(now,env);
+ const raffleEnd=Math.min(now,raffleWindow.salesEnd);
+ const buyerSales=traderSales.filter(r=>Number(r.event_timestamp)>=raffleWindow.salesStart&&Number(r.event_timestamp)<=raffleEnd);
+ const lingerNote=buyerRaffleLingerNote(raffleWindow.lingerSeconds);
  // Rank by what the buyer paid (price), not the seller's post-tax proceeds.
  const topBuyers=rows=>leaders(nameAs(rows,'buyer'),r=>r.account_name,r=>positive(r.price)).map(r=>({name:r.name}));
- add('trader-member-buyers','Guild member buyers (last 30 days, Top '+LEADERBOARD_LIMIT+')','Gold spent by current guild members on items listed by another current member in the last 30 days. Amounts are not listed.','',topBuyers(monthSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),{hideValue:true});
- add('trader-visitor-buyers','Non-member buyers (last 30 days, Top '+LEADERBOARD_LIMIT+')','Gold spent at the guild trader in the last 30 days by buyers who are not current guild members, whoever listed the item. Amounts are not listed.','',topBuyers(monthSales.filter(r=>!isMember(buyerOf(r)))),{hideValue:true});
+ add('trader-member-buyers','Guild Regulars (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent by current guild members on items listed by another current member during the current 50/50 raffle, from the previous cutoff to now. Amounts are not listed. '+lingerNote,'',topBuyers(buyerSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),{hideValue:true});
+ add('trader-visitor-buyers','Window Shoppers (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent at the guild trader during the current 50/50 raffle by buyers who are not current guild members, whoever listed the item. Amounts are not listed. '+lingerNote,'',topBuyers(buyerSales.filter(r=>!isMember(buyerOf(r)))),{hideValue:true});
  return {
   generatedAt:new Date(now*1000).toISOString(),
   trackingSince,
@@ -73,7 +131,8 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  };
 }
 export function registerCommunityStatisticsSocket(socket, {
-  db, loadBanking, loadWindows = async () => [], authorizeViewer, now = () => Math.floor(Date.now() / 1000)
+  db, loadBanking, loadWindows = async () => [], loadBonusPolicies = async () => ({policies:[],overrides:[]}),
+  authorizeViewer, now = () => Math.floor(Date.now() / 1000)
 }) {
   socket.on('guildsync:request-community-statistics', async (payload, callback) => {
     if (typeof payload === 'function') callback = payload;
@@ -104,19 +163,23 @@ export function registerCommunityStatisticsSocket(socket, {
       const [meta] = await db.execute(`
         SELECT metadata_value FROM guildsync_community_statistics_metadata WHERE metadata_key = 'discord_activity_since'
       `);
-      // One fetch covers the widest trader window; event_datetime is the indexed
-      // pre-filter and the builder applies each card's window on event_timestamp.
-      const [banking, windows, [traderSales]] = await Promise.all([
+      // One fetch covers every trader card; event_datetime is the indexed pre-filter and
+      // the builder applies each card's window on event_timestamp. The buyer cards span a
+      // whole 50/50 raffle, which can be longer than the 14-day seller window.
+      const traderFetchStart = Math.min(time - TRADER_WINDOW_SECONDS, buyerRaffleWindow(time).salesStart);
+      const [banking, windows, [traderSales], bonus] = await Promise.all([
         loadBanking(db), loadWindows(db, time),
         db.execute(`
           SELECT seller, buyer, buyer_original, quantity, net, price, event_timestamp
           FROM guildsync_trader_entries
           WHERE event_datetime >= FROM_UNIXTIME(?) AND event_datetime <= FROM_UNIXTIME(?)
-        `, [time - MONTH_SECONDS, time])
+        `, [traderFetchStart, time]),
+        loadBonusPolicies(db).catch(() => ({policies:[],overrides:[]}))
       ]);
       reply({ok: true, report: buildCommunityStatistics({
         now: time, trackingSince: meta[0]?.metadata_value || null,
-        roster, rosterEvents, discordMembers, discordHistory, activity, banking, windows, traderSales
+        roster, rosterEvents, discordMembers, discordHistory, activity, banking, windows, traderSales,
+        bonusPolicies: bonus?.policies || [], bonusOverrides: bonus?.overrides || []
       })});
     } catch {
       reply({ok: false, message: 'Community statistics could not be loaded.'});

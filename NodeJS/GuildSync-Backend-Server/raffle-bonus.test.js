@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateRaffleBonus, nextRaffleBonus, parseBonusTiers, selectBonusPolicy, selectRafflePolicy, selectRaffleBonusSettings } from './raffle-bonus.js';
+import { calculateRaffleBonus, nextRaffleBonus, parseBonusTiers, selectBonusPolicy, selectPurchasePolicy,
+  selectRafflePolicy, selectRaffleBonusSettings, remainingBonusLadder, bonusLadderHours } from './raffle-bonus.js';
+import { formatBonusDeadline } from './bonus-format.js';
 
 test('biweekly bonus steps down on elapsed-hour boundaries and rounds per purchase', () => {
   const tiers = parseBonusTiers('120:20,120:10,72:5,24:0');
@@ -99,3 +101,56 @@ test('a historical raffle override changes only the selected raffle', () => {
 test('removing a raffle bonus override deletes only the selected raffle record',async()=>{process.env.MARIADB_USER ||= 'test';process.env.MARIADB_PASSWORD ||= 'test';const {saveRaffleBonusOverride}=await import('./guildsync-database-actions.js');let deletion;const db={async execute(sql,args){if(sql.trim().startsWith('DELETE'))deletion={sql,args};return [[]];}};await saveRaffleBonusOverride(db,{raffleType:'biweekly',salesEnd:1800,resetToDefaults:true});assert.match(deletion.sql,/WHERE raffle_type = \? AND sales_end = \?/);assert.deepEqual(deletion.args,['biweekly',1800]);});
 
 test('restoring env bonus defaults deletes the override and appends versions without deleting history',async()=>{process.env.MARIADB_USER ||= 'test';process.env.MARIADB_PASSWORD ||= 'test';const {saveRaffleBonusSettings}=await import('./guildsync-database-actions.js');const previous={enabled:false,enabledByType:{biweekly:false,monthly:false},biweekly:parseBonusTiers('24:0'),monthly:parseBonusTiers('24:0')};const calls=[];const db={async getConnection(){return this;},async beginTransaction(){},async commit(){calls.push('commit');},async rollback(){},release(){},async execute(sql,args){calls.push({sql,args});return sql.trim().startsWith('SELECT')?[[{value:JSON.stringify(previous)}]]:[{}];}};await saveRaffleBonusSettings(db,{resetToDefaults:true});assert.equal(calls.filter(c=>c.sql?.includes('INSERT INTO guildsync_raffle_bonus_versions')).length,2);assert.ok(calls.some(c=>c.sql?.startsWith('DELETE FROM guildsync_settings')));assert.ok(!calls.some(c=>c.sql?.includes('DELETE FROM guildsync_raffle_bonus_versions')));assert.equal(calls.at(-1),'commit');});
+
+test('a purchase keeps the policy that was in force when it was made', () => {
+  const before = { type: 'biweekly', effectiveFrom: 1000, enabled: true, tiers: parseBonusTiers('120:20,120:10,72:5,24:0') };
+  const after = { type: 'biweekly', effectiveFrom: 5000, enabled: false, tiers: parseBonusTiers('24:0') };
+  assert.equal(selectPurchasePolicy([before, after], 'biweekly', 3000), before);
+  assert.equal(selectPurchasePolicy([before, after], 'biweekly', 6000), after);
+  // Purchases recorded before bonus tracking began use the earliest saved policy.
+  assert.equal(selectPurchasePolicy([before, after], 'biweekly', 1), before);
+  assert.equal(selectPurchasePolicy([after], 'monthly', 1), null);
+});
+
+test('the remaining ladder lists every later percentage and its deadline', () => {
+  const tiers = parseBonusTiers('120:20,120:10,72:5,24:0');
+  const start = 1000000, salesEnd = start + 336 * 3600;
+  const at = hours => remainingBonusLadder({ purchaseTimestamp: start + hours * 3600, salesStart: start, salesEnd, tiers });
+  assert.equal(bonusLadderHours(tiers), 336);
+  assert.deepEqual(at(0), [
+    { percent: 10, expiresAt: salesEnd - 96 * 3600 },
+    { percent: 5, expiresAt: salesEnd - 24 * 3600 }
+  ]);
+  assert.deepEqual(at(130), [{ percent: 5, expiresAt: salesEnd - 24 * 3600 }]);
+  assert.deepEqual(at(250), []);
+  assert.deepEqual(remainingBonusLadder({ purchaseTimestamp: start, salesStart: start, salesEnd, tiers, enabled: false }), []);
+});
+
+test('exact tier boundaries belong to the earlier period and sales close ends bonuses', () => {
+  const tiers = parseBonusTiers('120:20,120:10,72:5,24:0');
+  const start = 1000000, salesEnd = start + 336 * 3600;
+  const percentAt = seconds => calculateRaffleBonus({ purchasedTickets: 100, purchaseTimestamp: seconds,
+    salesStart: start, salesEnd, tiers }).bonusPercent;
+  assert.equal(percentAt(start), 20);
+  assert.equal(percentAt(salesEnd - 216 * 3600 - 1), 20);
+  assert.equal(percentAt(salesEnd - 216 * 3600), 10);
+  assert.equal(percentAt(salesEnd - 96 * 3600 - 1), 10);
+  assert.equal(percentAt(salesEnd - 96 * 3600), 5);
+  assert.equal(percentAt(salesEnd - 24 * 3600 - 1), 5);
+  assert.equal(percentAt(salesEnd - 24 * 3600), 0);
+  assert.equal(percentAt(salesEnd), 0);
+});
+
+test('hour-based deadlines keep the same Eastern clock time across the November DST change', () => {
+  const tiers = parseBonusTiers('120:20,120:10,72:5,24:0');
+  const salesEnd = Date.parse('2026-11-08T04:00:00Z') / 1000; // November 7, 11:00 PM ET
+  const start = salesEnd - 336 * 3600;
+  assert.equal(formatBonusDeadline(start), 'October 25, 2026 at 12:00 AM ET');
+  const ladder = remainingBonusLadder({ purchaseTimestamp: start, salesStart: start, salesEnd, tiers });
+  assert.deepEqual(ladder.map(step => step.percent), [10, 5]);
+  // The 10% period ends 96 hours before the cutoff (November 3, 11:00 PM EST) and 5%
+  // ends 24 hours before it (November 6, 11:00 PM EST). Both are exact hour offsets
+  // from the cutoff, so the clock change cannot move them.
+  assert.equal(formatBonusDeadline(ladder[0].expiresAt), 'November 3, 2026 at 11:00 PM ET');
+  assert.equal(formatBonusDeadline(ladder[1].expiresAt), 'November 6, 2026 at 11:00 PM ET');
+});

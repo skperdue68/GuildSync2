@@ -143,7 +143,7 @@ test('tickets write D/E/F in first fully empty row with G bonus note and correct
     assert.equal(requests[0].updateCells.fields, 'userEnteredValue');
     assert.deepEqual(requests[1].updateCells, {
       range: { sheetId: id, startRowIndex: 6, endRowIndex: 7, startColumnIndex: 7, endColumnIndex: 8 },
-      rows: [{ values: [{ userEnteredValue: { numberValue: 20 }, note: 'Bonus: 10%' }] }], fields: 'userEnteredValue,note'
+      rows: [{ values: [{ userEnteredValue: { numberValue: 20 }, note: '10% bonus · +20' }] }], fields: 'userEnteredValue,note'
     });
     assert.deepEqual(requests[2].updateDimensionProperties, { range: { sheetId: id, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 }, properties: { hiddenByUser: false }, fields: 'hiddenByUser' });
     const metadata = requests[3].updateCells;
@@ -167,7 +167,7 @@ test('disabled bonus clears stale G value/note without hiding other rows; manual
   assert.deepEqual(disabled[3].updateDimensionProperties.range, { sheetId: 7, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 });
   assert.deepEqual(cellValues(requests[5]), ['manual', 'Player (FFTG)', 200000]);
   assert.equal(requests[5].updateCells.start.rowIndex, 5);
-  assert.deepEqual(requests[6].updateCells.rows, [{ values: [{ userEnteredValue: { numberValue: 0 }, note: 'Bonus: 0%' }] }]);
+  assert.deepEqual(requests[6].updateCells.rows, [{ values: [{ userEnteredValue: { numberValue: 0 }, note: '' }] }]);
 });
 
 test('zero-ticket donations use bounded P/Q/R and N/O/P ranges without bonus cells or notes', async t => {

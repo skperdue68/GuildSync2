@@ -67,3 +67,9 @@ test('ordinary members can use tickets and failures are logged privately', async
  assert.match(f.replies.at(-1).content, /unavailable/);
  assert.ok(f.logs.some(line => line.includes('failed')));
 });
+
+test('/tickets ends with cumulative totals for each current raffle', async () => {
+ const f = fixture();
+ await execute(f.interaction, f.socket, f.log);
+ assert.match(f.replies.at(-1).content, /\*\*Current raffle totals:\*\* Bi-Weekly 120 \(100 purchased \+ 20 bonus\) · 50\/50 50 \(50 purchased\)$/);
+});

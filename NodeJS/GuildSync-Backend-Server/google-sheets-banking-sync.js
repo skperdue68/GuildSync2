@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resetRequests, drawDateRequest } from './raffle-sheet-layout.js';
+import { formatBonusLabel } from './bonus-format.js';
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const backendRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -266,7 +267,9 @@ async function writeEntries(entries, uploadedBy, state, log, {replace = false, i
       requests.push({ updateCells: {
         range: { sheetId: sheet.sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 7, endColumnIndex: 8 },
         rows: [{ values: [bonusEnabled
-          ? { userEnteredValue: { numberValue: bonusTickets }, note: 'Bonus: ' + bonusPercent + '%' }
+          ? { userEnteredValue: { numberValue: bonusTickets },
+            note: formatBonusLabel({ percent: bonusPercent, tickets: bonusTickets,
+              total: Number(entry.totalTickets) || 0 }) }
           : {}] }], fields: 'userEnteredValue,note'
       } });
       if (!replace && bonusEnabled) requests.push({ updateDimensionProperties: {

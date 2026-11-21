@@ -77,12 +77,19 @@ See [Voice Channel Mute](GuildSync-Voice-Mute.md) for permissions, personal shor
 | GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED | Enable automatic raffle rollover | false | boolean |
 | GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS | Rollover delay (hours) | 4 | 0–8760 |
 
+### Community highlights
+
+| Environment key | Purpose | Default | Validation |
+| --- | --- | --- | --- |
+| GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS | Keep a closed 50/50 raffle on the Guild Regulars and Window Shoppers buyer cards (hours) | 3 | 0–168; fractional hours such as 1.5 are allowed. The card text names the value. |
+
 ### Receipt messages
 
 | Environment key | Purpose | Default | Validation |
 | --- | --- | --- | --- |
+| GUILDSYNC_DEPOSIT_MAIL_BONUS_NUDGE_ENABLED | Send the early-purchase nudge | Enabled | One nudge per member per raffle; disabled removes the footer only |
 | GUILDSYNC_DEPOSIT_MAIL_SUBJECT_TEMPLATE | Receipt subject | Built-in message (shown in UI) | Allowed placeholders; maximum 200 characters |
-| GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE | Receipt body | Built-in message (shown in UI) | Allowed placeholders; maximum 10000 characters |
+| GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE | Receipt body | Built-in message (shown in UI) | Allowed placeholders; maximum 10000 characters; can be proofed with recent real purchases |
 
 
 ## Templates and bonus policies

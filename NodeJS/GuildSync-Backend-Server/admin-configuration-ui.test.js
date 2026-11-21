@@ -97,3 +97,11 @@ test('read-only configuration shows effective values and defaults without editin
  panel.wire({request:async()=>({ok:true,configuration:{botDefaultsReported:true,settings:[{key:'count',group:'Example',label:'Count',type:'number',value:36,defaultValue:24,help:'A test setting.'}]}}),rerender:ready});await loaded;
  const html=panel.render();assert.match(html,/Read-only/);assert.match(html,/configuration-readonly-value[^>]*>36<\/output>/);assert.match(html,/<output>24<\/output>/);assert.match(html,/Refresh configuration/);assert.doesNotMatch(html,/data-config-default=|data-config-value=|type="submit"/);
 });
+
+test('a real purchase preview replaces the canned example numbers',()=>{
+ const values={ticket_quantity:'7',bonus_percent:'10',bonus_bonus:'',bonus_tickets:'0',total_tickets:'7',
+  bonus_block:'Early Purchase Bonus: 10% for buying before September 22, 2026 at 7:00 PM ET.'};
+ assert.match(receiptPreview('Ticket Credit Earned: {ticket_quantity}',{values}),/Ticket Credit Earned: 7/);
+ assert.doesNotMatch(receiptPreview('Ticket Credit Earned: {ticket_quantity}',{values}),/20/);
+ assert.match(receiptPreview('{bonus_block}',{values}),/10%/);
+});

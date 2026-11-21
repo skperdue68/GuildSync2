@@ -9,7 +9,7 @@ const metricUnit=(item,row)=>{
  const membership={ 'guild-joins':'joins','discord-joins':'joins','guild-leaves':'departures','discord-leaves':'departures' };
  if(item.id==='discord-busiest')return Number(row.value)===1?'post or reaction':'posts + reactions';
  const unit=membership[item.id]||item.unit;
- const singular={days:'day',joins:'join',departures:'departure',posts:'post',reactions:'reaction',items:'item'};
+ const singular={days:'day',joins:'join',departures:'departure',posts:'post',reactions:'reaction',items:'item','bonus tickets':'bonus ticket'};
  return Number(row.value)===1?(singular[unit]||unit):unit;
 };
 
