@@ -9518,6 +9518,10 @@ function connectSocket() {
     handleBankingDataUpdated(payload);
   });
 
+  onCurrentSocket('guildsync:deposit-mail-availability-changed', () => {
+    void refreshDepositMailAvailabilityFromBackend();
+  });
+
   onCurrentSocket('guildsync:roster-notes-access-changed', () => {
     rosterNotesLoadGeneration++;
     rosterNotesDialogNotes = [];
