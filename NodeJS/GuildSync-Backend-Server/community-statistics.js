@@ -19,11 +19,20 @@ export function buyerRaffleLingerSeconds(env=process.env){
  return String(raw ?? '').trim()!==''&&Number.isFinite(hours)&&hours>=0&&hours<=MAX_BUYER_RAFFLE_LINGER_HOURS
   ? Math.round(hours*3600) : DEFAULT_BUYER_RAFFLE_LINGER_HOURS*3600;
 }
-function buyerRaffleLingerNote(seconds){
- if(!seconds)return 'A closed raffle is replaced at the next refresh.';
- const hours=seconds/3600;
+// The buyer cards name the actual span rather than a duration: the draw they count from,
+// the draw they end at, and the Eastern clock time the closed raffle is replaced.
+const easternClock=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
+function easternStamp(timestamp){
+ const parts=Object.fromEntries(easternClock.formatToParts(new Date(Number(timestamp)*1000))
+  .filter(part=>part.type!=='literal').map(part=>[part.type,part.value]));
+ return `${parts.month} ${parts.day}, ${parts.year}, ${parts.hour}:${parts.minute} ${parts.dayPeriod} ${parts.timeZoneName}`;
+}
+function buyerRaffleSpanNote(window){
+ const span=`Counts the 50/50 raffle from ${easternStamp(window.previousDrawTime)} to ${easternStamp(window.drawTime)}.`;
+ if(!window.lingerSeconds)return `${span} The next raffle replaces it at that draw.`;
+ const hours=window.lingerSeconds/3600;
  const text=Number.isInteger(hours)?String(hours):hours.toFixed(1);
- return `A closed raffle stays listed for ${text} hour${hours===1?'':'s'}, then resets to the next one.`;
+ return `${span} It stays listed until ${easternStamp(window.resetsAt)} (${text} hour${hours===1?'':'s'} after the draw), then the card moves to the next raffle.`;
 }
 const positive=n=>Number.isFinite(Number(n))?Math.max(0,Number(n)):0;
 const label=r=>r.server_nickname||r.global_name||r.username||r.account_name||r.discord_id||'Unknown';
@@ -38,8 +47,9 @@ export function buyerRaffleWindow(now=Math.floor(Date.now()/1000),env=process.en
  const lingerSeconds=buyerRaffleLingerSeconds(env);
  const cutoff=monthlySalesEndAtOrAfter(Number(now)-RAFFLE_DRAW_AFTER_SALES_SECONDS-lingerSeconds+1);
  const drawTime=cutoff+RAFFLE_DRAW_AFTER_SALES_SECONDS;
- return {type:'monthly',cutoff,drawTime,salesEnd:drawTime,
-  salesStart:previousMonthlySalesEnd(cutoff)+RAFFLE_DRAW_AFTER_SALES_SECONDS+1,lingerSeconds};
+ const previousDrawTime=previousMonthlySalesEnd(cutoff)+RAFFLE_DRAW_AFTER_SALES_SECONDS;
+ return {type:'monthly',cutoff,drawTime,resetsAt:drawTime+lingerSeconds,salesEnd:drawTime,
+  salesStart:previousDrawTime+1,previousDrawTime,lingerSeconds};
 }
 export async function initializeCommunityStatisticsSchema(db){
  await db.query(`CREATE TABLE IF NOT EXISTS guildsync_community_statistics_metadata (metadata_key VARCHAR(64) PRIMARY KEY, metadata_value VARCHAR(64) NOT NULL)`);
@@ -124,11 +134,11 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const raffleWindow=buyerRaffleWindow(now,env);
  const raffleEnd=Math.min(now,raffleWindow.salesEnd);
  const buyerSales=traderSales.filter(r=>Number(r.event_timestamp)>=raffleWindow.salesStart&&Number(r.event_timestamp)<=raffleEnd);
- const lingerNote=buyerRaffleLingerNote(raffleWindow.lingerSeconds);
+ const spanNote=buyerRaffleSpanNote(raffleWindow);
  // Rank by what the buyer paid (price), not the seller's post-tax proceeds.
  const topBuyers=rows=>withGold(leaders(nameAs(rows,'buyer'),r=>r.account_name,r=>positive(r.price)));
- add('trader-member-buyers','Guild Regulars (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent by current guild members on items listed by another current member during the current 50/50 raffle, from the previous draw to now. '+goldNote(showTraderGold)+' '+lingerNote,goldUnit,topBuyers(buyerSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
- add('trader-visitor-buyers','Window Shoppers (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent at the guild trader during the current 50/50 raffle by buyers who are not current guild members, whoever listed the item. '+goldNote(showTraderGold)+' '+lingerNote,goldUnit,topBuyers(buyerSales.filter(r=>!isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
+ add('trader-member-buyers','Guild Regulars (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent by current guild members on items listed by another current member during the current 50/50 raffle. '+spanNote+' '+goldNote(showTraderGold),goldUnit,topBuyers(buyerSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
+ add('trader-visitor-buyers','Window Shoppers (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent at the guild trader during the current 50/50 raffle by buyers who are not current guild members, whoever listed the item. '+spanNote+' '+goldNote(showTraderGold),goldUnit,topBuyers(buyerSales.filter(r=>!isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
  return {
   generatedAt:new Date(now*1000).toISOString(),
   trackingSince,

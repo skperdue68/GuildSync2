@@ -81,7 +81,7 @@ See [Voice Channel Mute](GuildSync-Voice-Mute.md) for permissions, personal shor
 
 | Environment key | Purpose | Default | Validation |
 | --- | --- | --- | --- |
-| GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS | Keep a closed 50/50 raffle on the Guild Regulars and Window Shoppers buyer cards (hours) | 1 | 0–168; fractional hours such as 1.5 are allowed. Counted from the 8 PM Eastern draw, not the 7 PM cutoff, so the default keeps the closed raffle up until 9 PM Eastern. The card text names the value. |
+| GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS | Keep a closed 50/50 raffle on the Guild Regulars and Window Shoppers buyer cards (hours) | 1 | 0–168; fractional hours such as 1.5 are allowed. Counted from the 8 PM Eastern draw, not the 7 PM cutoff, so the default keeps the closed raffle up until 9 PM Eastern. Both buyer cards show the span and the resulting reset time, and the sentence names the value. |
 
 ### Receipt messages
 

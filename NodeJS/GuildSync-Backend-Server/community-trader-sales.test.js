@@ -51,7 +51,9 @@ test('buyer rankings count the current 50/50 raffle and split current members fr
  const report=buildCommunityStatistics({now,roster,traderSales});
  const members=report.highlights.find(h=>h.id==='trader-member-buyers');
  assert.equal(members.title,'Guild Regulars (current 50/50 raffle, Top 5)');
- assert.match(members.description,/from the previous draw to now/);
+ // The card states the real span and the reset time, not just a number of hours.
+ assert.match(members.description,/Counts the 50\/50 raffle from Dec 19, 2026, 8:00 PM EST to Jan 30, 2027, 8:00 PM EST\./);
+ assert.match(members.description,/It stays listed until Jan 30, 2027, 9:00 PM EST \(1 hour after the draw\)/);
  // The card covers one raffle: purchases from the raffle before it are excluded.
  assert.ok(!members.description.includes('LastRaffle'));
  assert.equal(members.hideValue,true);
@@ -130,24 +132,24 @@ test('the raffle linger is configurable and the buyer card text follows it',()=>
  const card=(now,env)=>buildCommunityStatistics({now,roster,traderSales,env})
   .highlights.find(h=>h.id==='trader-member-buyers');
  // The one-hour default keeps the closed raffle readable for an hour after the draw.
- assert.match(card(RAFFLE_END-60,{}).description,/stays listed for 1 hour/);
+ assert.match(card(RAFFLE_END-60,{}).description,/stays listed until Jan 30, 2027, 9:00 PM EST \(1 hour after the draw\)/);
  assert.deepEqual(card(RAFFLE_END+2*3600-60,{}).rows.map(r=>r.name),['Alice']);
  assert.deepEqual(card(RAFFLE_END+2*3600,{}).rows.map(r=>r.name),[]);
  // A longer linger keeps it, and the sentence names the configured hours.
  const longer={GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'6'};
- assert.match(card(RAFFLE_END-60,longer).description,/stays listed for 6 hours/);
+ assert.match(card(RAFFLE_END-60,longer).description,/stays listed until Jan 31, 2027, 2:00 AM EST \(6 hours after the draw\)/);
  assert.deepEqual(card(RAFFLE_END+6*3600,longer).rows.map(r=>r.name),['Alice']);
  assert.deepEqual(card(RAFFLE_END+7*3600,longer).rows.map(r=>r.name),[]);
  // Fractional hours are allowed and read naturally.
- assert.match(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'1.5'}).description,/stays listed for 1.5 hours/);
+ assert.match(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'1.5'}).description,/stays listed until Jan 30, 2027, 9:30 PM EST \(1.5 hours after the draw\)/);
  // Zero hands the cards to the next raffle at the draw instead of lingering.
  const none={GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'0'};
- assert.match(card(RAFFLE_END-60,none).description,/replaced at the next refresh/);
+ assert.match(card(RAFFLE_END-60,none).description,/The next raffle replaces it at that draw\./);
  assert.deepEqual(card(RAFFLE_END+3600-60,none).rows.map(r=>r.name),['Alice']);
  assert.deepEqual(card(RAFFLE_END+3600,none).rows.map(r=>r.name),[]);
  // An unusable value falls back to the default rather than breaking the report.
  for(const bad of ['-1','169','abc',''])
-  assert.match(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:bad}).description,/stays listed for 1 hour/);
+  assert.match(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:bad}).description,/\(1 hour after the draw\)/);
 });
 
 test('buyer cards stop exactly at the draw boundaries',()=>{
