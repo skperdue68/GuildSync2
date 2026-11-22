@@ -5,6 +5,7 @@ import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
 import * as tickets from './commands/tickets.js';
 import * as trader from './commands/trader.js';
+import * as highlights from './commands/highlights.js';
 import { createGsaCommandData, createGsrCommandData, createGsrAliasCommandData } from './commands/gsa-raffle.js';
 import { staleTraderReasons, subcommandNames } from './command-registration.js';
 
@@ -16,6 +17,7 @@ const guildCommands = [
   roles.data.toJSON(),
   raffle.data.toJSON(),
   tickets.data.toJSON(),
+  highlights.data.toJSON(),
   createGsaCommandData().toJSON(),
   createGsrCommandData().toJSON(),
   createGsrAliasCommandData().toJSON(),

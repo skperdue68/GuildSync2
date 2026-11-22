@@ -6,7 +6,7 @@ import {monthlySalesEndAtOrAfter} from './raffle-schedule.js';
 // A real 50/50 cutoff, so the raffle period is the calendar schedule rather than a fixture.
 const RAFFLE_END=monthlySalesEndAtOrAfter(1800000000);
 
-test('trader cards rank the last 14 days and never publish gold totals',()=>{
+test('trader cards can rank the last 14 days and never publish gold totals',()=>{
  const now=10000000, window=14*86400;
  const traderSales=[
   {seller:'Alice',quantity:2,net:5000,event_timestamp:now},
@@ -17,7 +17,7 @@ test('trader cards rank the last 14 days and never publish gold totals',()=>{
   {seller:'Old',quantity:100,net:90000,event_timestamp:now-window-1},
   {seller:'Future',quantity:100,net:90000,event_timestamp:now+1}
  ];
- const report=buildCommunityStatistics({now,traderSales});
+ const report=buildCommunityStatistics({now,traderSales,env:{GUILDSYNC_COMMUNITY_TRADER_WINDOW:'14 days'}});
  const sales=report.highlights.find(h=>h.id==='trader-sales');
  assert.equal(sales.title,'Market Moguls (last 14 days, Top 5)');
  assert.equal(sales.hideValue,true);
@@ -25,6 +25,7 @@ test('trader cards rank the last 14 days and never publish gold totals',()=>{
  assert.ok(sales.rows.every(r=>!('value' in r)),'gold values must not reach the report payload');
  const items=report.highlights.find(h=>h.id==='trader-items');
  assert.equal(items.title,'Pack Mules (last 14 days, Top 5)');
+ assert.match(items.description,/counted back from this refresh/);
  assert.equal(items.unit,'items');
  assert.deepEqual(items.rows.map(r=>[r.name,r.value]),[['Bob',10],['Alice',5],['Casey',4],['Boundary',1]]);
  const ids=report.highlights.map(h=>h.id);
@@ -172,4 +173,73 @@ test('buyer cards stop exactly at the draw boundaries',()=>{
  assert.deepEqual(cardAt(RAFFLE_END+30*60).rows.map(r=>r.name),['Alice','Tail']);
  // Sales after the draw wait for the next raffle, which the cards reach an hour later.
  assert.deepEqual(cardAt(RAFFLE_END+2*3600).rows.map(r=>r.name),['After']);
+});
+
+test('all four trader cards share the raffle span by default',()=>{
+ const now=RAFFLE_END-3600;
+ const roster=[{account_name:'Seller',in_roster:1},{account_name:'Alice',in_roster:1}];
+ const {salesStart,salesEnd}=buyerRaffleWindow(now);
+ const traderSales=[
+  {seller:'Seller',buyer:'Alice',quantity:2,price:1000,net:900,event_timestamp:now},
+  {seller:'Earlier',buyer:'Alice',quantity:1,price:500,net:400,event_timestamp:salesStart-1},
+  {seller:'AtDraw',buyer:'Alice',quantity:1,price:500,net:400,event_timestamp:salesEnd}
+ ];
+ const report=buildCommunityStatistics({now,roster,traderSales});
+ const sales=report.highlights.find(h=>h.id==='trader-sales');
+ assert.equal(sales.title,'Market Moguls (current 50/50 raffle, Top 5)');
+ assert.ok(sales.description.includes('Counts the 50/50 raffle from'));
+ assert.ok(sales.description.includes('Trader data through'));
+ // The previous raffle's last second and the future draw sale stay out of this span.
+ assert.deepEqual(sales.rows.map(r=>r.name),['Seller']);
+ assert.equal(report.traderLatestAt,salesEnd,'the report names the newest recorded sale');
+});
+
+test('member matching ignores the ESO @ prefix on trader names',()=>{
+ const now=RAFFLE_END-3600;
+ const roster=[{account_name:'Alice',in_roster:1},{account_name:'Bob',in_roster:1}];
+ const traderSales=[
+  {seller:'@Bob',buyer:'@Alice',quantity:1,price:1000,net:900,event_timestamp:now},
+  {seller:'@Bob',buyer:'Outsider',quantity:1,price:2000,net:1800,event_timestamp:now}
+ ];
+ const report=buildCommunityStatistics({now,roster,traderSales});
+ assert.deepEqual(report.highlights.find(h=>h.id==='trader-member-buyers').rows.map(r=>r.name),['Alice']);
+ assert.deepEqual(report.highlights.find(h=>h.id==='trader-visitor-buyers').rows.map(r=>r.name),['Outsider']);
+});
+
+test('the trader cards follow the administrator settings',()=>{
+ const now=RAFFLE_END-3600;
+ const roster=[{account_name:'Seller',in_roster:1},{account_name:'Alice',in_roster:1}];
+ const traderSales=['A','B','C'].map((name,index)=>({seller:'Seller',buyer:name,quantity:1,price:1000-index,net:900,event_timestamp:now}));
+ const cards=(env,viewerRole)=>buildCommunityStatistics({now,roster,traderSales,env,viewerRole}).highlights;
+ const top=cards({GUILDSYNC_COMMUNITY_TRADER_TOP_LIMIT:'2'});
+ assert.equal(top.find(h=>h.id==='trader-visitor-buyers').rows.length,2);
+ assert.match(top.find(h=>h.id==='trader-sales').title,/Top 2/);
+ // Gold policy: admins only, then never.
+ const adminOnly={GUILDSYNC_COMMUNITY_TRADER_GOLD_VISIBILITY:'admin'};
+ assert.equal(cards(adminOnly,'user').find(h=>h.id==='trader-sales').hideValue,true);
+ assert.equal(cards(adminOnly,'admin').find(h=>h.id==='trader-sales').hideValue,undefined);
+ assert.equal(cards({GUILDSYNC_COMMUNITY_TRADER_GOLD_VISIBILITY:'never'},'admin').find(h=>h.id==='trader-sales').hideValue,true);
+ // Hiding a card removes it from the report entirely.
+ const hidden=cards({GUILDSYNC_COMMUNITY_HIDDEN_HIGHLIGHTS:'trader-visitor-buyers, guild-joins'});
+ assert.ok(!hidden.some(h=>h.id==='trader-visitor-buyers'));
+ assert.ok(!hidden.some(h=>h.id==='guild-joins'));
+ // The rolling mode names its own window instead of the raffle span.
+ const rolling=cards({GUILDSYNC_COMMUNITY_TRADER_WINDOW:'14 days'});
+ assert.match(rolling.find(h=>h.id==='trader-sales').title,/last 14 days/);
+});
+
+test('card timestamps follow the requesting viewer time zone',()=>{
+ const now=RAFFLE_END-3600;
+ const description=timeZone=>buildCommunityStatistics({now,timeZone})
+  .highlights.find(h=>h.id==='trader-member-buyers').description;
+ assert.match(description(undefined),/8:00 PM EST/);
+ assert.match(description('America/Los_Angeles'),/5:00 PM PST/);
+ // An unusable zone falls back to Eastern instead of breaking the report.
+ assert.match(description('Not/AZone'),/EST/);
+});
+
+test('empty cards explain what is missing',()=>{
+ const report=buildCommunityStatistics({now:RAFFLE_END-3600,roster:[],traderSales:[]});
+ assert.ok(report.highlights.find(h=>h.id==='trader-member-buyers').emptyText.includes('No member-to-member trader sales'));
+ assert.equal(report.highlights.find(h=>h.id==='discord-posts').emptyText,'No Discord posts recorded in the last 30 days.');
 });

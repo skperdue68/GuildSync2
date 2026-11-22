@@ -5,6 +5,7 @@ const date=value=>{const parsed=new Date(value);return value&&!Number.isNaN(pars
 
 
 const localDetail=value=>String(value ?? '').replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g,stamp=>date(stamp)||stamp);
+const requestTimeZone=()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'';}catch{return '';}};
 const metricUnit=(item,row)=>{
  const membership={ 'guild-joins':'joins','discord-joins':'joins','guild-leaves':'departures','discord-leaves':'departures' };
  if(item.id==='discord-busiest')return Number(row.value)===1?'post or reaction':'posts + reactions';
@@ -18,7 +19,7 @@ export function renderCommunityStatistics(report){
  const overview=list(report.overview),highlights=list(report.highlights);
  return `${overview.length?`<dl class="community-overview">${overview.map(item=>`<div><dt>${escape(item.label)}</dt><dd>${escape(number(item.value))}</dd></div>`).join('')}</dl>`:''}
  ${!overview.length&&!highlights.length?'<p>No community statistics are available yet.</p>':''}
- <div class="community-highlights">${highlights.map(item=>`<section class="community-highlight"><h4>${escape(item.title)}</h4><p>${escape(item.description)}</p>${list(item.rows).length?`<ol>${list(item.rows).slice(0,5).map(row=>`<li><div><span>${escape(row.name || 'Unknown member')}</span>${row.detail?`<small>${escape(localDetail(row.detail))}</small>`:''}</div>${item.hideValue?'':`<strong>${escape(number(row.value))}${item.unit?` <small>${escape(metricUnit(item,row))}</small>`:''}</strong>`}</li>`).join('')}</ol>`:'<p class="community-empty">No records yet.</p>'}</section>`).join('')}</div>
+ <div class="community-highlights">${highlights.map(item=>`<section class="community-highlight"><h4>${escape(item.title)}</h4><p>${escape(item.description)}</p>${list(item.rows).length?`<ol>${list(item.rows).slice(0,5).map(row=>`<li><div><span>${escape(row.name || 'Unknown member')}</span>${row.detail?`<small>${escape(localDetail(row.detail))}</small>`:''}</div>${item.hideValue?'':`<strong>${escape(number(row.value))}${item.unit?` <small>${escape(metricUnit(item,row))}</small>`:''}</strong>`}</li>`).join('')}</ol>`:`<p class="community-empty">${escape(item.emptyText || 'No records yet.')}</p>`}</section>`).join('')}</div>
  <div class="community-coverage"><p>Posts are new messages; reactions are emoji added to messages. A departure is a leave or kick. These counts are separate from button clicks or bot command use. Dates and times use your local time zone.</p>${date(report.generatedAt)?`<p>Updated ${escape(date(report.generatedAt))}</p>`:''}${date(report.trackingSince)?`<p>Discord activity tracking since ${escape(date(report.trackingSince))}</p>`:''}${list(report.notes).length?`<ul>${report.notes.map(note=>`<li>${escape(note)}</li>`).join('')}</ul>`:''}</div>`;
 }
 
@@ -45,7 +46,7 @@ export function createCommunityStatisticsPanel({request,getSessionKey=()=>'defau
   if(!ensureSession()||loading)return;
   const requestGeneration=generation;loading=true;error='';update(root);
   try{
-   const response=await request('guildsync:request-community-statistics',{});
+   const response=await request('guildsync:request-community-statistics',{timeZone:requestTimeZone()});
    ensureSession();if(requestGeneration!==generation)return;
    if(!response?.ok||!response.report)throw new Error(response?.message || 'Could not load community highlights. Please refresh to retry.');
    report=response.report;

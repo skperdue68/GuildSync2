@@ -81,6 +81,10 @@ See [Voice Channel Mute](GuildSync-Voice-Mute.md) for permissions, personal shor
 
 | Environment key | Purpose | Default | Validation |
 | --- | --- | --- | --- |
+| GUILDSYNC_COMMUNITY_TRADER_WINDOW | Trader card time base | raffle | `raffle` uses the same 50/50 draw-to-draw span as the two buyer cards; `14 days` counts back from each refresh. The buyer cards always follow the raffle. |
+| GUILDSYNC_COMMUNITY_TRADER_TOP_LIMIT | Members listed per trader card | 5 | 1-25. Other highlights keep their own size. |
+| GUILDSYNC_COMMUNITY_TRADER_GOLD_VISIBILITY | Who sees trader gold | user | `user` shows amounts to approved users and admins and withholds them from viewers; `admin` shows them only to admins; `never` withholds them from everyone. The Discord bot never receives amounts. |
+| GUILDSYNC_COMMUNITY_HIDDEN_HIGHLIGHTS | Hidden highlight cards (ids, comma separated) | (blank) | Removes cards from the report, for example `trader-visitor-buyers,guild-joins`. |
 | GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS | Keep a closed 50/50 raffle on the Guild Regulars and Window Shoppers buyer cards (hours) | 1 | 0–168; fractional hours such as 1.5 are allowed. Counted from the 8 PM Eastern draw, not the 7 PM cutoff, so the default keeps the closed raffle up until 9 PM Eastern. Both buyer cards show the span and the resulting reset time, and the sentence names the value. |
 
 ### Receipt messages

@@ -1,3 +1,4 @@
+import {COMMUNITY_HIGHLIGHT_IDS} from './community-statistics.js';
 // Only these operational settings may be displayed or overridden. Never accept arbitrary env keys.
 const configurationHelp={
  "GUILDSYNC_VOICE_MUTE_ENABLED": {
@@ -112,6 +113,22 @@ const configurationHelp={
   "section": "",
   "help": "Sends the early-purchase nudge on a receipt when a raffle has bonuses and the purchase missed a higher percentage. The nudge names the percentage and its deadline, and each member receives it at most once per raffle. Turn it off to stop the footer without changing how bonus tickets are earned or mailed."
  },
+ "GUILDSYNC_COMMUNITY_TRADER_WINDOW": {
+  "section": "",
+  "help": "Time base for the Market Moguls and Pack Mules trader cards. Raffle counts the same 50/50 span the two buyer cards use, from the previous draw to this raffle's draw; 14 days counts back from each refresh. The two buyer cards always follow the raffle."
+ },
+ "GUILDSYNC_COMMUNITY_TRADER_TOP_LIMIT": {
+  "section": "",
+  "help": "Members listed on each guild trader card, from 1 to 25. The default is the top 5. Other highlights keep their own size."
+ },
+ "GUILDSYNC_COMMUNITY_TRADER_GOLD_VISIBILITY": {
+  "section": "",
+  "help": "Who sees gold amounts on the trader cards. Users shows them to approved users and admins and withholds them from read-only viewers; Admins shows them only to admins; Never withholds them from everyone. Unrecognised roles and the Discord bot never receive amounts."
+ },
+ "GUILDSYNC_COMMUNITY_HIDDEN_HIGHLIGHTS": {
+  "section": "",
+  "help": "Card ids to remove from Community Highlights, comma separated, for example trader-visitor-buyers,guild-joins. Blank shows every card. Valid ids: guild-joins, discord-joins, longest-member, newest-member, discord-busiest, discord-posts, discord-reactions, tickets-biweekly, tickets-monthly, raffle-bonus, raffle-spending, trader-sales, trader-items, trader-member-buyers, trader-visitor-buyers."
+ },
  "GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS": {
   "section": "",
   "help": "Hours a closed 50/50 raffle stays on the Guild Regulars and Window Shoppers cards after its draw so its buyer standings can still be quoted. After that, the next community statistics refresh shows the new raffle. A draw is one hour after ticket sales close. Set 0 to switch at the draw itself. The default is 1 hour; enter 0 to 168."
@@ -157,6 +174,10 @@ export const configurationCatalog=[
  define('backend','Spreadsheet automation','GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED','Enable automatic raffle rollover','boolean',false),
  define('backend','Spreadsheet automation','GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS','Rollover delay (hours)','number',4,{min:0,max:8760}),
  define('backend','Community highlights','GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS','Keep a closed 50/50 raffle on the buyer cards (hours)','number',1,{min:0,max:168}),
+ define('backend','Community highlights','GUILDSYNC_COMMUNITY_TRADER_WINDOW','Trader card time base','select','raffle',{options:['raffle','14 days']}),
+ define('backend','Community highlights','GUILDSYNC_COMMUNITY_TRADER_TOP_LIMIT','Members listed per trader card','number',5,{min:1,max:25}),
+ define('backend','Community highlights','GUILDSYNC_COMMUNITY_TRADER_GOLD_VISIBILITY','Who sees trader gold','select','user',{options:['user','admin','never']}),
+ define('backend','Community highlights','GUILDSYNC_COMMUNITY_HIDDEN_HIGHLIGHTS','Hidden highlight cards (ids, comma separated)','cards',''),
  define('backend','Receipt messages','GUILDSYNC_DEPOSIT_MAIL_BONUS_NUDGE_ENABLED','Send the early-purchase nudge','boolean',true),
 define('backend','Receipt messages','GUILDSYNC_DEPOSIT_MAIL_SUBJECT_TEMPLATE','Receipt subject','template','Raffle ticket deposit received',{maxLength:200,placeholders:['recipient','amount','ticket_quantity','event_id','related_transaction_id','ticket_type','ticket_type_raw','transaction_type','account_name','display_name','deposit_amount','raw_amount','raw_deposit_amount','tickets','purchased_tickets','gold_cost','raw_ticket_gold_cost','raw_gold_cost','purchase_date','data_source','event_datetime','event_timestamp','raffle_datetime_eastern','raffle_date_time_eastern','raffle_datetime','mail_request_id','mail_batch_id','ticket_gold_cost','bonus_percent','bonus_tickets','total_tickets','bonus_deadline','bonus_label','bonus_schedule','bonus_block','bonus_note_block','bonus_upsell','bonus_upsell_tickets','bonus_upsell_deadline','note','note_block']}),
  define('backend','Receipt messages','GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE','Receipt body','template','Hi {recipient},\n\nThank you for supporting Alphabet Mafia!\n\nWe received your guild bank deposit of {amount} gold.\nTicket Credit Earned: {ticket_quantity}\n{bonus_note_block}\nTransaction ID: {event_id}\n\n-- Alphabet Mafia',{maxLength:10000,placeholders:['recipient','amount','ticket_quantity','event_id','related_transaction_id','ticket_type','ticket_type_raw','transaction_type','account_name','display_name','deposit_amount','raw_amount','raw_deposit_amount','tickets','purchased_tickets','gold_cost','raw_ticket_gold_cost','raw_gold_cost','purchase_date','data_source','event_datetime','event_timestamp','raffle_datetime_eastern','raffle_date_time_eastern','raffle_datetime','mail_request_id','mail_batch_id','ticket_gold_cost','bonus_percent','bonus_tickets','total_tickets','bonus_deadline','bonus_label','bonus_schedule','bonus_block','bonus_note_block','bonus_upsell','bonus_upsell_tickets','bonus_upsell_deadline','note','note_block']})
@@ -174,6 +195,7 @@ function typed(item,value){
  if(item.type==='role' && text && /[,\x00-\x1f\x7f@]/.test(text))throw Error(item.label+' must be one role name or ID without @.');
  if(item.type==='roles' && text && text.split(',').some(ref=>!ref.trim()||/[\x00-\x1f\x7f]/.test(ref)||ref.trim().startsWith('@')||ref.includes('<@')))throw Error(item.label+' must contain comma-separated role names or IDs without @.');
  if(item.type==='hours' && (!text || text.split(',').some(v=>!v.trim() || !Number.isFinite(Number(v))||Number(v)<=0||Number(v)>8760)))throw Error(item.label+' must contain positive hours.');
+ if(item.type==='cards' && text && text.split(',').some(id=>!COMMUNITY_HIGHLIGHT_IDS.includes(id.trim().toLowerCase())))throw Error(item.label+' must contain comma-separated card ids.');
  if(item.type==='select'&&!item.options.includes(text))throw Error('Invalid '+item.label+'.');
  if(item.type==='template'&&!text.trim())throw Error(item.label+' cannot be blank; use the .env default instead.');
  if(item.type==='template')for(const match of text.matchAll(/\{([^{}]+)\}/g))if(!item.placeholders.includes(match[1]))throw Error('Unknown placeholder: '+match[1]);

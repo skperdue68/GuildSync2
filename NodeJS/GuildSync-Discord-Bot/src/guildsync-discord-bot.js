@@ -34,10 +34,12 @@ import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
 import * as tickets from './commands/tickets.js';
 import * as trader from './commands/trader.js';
+import * as highlights from './commands/highlights.js';
 import * as gsaRaffle from './commands/gsa-raffle.js';
 import { startArchiveAnnouncements } from './archive-announcements.js';
 import { startRaffleAnnouncements } from './raffle-announcements.js';
 import { startTraderSaleNotifications } from './trader-sale-notifications.js';
+import { startCommunityHighlightsAnnouncements } from './community-highlights-announcements.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -203,6 +205,7 @@ const commands = [
   raffle,
   tickets,
   trader,
+  highlights,
   gsaRaffle.createGsrCommand(),
   gsaRaffle.createGsrAliasCommand(),
   gsaCommand
@@ -213,6 +216,7 @@ for (const command of commands) {
 }
 
 startTraderSaleNotifications(client, guildSyncSocket, Log);
+startCommunityHighlightsAnnouncements(client, guildSyncSocket, Log);
 
 let startupSyncDone = false;
 let startupSyncRunning = false;

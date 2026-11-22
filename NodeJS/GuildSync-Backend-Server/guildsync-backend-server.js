@@ -645,7 +645,9 @@ function registerGuildSyncConnection(socket) {
     loadBonusPolicies:async db=>({policies:await getRaffleBonusVersions(db),overrides:await getRaffleBonusOverrides(db)}),
     authorizeViewer:async current=>{
       const [rows]=await loginDB.execute('SELECT role,allowed FROM guildsync_users WHERE discord_user_id=? LIMIT 1',[current.guildSyncUser.discord_user_id]);
-      return Number(rows[0]?.allowed)===1 && ['viewer','user','admin'].includes(roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role)||rows[0]?.role);
+      const role=roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role)||rows[0]?.role;
+      // Return the role that was just read, so a report cannot reuse a stale socket role.
+      return Number(rows[0]?.allowed)===1 && ['viewer','user','admin'].includes(role) ? role : false;
     }
   });
   registerUserSettingsSocket(socket,{db:loginDB,authorizeUser:async id=>{
