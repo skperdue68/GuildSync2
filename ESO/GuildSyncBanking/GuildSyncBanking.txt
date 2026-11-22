@@ -1,6 +1,6 @@
 ## Title: GuildSyncBanking
 ## APIVersion: 101051
-## Version: 2.0.9
+## Version: 2.0.10
 ## Author: @evainefaye
 ## SavedVariables: GuildSyncBanking GuildSyncBankingState
 ## DependsOn: LibHistoire
