@@ -5,7 +5,7 @@
 The client requests a **60-minute** checkout; the backend API default is 30 minutes when no duration is supplied.
 Previously that expiration was recorded but never enforced.
 With updated clients, an expired checkout that has not been handed to ESO becomes unsent and available to other senders again.
-Expiration is checked on backend startup, banking refresh/broadcast, checkout, and handoff attempts. Connected clients normally poll availability every 30 seconds.
+Expiration is checked on backend startup, banking refresh/broadcast, checkout, and handoff attempts. A server-side sweep also reclaims expired checkouts every 60 seconds and emits `guildsync:deposit-mail-availability-changed` so connected clients refresh availability immediately instead of waiting for their 30-second poll.
 
 Before writing SavedVariables, the updated client must be connected and obtain backend authorization for the same owner/batch/event IDs.
 It writes only records the backend still reserves for that sender.

@@ -26,6 +26,7 @@ import cors from 'cors';
 import http from 'node:http';
 import {createDesktopVersionPolicy} from './desktop-version-policy.js';
 import {releaseExpiredDepositMailCheckouts} from './deposit-mail-lease.js';
+import {startDepositMailSweep} from './deposit-mail-sweep.js';
 import fs from 'node:fs';
 import { registerRaffleSocket, registerArchiveSocket } from './raffle-socket.js';
 import { getActiveRaffleSummary, getRaffleUserTickets, getSheetsRaffleWindows, getRaffleRefreshSelection, selectSheetsCatchupEntries } from './guildsync-database-actions.js';
@@ -127,6 +128,7 @@ let loginDB;
 let applicationDB;
 let sheetsRuntime;
 let sheetsExportRecovery;
+let depositMailSweep;
 let configurationService;
 let voiceIdentityService;
 
@@ -2914,6 +2916,12 @@ async function notifyTraderSaleSubscribers(entries = []) {
   }
 }
 
+// Expired deposit mail leases return to the pool on their own, so an abandoned
+// checkout does not wait for a connected client to ask for banking data.
+depositMailSweep = startDepositMailSweep(applicationDB, {
+  notify: (released) => broadcastDepositMailAvailability(released)
+});
+
 server.listen(PORT, HOST, () => {
   Log(`GuildSync auth server listening at http://${HOST}:${PORT}`);
   Log(`Discord redirect URI: ${DISCORD_REDIRECT_URI}`);
@@ -2949,6 +2957,19 @@ async function broadcastBankingDataUpdate() {
   } catch (error) {
     Log('Failed to broadcast banking data update:', error);
   }
+}
+
+function broadcastDepositMailAvailability(released) {
+  const count = Number(released) || 0;
+  if (count <= 0) return;
+
+  io.to('GuildSyncClient').emit('guildsync:deposit-mail-availability-changed', {
+    ok: true,
+    released: count,
+    message: `${count} deposit mail batch${count === 1 ? '' : 'es'} became available again.`,
+    at: new Date().toLocaleString()
+  });
+  Log(`Deposit mail sweep released ${count} expired checkout${count === 1 ? '' : 's'}.`);
 }
 
 function emitDiscordRefreshStatus(message) {
