@@ -8867,11 +8867,13 @@ function renderOpenProfileMenuContents() {
           <span class="profile-section-subtitle">${guildSyncFileWatcherStatus?.watching ? 'Active' : 'Stopped'}</span>
         </div>
         ${renderProfileFileWatcherSection()}
+        <div class="profile-user-settings-mount">
+          <button id="openUserSettingsButton" class="profile-user-settings-button" type="button">User Settings</button>
+        </div>
       </div>
       ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}
       <div id="voiceHotkeyMount">${voiceHotkey.render()}</div>
       ${renderUserSwitchControls(guildSyncSession.user,userSwitchOptions)}
-      <button id="openUserSettingsButton" class="discord-secondary-button profile-user-settings-button" type="button">User Settings</button>
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
     </section>
   `;
@@ -9276,7 +9278,7 @@ function renderUserSettingsDialog() {
             Leave blank to use the default folder. This value is stored with your GuildSync account, and a leading <code>~</code> expands to your home folder. An existing GuildSyncSettings.txt value was moved here automatically.
           </div>
           <div class="roster-history-muted">Default: ${escapeHtml(defaultLabel)}</div>
-          <div class="roster-history-muted">In use now: ${escapeHtml(appliedValue || defaultLabel)}</div>
+          <div class="roster-history-muted user-settings-in-use">In use now: ${escapeHtml(appliedValue || defaultLabel)}</div>
 
           <div class="manual-ticket-actions banking-move-actions">
             <button id="useDefaultUserSettingsButton" class="discord-secondary-button" type="button" ${userSettingsSaving ? 'disabled' : ''}>USE DEFAULT</button>
