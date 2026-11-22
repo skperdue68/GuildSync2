@@ -6907,3 +6907,24 @@ body {
 
 .configuration-readonly-value { display:block; box-sizing:border-box; min-height:38px; padding:8px; background:#18212e; color:#f3f5fa; border:1px solid #64748b; border-radius:5px; white-space:pre-wrap; overflow-wrap:anywhere; }
 .configuration-readonly-notice { border-left:3px solid #60a5fa; padding:8px 12px; }
+
+/* User Settings dialog: the two actions keep clear space between them, and the folder
+   actually in use is the line that stands out. */
+.user-settings-dialog .manual-ticket-actions {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  padding-top: 12px;
+}
+
+.user-settings-dialog .manual-ticket-actions .refresh-discord-button {
+  min-width: 140px;
+  justify-content: center;
+  padding: 12px 22px;
+  font-size: 14px;
+}
+
+.user-settings-dialog .user-settings-in-use {
+  color: #E5E7EB;
+  font-weight: 700;
+}

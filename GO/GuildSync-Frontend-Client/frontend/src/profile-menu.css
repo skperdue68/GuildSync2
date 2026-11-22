@@ -134,3 +134,29 @@
 .profile-read-only .profile-filewatch-item {
   cursor: not-allowed;
 }
+
+/* The account SavedVariables folder sits with the files it points at, centred, with
+   room above and below so it reads as its own action. */
+.profile-user-settings-mount {
+  display: flex;
+  justify-content: center;
+  margin: 16px 0;
+}
+
+.discord-profile-menu .profile-user-settings-button {
+  min-width: 190px;
+  padding: 10px 22px;
+  background: #2563EB;
+  border: 1px solid #3B82F6;
+  border-radius: 8px;
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+}
+
+.discord-profile-menu .profile-user-settings-button:hover {
+  background: #1D4ED8;
+  border-color: #60A5FA;
+}

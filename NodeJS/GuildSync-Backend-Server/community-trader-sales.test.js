@@ -25,7 +25,7 @@ test('trader cards can rank the last 14 days and never publish gold totals',()=>
  assert.ok(sales.rows.every(r=>!('value' in r)),'gold values must not reach the report payload');
  const items=report.highlights.find(h=>h.id==='trader-items');
  assert.equal(items.title,'Pack Mules (last 14 days, Top 5)');
- assert.match(items.description,/counted back from this refresh/);
+ assert.match(items.description,/in the last 14 days/);
  assert.equal(items.unit,'items');
  assert.deepEqual(items.rows.map(r=>[r.name,r.value]),[['Bob',10],['Alice',5],['Casey',4],['Boundary',1]]);
  const ids=report.highlights.map(h=>h.id);
@@ -52,9 +52,10 @@ test('buyer rankings count the current 50/50 raffle and split current members fr
  const report=buildCommunityStatistics({now,roster,traderSales});
  const members=report.highlights.find(h=>h.id==='trader-member-buyers');
  assert.equal(members.title,'Guild Regulars (current 50/50 raffle, Top 5)');
- // The card states the real span and the reset time, not just a number of hours.
- assert.match(members.description,/Counts the 50\/50 raffle from Dec 19, 2026, 8:00 PM EST to Jan 30, 2027, 8:00 PM EST\./);
- assert.match(members.description,/It stays listed until Jan 30, 2027, 9:00 PM EST \(1 hour after the draw\)/);
+ // The card names the span in one short sentence instead of the raffle narrative.
+ assert.match(members.description,/Gold spent by guild members on items listed by another guild member from Dec 19, 2026, 8:00 PM EST to Jan 30, 2027, 8:00 PM EST\./);
+ assert.match(members.description,/Valid as of /);
+ assert.ok(!members.description.includes('It stays listed'));
  // The card covers one raffle: purchases from the raffle before it are excluded.
  assert.ok(!members.description.includes('LastRaffle'));
  assert.equal(members.hideValue,true);
@@ -93,7 +94,7 @@ test('trader gold is listed for users and admins but withheld from viewers',()=>
  assert.deepEqual(pick('user','trader-visitor-buyers').rows.map(r=>[r.name,r.value]),[['Outsider',3000]]);
  assert.deepEqual(pick('user','trader-sales').rows.map(r=>[r.name,r.value]),[['Seller',4000],['Other',2700]]);
  for(const id of ['trader-sales','trader-member-buyers','trader-visitor-buyers'])
-  assert.match(pick('user',id).description,/Gold amounts are listed/);
+  assert.doesNotMatch(pick('user',id).description,/officer-only/,'visible amounts need no note');
  // An admin sees the same amounts.
  assert.deepEqual(pick('admin','trader-member-buyers').rows.map(r=>[r.name,r.value]),[['Alice',5000]]);
  // A plain viewer, or any role the server does not recognise, gets names and order only.
@@ -103,7 +104,7 @@ test('trader gold is listed for users and admins but withheld from viewers',()=>
    assert.equal(card.hideValue,true);
    assert.equal(card.unit,'');
    assert.ok(card.rows.every(r=>!('value' in r)),'viewers must not receive gold');
-   assert.doesNotMatch(card.description,/Gold amounts are listed/);
+   assert.match(card.description,/Gold amounts are officer-only\./,'viewers are told why amounts are missing');
   }
  }
  assert.deepEqual(pick('viewer','trader-member-buyers').rows.map(r=>r.name),['Alice']);
@@ -133,24 +134,25 @@ test('the raffle linger is configurable and the buyer card text follows it',()=>
  const card=(now,env)=>buildCommunityStatistics({now,roster,traderSales,env})
   .highlights.find(h=>h.id==='trader-member-buyers');
  // The one-hour default keeps the closed raffle readable for an hour after the draw.
- assert.match(card(RAFFLE_END-60,{}).description,/stays listed until Jan 30, 2027, 9:00 PM EST \(1 hour after the draw\)/);
+ assert.match(card(RAFFLE_END-60,{}).description,/from Dec 19, 2026, 8:00 PM EST to Jan 30, 2027, 8:00 PM EST\./);
+ assert.ok(!card(RAFFLE_END-60,{}).description.includes('stays listed'),'the linger is a rule, not card copy');
  assert.deepEqual(card(RAFFLE_END+2*3600-60,{}).rows.map(r=>r.name),['Alice']);
  assert.deepEqual(card(RAFFLE_END+2*3600,{}).rows.map(r=>r.name),[]);
  // A longer linger keeps it, and the sentence names the configured hours.
  const longer={GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'6'};
- assert.match(card(RAFFLE_END-60,longer).description,/stays listed until Jan 31, 2027, 2:00 AM EST \(6 hours after the draw\)/);
+ assert.equal(card(RAFFLE_END-60,longer).description,card(RAFFLE_END-60,{}).description,'a longer linger changes when the card switches, not its wording');
  assert.deepEqual(card(RAFFLE_END+6*3600,longer).rows.map(r=>r.name),['Alice']);
  assert.deepEqual(card(RAFFLE_END+7*3600,longer).rows.map(r=>r.name),[]);
  // Fractional hours are allowed and read naturally.
- assert.match(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'1.5'}).description,/stays listed until Jan 30, 2027, 9:30 PM EST \(1.5 hours after the draw\)/);
+ assert.equal(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'1.5'}).description,card(RAFFLE_END-60,{}).description);
  // Zero hands the cards to the next raffle at the draw instead of lingering.
  const none={GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'0'};
- assert.match(card(RAFFLE_END-60,none).description,/The next raffle replaces it at that draw\./);
+ assert.equal(card(RAFFLE_END-60,none).description,card(RAFFLE_END-60,{}).description);
  assert.deepEqual(card(RAFFLE_END+3600-60,none).rows.map(r=>r.name),['Alice']);
  assert.deepEqual(card(RAFFLE_END+3600,none).rows.map(r=>r.name),[]);
  // An unusable value falls back to the default rather than breaking the report.
  for(const bad of ['-1','169','abc',''])
-  assert.match(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:bad}).description,/\(1 hour after the draw\)/);
+  assert.deepEqual(card(RAFFLE_END+2*3600-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:bad}).rows.map(r=>r.name),['Alice'],'an unusable linger falls back to one hour');
 });
 
 test('buyer cards stop exactly at the draw boundaries',()=>{
@@ -187,8 +189,9 @@ test('all four trader cards share the raffle span by default',()=>{
  const report=buildCommunityStatistics({now,roster,traderSales});
  const sales=report.highlights.find(h=>h.id==='trader-sales');
  assert.equal(sales.title,'Market Moguls (current 50/50 raffle, Top 5)');
- assert.ok(sales.description.includes('Counts the 50/50 raffle from'));
- assert.ok(sales.description.includes('Trader data through'));
+ assert.match(sales.description,/Highest gold earned on guild trader sales from /);
+ assert.ok(!sales.description.includes('Counts the 50/50 raffle'));
+ assert.ok(sales.description.includes('Valid as of'));
  // The previous raffle's last second and the future draw sale stay out of this span.
  assert.deepEqual(sales.rows.map(r=>r.name),['Seller']);
  assert.equal(report.traderLatestAt,salesEnd,'the report names the newest recorded sale');

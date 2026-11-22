@@ -67,13 +67,6 @@ function clockStamp(timestamp,timeZone){
   .filter(part=>part.type!=='literal').map(part=>[part.type,part.value]));
  return `${parts.month} ${parts.day}, ${parts.year}, ${parts.hour}:${parts.minute} ${parts.dayPeriod} ${parts.timeZoneName}`;
 }
-function buyerRaffleSpanNote(window,timeZone){
- const span=`Counts the 50/50 raffle from ${clockStamp(window.previousDrawTime,timeZone)} to ${clockStamp(window.drawTime,timeZone)}.`;
- if(!window.lingerSeconds)return `${span} The next raffle replaces it at that draw.`;
- const hours=window.lingerSeconds/3600;
- const text=Number.isInteger(hours)?String(hours):hours.toFixed(1);
- return `${span} It stays listed until ${clockStamp(window.resetsAt,timeZone)} (${text} hour${hours===1?'':'s'} after the draw), then the card moves to the next raffle.`;
-}
 // The trader export keeps the ESO @ on the name; the roster stores the bare account, so
 // membership has to compare the account name rather than its display prefix.
 const bareName=value=>String(value??'').trim().replace(/^@+/,'').replace(/\s+/g,' ');
@@ -182,28 +175,27 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const showTraderGold=goldVisibility!=='never'&&roleRank>=(goldVisibility==='admin'?2:1);
  const goldUnit=showTraderGold?'gold':'';
  const withGold=rows=>showTraderGold?rows:rows.map(r=>({name:r.name}));
- const goldNote=shown=>shown?'Gold amounts are listed.':'Gold amounts are not listed.';
+ const goldNote=shown=>shown?'':'Gold amounts are officer-only.';
  const nameAs=(rows,field)=>rows.map(r=>({...r,account_name:bareName(r[field]||r[field+'_original'])}));
  const earned=r=>positive(r.net)||positive(r.price);
  // The newest recorded sale makes a stale import visible instead of silently shrinking totals.
  const latestTraderAt=traderSales.reduce((latest,row)=>Math.max(latest,Number(row.event_timestamp)||0),0);
- const freshness=!traderScoped?'Trader sales are not listed because this installation is not bound to one ESO guild.':latestTraderAt>0?`Trader data through ${clockStamp(latestTraderAt,zone)}.`:'No trader sales recorded yet.';
+ const freshness=!traderScoped?'Trader sales are not listed because this installation is not bound to one ESO guild.':latestTraderAt>0?`Valid as of ${clockStamp(latestTraderAt,zone)}.`:'No trader sales recorded yet.';
  // All four trader cards share the raffle span by default; the rolling 14-day seller
  // window stays available for guilds that prefer it.
  const raffleWindow=buyerRaffleWindow(now,env);
  const raffleEnd=Math.min(now,raffleWindow.salesEnd);
- const spanNote=buyerRaffleSpanNote(raffleWindow,zone);
  const raffleWindowMode=traderWindowSetting!=='14 days';
  const sellerStart=raffleWindowMode?raffleWindow.salesStart:now-TRADER_WINDOW_SECONDS;
  const sellerEnd=raffleWindowMode?raffleEnd:now;
  const sellerRows=nameAs(traderSales.filter(r=>Number(r.event_timestamp)>=sellerStart&&Number(r.event_timestamp)<=sellerEnd),'seller').filter(r=>positive(r.quantity)>0);
  const sellerTitle=`(${raffleWindowMode?'current 50/50 raffle':'last 14 days'}, Top ${traderTop})`;
- const sellerWhere=raffleWindowMode?'this raffle':'in the last 14 days';
- const sellerContext=raffleWindowMode?spanNote:'Sales from the last 14 days are counted back from this refresh.';
+ const spanRange=raffleWindowMode?`from ${clockStamp(raffleWindow.salesStart,zone)} to ${clockStamp(raffleWindow.salesEnd,zone)}`:'in the last 14 days';
+ const describe=(...parts)=>parts.filter(Boolean).join(' ');
  // Card titles carry a little guild-market flavour; each description still spells out
  // exactly what is counted, so the theme never replaces the meaning.
- add('trader-sales','Market Moguls '+sellerTitle,`Highest gold earned on guild trader sales ${sellerWhere}. ${goldNote(showTraderGold)} ${sellerContext} ${freshness}`,goldUnit,withGold(leaders(sellerRows,r=>r.account_name,earned,traderTop)),showTraderGold?{}:{hideValue:true});
- add('trader-items','Pack Mules '+sellerTitle,`Most items sold through the guild trader ${sellerWhere}, totalled by quantity. ${sellerContext} ${freshness}`,'items',leaders(sellerRows,r=>r.account_name,r=>positive(r.quantity),traderTop));
+ add('trader-sales','Market Moguls '+sellerTitle,describe(`Highest gold earned on guild trader sales ${spanRange}.`,goldNote(showTraderGold),freshness),goldUnit,withGold(leaders(sellerRows,r=>r.account_name,earned,traderTop)),showTraderGold?{}:{hideValue:true});
+ add('trader-items','Pack Mules '+sellerTitle,describe(`Most items sold through the guild trader ${spanRange}.`,freshness),'items',leaders(sellerRows,r=>r.account_name,r=>positive(r.quantity),traderTop));
  // Buyer rankings over the 50/50 raffle period: members are matched on both sides, outsiders by buyer only.
  const members=new Set(current.map(r=>nameKey(r.account_name)).filter(Boolean));
  const isMember=name=>members.has(nameKey(name));
@@ -211,8 +203,8 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const buyerSales=traderSales.filter(r=>Number(r.event_timestamp)>=raffleWindow.salesStart&&Number(r.event_timestamp)<=raffleEnd);
  // Rank by what the buyer paid (price), not the seller's post-tax proceeds.
  const topBuyers=rows=>withGold(leaders(nameAs(rows,'buyer'),r=>r.account_name,r=>positive(r.price),traderTop));
- add('trader-member-buyers','Guild Regulars (current 50/50 raffle, Top '+traderTop+')',`Gold spent by current guild members on items listed by another current member during the current 50/50 raffle. ${spanNote} ${goldNote(showTraderGold)} ${freshness}`,goldUnit,topBuyers(buyerSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
- add('trader-visitor-buyers','Window Shoppers (current 50/50 raffle, Top '+traderTop+')',`Gold spent at the guild trader during the current 50/50 raffle by buyers who are not current guild members, whoever listed the item. ${spanNote} ${goldNote(showTraderGold)} ${freshness}`,goldUnit,topBuyers(buyerSales.filter(r=>!isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
+ add('trader-member-buyers','Guild Regulars (current 50/50 raffle, Top '+traderTop+')',describe(`Gold spent by guild members on items listed by another guild member ${spanRange}.`,goldNote(showTraderGold),freshness),goldUnit,topBuyers(buyerSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
+ add('trader-visitor-buyers','Window Shoppers (current 50/50 raffle, Top '+traderTop+')',describe(`Gold spent at the guild trader by buyers outside the guild ${spanRange}.`,goldNote(showTraderGold),freshness),goldUnit,topBuyers(buyerSales.filter(r=>!isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
  return {
   generatedAt:new Date(now*1000).toISOString(),
   trackingSince,
