@@ -51,7 +51,7 @@ test('buyer rankings count the current 50/50 raffle and split current members fr
  const report=buildCommunityStatistics({now,roster,traderSales});
  const members=report.highlights.find(h=>h.id==='trader-member-buyers');
  assert.equal(members.title,'Guild Regulars (current 50/50 raffle, Top 5)');
- assert.match(members.description,/from the previous cutoff to now/);
+ assert.match(members.description,/from the previous draw to now/);
  // The card covers one raffle: purchases from the raffle before it are excluded.
  assert.ok(!members.description.includes('LastRaffle'));
  assert.equal(members.hideValue,true);
@@ -64,7 +64,7 @@ test('buyer rankings count the current 50/50 raffle and split current members fr
  // Anyone off the roster counts, even when a member who has since left listed the item.
  assert.deepEqual(visitors.rows.map(r=>r.name),['Outsider','Walkin']);
  assert.ok(visitors.rows.every(r=>!('value' in r)),'gold values must not reach the report payload');
- // No trader card may carry gold or per-sale amounts in any field.
+ // A viewer role (the default here) gets no gold or per-sale amounts in any field.
  const privateCards=report.highlights.filter(h=>['trader-sales','trader-member-buyers','trader-visitor-buyers'].includes(h.id));
  assert.doesNotMatch(JSON.stringify(privateCards),/"(value|price|net|tax)":/);
  const ids=report.highlights.map(h=>h.id);
@@ -74,17 +74,53 @@ test('buyer rankings count the current 50/50 raffle and split current members fr
  assert.deepEqual(ids.slice(-2),['guild-joins','discord-joins']);
 });
 
-test('a closed 50/50 raffle stays on the buyer cards for a few hours, then resets',()=>{
+test('trader gold is listed for users and admins but withheld from viewers',()=>{
+ const roster=[{account_name:'Seller',in_roster:1},{account_name:'Alice',in_roster:1}];
+ const now=RAFFLE_END-3600;
+ const traderSales=[
+  {seller:'Seller',buyer:'Alice',quantity:2,price:5000,net:4000,event_timestamp:now},
+  {seller:'Other',buyer:'Outsider',quantity:1,price:3000,net:2700,event_timestamp:now-10}
+ ];
+ const cards=viewerRole=>buildCommunityStatistics({now,roster,traderSales,viewerRole}).highlights;
+ const pick=(role,id)=>cards(role).find(h=>h.id===id);
+ const gold=pick('user','trader-member-buyers');
+ assert.equal(gold.hideValue,undefined);
+ assert.equal(gold.unit,'gold');
+ assert.deepEqual(gold.rows.map(r=>[r.name,r.value]),[['Alice',5000]]);
+ assert.deepEqual(pick('user','trader-visitor-buyers').rows.map(r=>[r.name,r.value]),[['Outsider',3000]]);
+ assert.deepEqual(pick('user','trader-sales').rows.map(r=>[r.name,r.value]),[['Seller',4000],['Other',2700]]);
+ for(const id of ['trader-sales','trader-member-buyers','trader-visitor-buyers'])
+  assert.match(pick('user',id).description,/Gold amounts are listed/);
+ // An admin sees the same amounts.
+ assert.deepEqual(pick('admin','trader-member-buyers').rows.map(r=>[r.name,r.value]),[['Alice',5000]]);
+ // A plain viewer, or any role the server does not recognise, gets names and order only.
+ for(const role of ['viewer',undefined,'','owner']){
+  for(const id of ['trader-sales','trader-member-buyers','trader-visitor-buyers']){
+   const card=pick(role,id);
+   assert.equal(card.hideValue,true);
+   assert.equal(card.unit,'');
+   assert.ok(card.rows.every(r=>!('value' in r)),'viewers must not receive gold');
+   assert.doesNotMatch(card.description,/Gold amounts are listed/);
+  }
+ }
+ assert.deepEqual(pick('viewer','trader-member-buyers').rows.map(r=>r.name),['Alice']);
+ // The item card is quantity-only for every role.
+ assert.equal(pick('user','trader-items').unit,'items');
+ assert.equal(pick('viewer','trader-items').unit,'items');
+});
+
+test('a closed 50/50 raffle stays on the buyer cards until an hour after its draw, then resets',()=>{
  const roster=[{account_name:'Seller',in_roster:1},{account_name:'Alice',in_roster:1}];
  const traderSales=[{seller:'Seller',buyer:'Alice',quantity:1,price:1000,net:900,event_timestamp:RAFFLE_END-60}];
  const names=now=>buildCommunityStatistics({now,roster,traderSales})
   .highlights.find(h=>h.id==='trader-member-buyers').rows.map(r=>r.name);
  assert.deepEqual(names(RAFFLE_END-60),['Alice'],'during the raffle the purchase counts');
- assert.deepEqual(names(RAFFLE_END+2*3600),['Alice'],'the just-closed raffle is still readable');
- assert.deepEqual(names(RAFFLE_END+4*3600),[],'after the linger the next raffle starts empty');
- // The reset is raffle-to-raffle: the new period opens at the cutoff it followed.
- const next=buyerRaffleWindow(RAFFLE_END+4*3600);
- assert.equal(next.salesStart,RAFFLE_END+1);
+ // The draw is one hour after the sales cutoff, so the standings survive until 9 PM Eastern.
+ assert.deepEqual(names(RAFFLE_END+2*3600-60),['Alice'],'the just-closed raffle is still readable');
+ assert.deepEqual(names(RAFFLE_END+2*3600),[],'at the end of the linger the next raffle starts empty');
+ // The reset is raffle-to-raffle: the new period opens at the draw that just happened.
+ const next=buyerRaffleWindow(RAFFLE_END+2*3600);
+ assert.equal(next.salesStart,RAFFLE_END+3600+1);
  assert.ok(next.salesEnd>next.salesStart);
 });
 
@@ -93,40 +129,45 @@ test('the raffle linger is configurable and the buyer card text follows it',()=>
  const traderSales=[{seller:'Seller',buyer:'Alice',quantity:1,price:1000,net:900,event_timestamp:RAFFLE_END-60}];
  const card=(now,env)=>buildCommunityStatistics({now,roster,traderSales,env})
   .highlights.find(h=>h.id==='trader-member-buyers');
- // The three-hour default keeps the closed raffle readable after the cutoff.
- assert.match(card(RAFFLE_END-60,{}).description,/stays listed for 3 hours/);
- assert.deepEqual(card(RAFFLE_END+2*3600,{}).rows.map(r=>r.name),['Alice']);
+ // The one-hour default keeps the closed raffle readable for an hour after the draw.
+ assert.match(card(RAFFLE_END-60,{}).description,/stays listed for 1 hour/);
+ assert.deepEqual(card(RAFFLE_END+2*3600-60,{}).rows.map(r=>r.name),['Alice']);
+ assert.deepEqual(card(RAFFLE_END+2*3600,{}).rows.map(r=>r.name),[]);
  // A longer linger keeps it, and the sentence names the configured hours.
  const longer={GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'6'};
  assert.match(card(RAFFLE_END-60,longer).description,/stays listed for 6 hours/);
- assert.deepEqual(card(RAFFLE_END+5*3600,longer).rows.map(r=>r.name),['Alice']);
+ assert.deepEqual(card(RAFFLE_END+6*3600,longer).rows.map(r=>r.name),['Alice']);
  assert.deepEqual(card(RAFFLE_END+7*3600,longer).rows.map(r=>r.name),[]);
  // Fractional hours are allowed and read naturally.
  assert.match(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'1.5'}).description,/stays listed for 1.5 hours/);
- // Zero replaces the card at the next refresh instead of lingering.
+ // Zero hands the cards to the next raffle at the draw instead of lingering.
  const none={GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:'0'};
  assert.match(card(RAFFLE_END-60,none).description,/replaced at the next refresh/);
- assert.deepEqual(card(RAFFLE_END+60,none).rows.map(r=>r.name),[]);
+ assert.deepEqual(card(RAFFLE_END+3600-60,none).rows.map(r=>r.name),['Alice']);
+ assert.deepEqual(card(RAFFLE_END+3600,none).rows.map(r=>r.name),[]);
  // An unusable value falls back to the default rather than breaking the report.
  for(const bad of ['-1','169','abc',''])
-  assert.match(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:bad}).description,/stays listed for 3 hours/);
+  assert.match(card(RAFFLE_END-60,{GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS:bad}).description,/stays listed for 1 hour/);
 });
 
-test('buyer cards stop exactly at the raffle boundaries',()=>{
- const roster=[{account_name:'Seller',in_roster:1},{account_name:'Alice',in_roster:1},{account_name:'Before',in_roster:1},{account_name:'After',in_roster:1}];
+test('buyer cards stop exactly at the draw boundaries',()=>{
+ const roster=[{account_name:'Seller',in_roster:1},{account_name:'Alice',in_roster:1},{account_name:'Before',in_roster:1},{account_name:'Tail',in_roster:1},{account_name:'After',in_roster:1}];
  const now=RAFFLE_END-3600;
- const {salesStart}=buyerRaffleWindow(now);
+ const {salesStart,salesEnd,drawTime}=buyerRaffleWindow(now);
+ // One raffle counts from the previous draw through its own draw.
+ assert.equal(drawTime,RAFFLE_END+3600);
+ assert.equal(salesEnd,drawTime);
  const rows=[
   {seller:'Seller',buyer:'Alice',quantity:1,price:1000,net:900,event_timestamp:salesStart},
   {seller:'Seller',buyer:'Before',quantity:1,price:9000,net:9000,event_timestamp:salesStart-1},
-  {seller:'Seller',buyer:'After',quantity:1,price:9000,net:9000,event_timestamp:RAFFLE_END+60}
+  {seller:'Seller',buyer:'Tail',quantity:1,price:500,net:400,event_timestamp:RAFFLE_END+60},
+  {seller:'Seller',buyer:'After',quantity:1,price:9000,net:9000,event_timestamp:drawTime+60}
  ];
- const card=buildCommunityStatistics({now,roster,traderSales:rows}).highlights.find(h=>h.id==='trader-member-buyers');
- // The previous raffle's last second is out, the current raffle's first second is in,
- // and a sale recorded after the cutoff waits for the next raffle.
- assert.deepEqual(card.rows.map(r=>r.name),['Alice']);
- const afterClose=buildCommunityStatistics({now:RAFFLE_END+2*3600,roster,traderSales:rows}).highlights.find(h=>h.id==='trader-member-buyers');
- assert.deepEqual(afterClose.rows.map(r=>r.name),['Alice']);
- const nextRaffle=buildCommunityStatistics({now:RAFFLE_END+4*3600,roster,traderSales:rows}).highlights.find(h=>h.id==='trader-member-buyers');
- assert.deepEqual(nextRaffle.rows.map(r=>r.name),['After']);
+ const cardAt=now=>buildCommunityStatistics({now,roster,traderSales:rows}).highlights.find(h=>h.id==='trader-member-buyers');
+ // The previous raffle's last second is out and the current raffle's first second is in.
+ assert.deepEqual(cardAt(now).rows.map(r=>r.name),['Alice']);
+ // A sale recorded in the hour between cutoff and draw still belongs to that raffle.
+ assert.deepEqual(cardAt(RAFFLE_END+30*60).rows.map(r=>r.name),['Alice','Tail']);
+ // Sales after the draw wait for the next raffle, which the cards reach an hour later.
+ assert.deepEqual(cardAt(RAFFLE_END+2*3600).rows.map(r=>r.name),['After']);
 });

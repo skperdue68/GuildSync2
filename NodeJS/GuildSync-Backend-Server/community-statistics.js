@@ -6,9 +6,12 @@ const LEADERBOARD_LIMIT=5;
 // periods. The two buyer cards follow the 50/50 raffle instead.
 const TRADER_WINDOW_SECONDS=14*24*60*60;
 // A closed 50/50 raffle keeps its buyer standings on the cards until the configured
-// linger passes, so they can still be quoted after the cutoff; the next refresh after
-// that shows the new raffle. Administrators change this live; three hours is the default.
-export const DEFAULT_BUYER_RAFFLE_LINGER_HOURS=3;
+// linger passes after its draw, so they can still be quoted; the next refresh after
+// that shows the new raffle. Administrators change this live; one hour is the default.
+export const DEFAULT_BUYER_RAFFLE_LINGER_HOURS=1;
+// Raffles draw one hour after ticket sales close. The buyer cards hand over from one
+// raffle to the next at that draw, not at the earlier cutoff.
+export const RAFFLE_DRAW_AFTER_SALES_SECONDS=60*60;
 export const MAX_BUYER_RAFFLE_LINGER_HOURS=168;
 export function buyerRaffleLingerSeconds(env=process.env){
  const raw=env?.GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS;
@@ -26,13 +29,17 @@ const positive=n=>Number.isFinite(Number(n))?Math.max(0,Number(n)):0;
 const label=r=>r.server_nickname||r.global_name||r.username||r.account_name||r.discord_id||'Unknown';
 const typeOf=t=>['monthly','50/50','5050'].includes(String(t).toLowerCase())?'monthly':['biweekly','bi-weekly','bi weekly'].includes(String(t).toLowerCase())?'biweekly':null;
 function leaders(rows,key,value){const totals=new Map();for(const r of rows){const id=String(key(r)||'').toLowerCase();if(!id)continue;const previous=totals.get(id)||{name:label(r),value:0,detail:''};previous.value+=value(r);totals.set(id,previous);}return [...totals.values()].filter(r=>r.value>0).sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name)).slice(0,LEADERBOARD_LIMIT);}
-// The 50/50 raffle period the buyer cards count: the previous raffle cutoff through the
-// current one, so each raffle stands alone instead of sliding forward day by day.
-// Measuring back by the configured linger is what keeps a just-closed raffle readable.
+// The 50/50 raffle period the buyer cards count: counting starts at the previous draw and
+// runs to this raffle's own draw, so each raffle stands alone instead of sliding forward
+// day by day. A draw is one hour after its sales cutoff, so a raffle counts from 8 PM
+// Eastern on the previous draw date to 8 PM Eastern on its own. Adding the configured
+// linger to the draw is what keeps a just-closed raffle readable until the linger expires.
 export function buyerRaffleWindow(now=Math.floor(Date.now()/1000),env=process.env){
  const lingerSeconds=buyerRaffleLingerSeconds(env);
- const salesEnd=monthlySalesEndAtOrAfter(Number(now)-lingerSeconds);
- return {type:'monthly',salesEnd,salesStart:previousMonthlySalesEnd(salesEnd)+1,lingerSeconds};
+ const cutoff=monthlySalesEndAtOrAfter(Number(now)-RAFFLE_DRAW_AFTER_SALES_SECONDS-lingerSeconds+1);
+ const drawTime=cutoff+RAFFLE_DRAW_AFTER_SALES_SECONDS;
+ return {type:'monthly',cutoff,drawTime,salesEnd:drawTime,
+  salesStart:previousMonthlySalesEnd(cutoff)+RAFFLE_DRAW_AFTER_SALES_SECONDS+1,lingerSeconds};
 }
 export async function initializeCommunityStatisticsSchema(db){
  await db.query(`CREATE TABLE IF NOT EXISTS guildsync_community_statistics_metadata (metadata_key VARCHAR(64) PRIMARY KEY, metadata_value VARCHAR(64) NOT NULL)`);
@@ -41,7 +48,7 @@ export async function initializeCommunityStatisticsSchema(db){
  await db.query(`CREATE TABLE IF NOT EXISTS guildsync_discord_activity (guild_id VARCHAR(32) NOT NULL, event_key VARCHAR(64) NOT NULL, discord_id VARCHAR(32) NOT NULL, display_name VARCHAR(255) NOT NULL, activity_type VARCHAR(16) NOT NULL, recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (guild_id,event_key), INDEX idx_community_activity_actor (discord_id,activity_type)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
  await db.query(`INSERT IGNORE INTO guildsync_community_statistics_metadata (metadata_key,metadata_value) VALUES ('discord_activity_since', DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%dT%H:%i:%sZ'))`);
 }
-export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),trackingSince=null,roster=[],rosterEvents=[],discordMembers=[],discordHistory=[],activity=[],banking=[],windows=[],traderSales=[],bonusPolicies=[],bonusOverrides=[],env=process.env}={}){
+export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),trackingSince=null,roster=[],rosterEvents=[],discordMembers=[],discordHistory=[],activity=[],banking=[],windows=[],traderSales=[],bonusPolicies=[],bonusOverrides=[],env=process.env,viewerRole=null}={}){
  const highlights=[];
  const membershipIds=new Set(['guild-joins','discord-joins']);
  const add=(id,title,description,unit,rows,options={})=>{
@@ -94,7 +101,12 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const spending=r=>{const n=positive(r.amount),digit=Math.trunc(n)%10;return [1,3].includes(digit)&&n>digit?n-digit:n;};
  const recentPurchases=purchases.filter(r=>Number(r.time)>=now-90*86400);
  add('raffle-spending','Raffle spending (last 90 days, Top '+LEADERBOARD_LIMIT+')','Recorded ticket purchases in the last 90 days across both raffles, excluding +1/+3 markers; retained banking history only.','gold',leaders(recentPurchases,r=>r.displayName,spending));
- // Trader cards publish names only; gold totals stay on the server.
+ // Trader gold is shown to approved users and admins; a read-only viewer gets the same
+ // rankings with the amounts withheld. Only the server decides, from the authenticated role.
+ const showTraderGold=['user','admin'].includes(String(viewerRole||'').toLowerCase());
+ const goldUnit=showTraderGold?'gold':'';
+ const withGold=rows=>showTraderGold?rows:rows.map(r=>({name:r.name}));
+ const goldNote=shown=>shown?'Gold amounts are listed.':'Gold amounts are not listed.';
  const traderWindow=seconds=>traderSales.filter(r=>Number(r.event_timestamp)>=now-seconds&&Number(r.event_timestamp)<=now);
  const nameAs=(rows,field)=>rows.map(r=>({...r,account_name:String(r[field]||r[field+'_original']||'').trim()}));
  const earned=r=>positive(r.net)||positive(r.price);
@@ -102,8 +114,8 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const tradedSales=recentSales.filter(r=>positive(r.quantity)>0);
  // Card titles carry a little guild-market flavour; each description still spells out
  // exactly what is counted, so the theme never replaces the meaning.
- add('trader-sales','Market Moguls (last 14 days, Top '+LEADERBOARD_LIMIT+')','Highest gold earned on guild trader sales in the last 14 days. Sale totals are private and are not listed.','',leaders(tradedSales,r=>r.account_name,earned).map(r=>({name:r.name})),{hideValue:true});
- add('trader-items','Pack Mules (last 14 days, Top '+LEADERBOARD_LIMIT+')','Most items sold through the guild trader in the last 14 days, totalled by quantity. Gold amounts are not listed.','items',leaders(tradedSales,r=>r.account_name,r=>positive(r.quantity)));
+ add('trader-sales','Market Moguls (last 14 days, Top '+LEADERBOARD_LIMIT+')','Highest gold earned on guild trader sales in the last 14 days. '+goldNote(showTraderGold),goldUnit,withGold(leaders(tradedSales,r=>r.account_name,earned)),showTraderGold?{}:{hideValue:true});
+ add('trader-items','Pack Mules (last 14 days, Top '+LEADERBOARD_LIMIT+')','Most items sold through the guild trader in the last 14 days, totalled by quantity.','items',leaders(tradedSales,r=>r.account_name,r=>positive(r.quantity)));
  // Buyer rankings over the 50/50 raffle period: members are matched on both sides, outsiders by buyer only.
  const members=new Set(current.map(r=>String(r.account_name||'').trim().toLowerCase()).filter(Boolean));
  const isMember=name=>members.has(String(name||'').trim().toLowerCase());
@@ -114,9 +126,9 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const buyerSales=traderSales.filter(r=>Number(r.event_timestamp)>=raffleWindow.salesStart&&Number(r.event_timestamp)<=raffleEnd);
  const lingerNote=buyerRaffleLingerNote(raffleWindow.lingerSeconds);
  // Rank by what the buyer paid (price), not the seller's post-tax proceeds.
- const topBuyers=rows=>leaders(nameAs(rows,'buyer'),r=>r.account_name,r=>positive(r.price)).map(r=>({name:r.name}));
- add('trader-member-buyers','Guild Regulars (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent by current guild members on items listed by another current member during the current 50/50 raffle, from the previous cutoff to now. Amounts are not listed. '+lingerNote,'',topBuyers(buyerSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),{hideValue:true});
- add('trader-visitor-buyers','Window Shoppers (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent at the guild trader during the current 50/50 raffle by buyers who are not current guild members, whoever listed the item. Amounts are not listed. '+lingerNote,'',topBuyers(buyerSales.filter(r=>!isMember(buyerOf(r)))),{hideValue:true});
+ const topBuyers=rows=>withGold(leaders(nameAs(rows,'buyer'),r=>r.account_name,r=>positive(r.price)));
+ add('trader-member-buyers','Guild Regulars (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent by current guild members on items listed by another current member during the current 50/50 raffle, from the previous draw to now. '+goldNote(showTraderGold)+' '+lingerNote,goldUnit,topBuyers(buyerSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
+ add('trader-visitor-buyers','Window Shoppers (current 50/50 raffle, Top '+LEADERBOARD_LIMIT+')','Gold spent at the guild trader during the current 50/50 raffle by buyers who are not current guild members, whoever listed the item. '+goldNote(showTraderGold)+' '+lingerNote,goldUnit,topBuyers(buyerSales.filter(r=>!isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
  return {
   generatedAt:new Date(now*1000).toISOString(),
   trackingSince,
@@ -179,6 +191,7 @@ export function registerCommunityStatisticsSocket(socket, {
       reply({ok: true, report: buildCommunityStatistics({
         now: time, trackingSince: meta[0]?.metadata_value || null,
         roster, rosterEvents, discordMembers, discordHistory, activity, banking, windows, traderSales,
+        viewerRole: socket.guildSyncUser?.role || null,
         bonusPolicies: bonus?.policies || [], bonusOverrides: bonus?.overrides || []
       })});
     } catch {

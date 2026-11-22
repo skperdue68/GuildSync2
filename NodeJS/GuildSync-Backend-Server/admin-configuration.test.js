@@ -16,14 +16,14 @@ test('purchase announcement switch is grouped, defaults off, and restores config
  assert.equal(service.view().settings.find(item=>item.key===key).value,true);
 });
 
-test('the buyer-card raffle linger is a backend administrator setting defaulting to three hours',async()=>{
+test('the buyer-card raffle linger is a backend administrator setting defaulting to one hour',async()=>{
  const key='GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS';
  const item=configurationCatalog.find(setting=>setting.key===key);
  assert.equal(item.owner,'backend');assert.equal(item.group,'Community highlights');
- assert.equal(item.type,'number');assert.equal(item.defaultValue,3);assert.equal(item.min,0);assert.equal(item.max,168);
+ assert.equal(item.type,'number');assert.equal(item.defaultValue,1);assert.equal(item.min,0);assert.equal(item.max,168);
  assert.match(item.help,/Guild Regulars and Window Shoppers/);
  const env={};const service=createConfigurationService(memoryDB(),{env});await service.initialize();
- assert.equal(service.view().settings.find(setting=>setting.key===key).value,3);
+ assert.equal(service.view().settings.find(setting=>setting.key===key).value,1);
  await service.save({revision:0,changes:{[key]:6}});
  assert.equal(env[key],'6','the live override reaches the report on its next refresh');
  const report=createConfigurationService(memoryDB(),{env:{}});await report.initialize();
