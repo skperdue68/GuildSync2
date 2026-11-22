@@ -85,7 +85,7 @@ test('returning to an already expanded section refreshes cached results without 
 });
 
 test('the section is titled Community Highlights and private cards list names without values',()=>{
- const html=renderCommunityStatistics({highlights:[{id:'trader-sales',title:'Highest guild trader sales (last 7 days, Top 5)',unit:'',hideValue:true,rows:[{name:'Alice'},{name:'Bob'}]}]});
+ const html=renderCommunityStatistics({highlights:[{id:'trader-sales',title:'Market Moguls (last 14 days, Top 5)',unit:'',hideValue:true,rows:[{name:'Alice'},{name:'Bob'}]}]});
  assert.match(html,/Alice/);assert.doesNotMatch(html,/<strong>|NaN|undefined/);
  assert.match(createCommunityStatisticsPanel({request:async()=>({ok:true,report:{}})}).render(),/Community Highlights/);
 });

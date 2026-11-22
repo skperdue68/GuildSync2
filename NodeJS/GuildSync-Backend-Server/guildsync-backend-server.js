@@ -4,6 +4,7 @@ import {createUserSwitches,initializeUserSwitchSchema,registerUserSwitchSocket,r
 import {registerApplicationHistorySocket} from './application-history.js';
 import {createRosterNoteAccess} from './roster-note-access.js';
 import {registerCommunityStatisticsSocket} from './community-statistics.js';
+import {registerUserSettingsSocket} from './user-settings.js';
 import {startSheetsExportRecovery} from './sheets-export-queue.js';
 import {initializeVoiceIdentitySchema,createVoiceIdentityService,registerVoiceIdentityRoutes,registerVoiceOnlyConnection,authorizeVoiceRequester,authenticateVoiceSocket} from './voice-auth.js';
 import {esoGuildConfiguration, initializeEsoGuildIdentity, validateEsoGuildImport} from './eso-guild-origin.js';
@@ -62,12 +63,14 @@ import {
   getBankingDataJSON,
   getRaffleBonusSettings,
   getRaffleBonusVersions,
+  getRaffleBonusOverrides,
   getRaffleBonusChoices,
   saveRaffleBonusOverride,
   saveRaffleBonusSettings,
   getBankingHistoryMatches,
   getBankingHistoryForAccount,
   checkoutDepositMail,
+  getDepositMailPreviewExamples,
   markDepositMailWrittenToESO,
   markDepositMailSent,
   insertBankingEntries,
@@ -639,11 +642,18 @@ function registerGuildSyncConnection(socket) {
   registerCommunityStatisticsSocket(socket,{
     db:applicationDB,loadBanking:getBankingDataJSON,
     loadWindows:async(db,time)=>(await getActiveRaffleSummary(db,time)).raffles,
+    loadBonusPolicies:async db=>({policies:await getRaffleBonusVersions(db),overrides:await getRaffleBonusOverrides(db)}),
     authorizeViewer:async current=>{
       const [rows]=await loginDB.execute('SELECT role,allowed FROM guildsync_users WHERE discord_user_id=? LIMIT 1',[current.guildSyncUser.discord_user_id]);
-      return Number(rows[0]?.allowed)===1 && ['viewer','user','admin'].includes(roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role)||rows[0]?.role);
+      const role=roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role)||rows[0]?.role;
+      // Return the role that was just read, so a report cannot reuse a stale socket role.
+      return Number(rows[0]?.allowed)===1 && ['viewer','user','admin'].includes(role) ? role : false;
     }
   });
+  registerUserSettingsSocket(socket,{db:loginDB,authorizeUser:async id=>{
+    const [rows]=await loginDB.execute('SELECT allowed FROM guildsync_users WHERE discord_user_id = ? LIMIT 1',[id]);
+    return Number(rows[0]?.allowed)===1;
+  }});
   registerApplicationHistorySocket(socket,{db:applicationDB,loginDB});
   registerEsoAccountRenameSocket(socket,{
     service:esoAccountRenames,loginDB,
@@ -681,7 +691,8 @@ function registerGuildSyncConnection(socket) {
   registerConfigurationSocket(socket,configurationService,{
     authorizeViewer: async id => {const [rows]=await loginDB.execute('SELECT discord_user_id FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows.length>0;},
     authorizeAdmin: async id => {const [rows]=await loginDB.execute('SELECT role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows[0]?.role==='admin';},
-    broadcast: (configuration,payload) => {io.to('GuildSyncDiscordBot').emit('guildsync:configuration-updated',configuration);if(Object.keys(payload?.changes||{}).some(key=>key.startsWith('GUILDSYNC_VOICE_MUTE_')))io.to('GuildSyncClientAuthenticated').to('GuildSyncVoiceClient').emit('guildsync:voice-mute-access-changed');}
+    broadcast: (configuration,payload) => {io.to('GuildSyncDiscordBot').emit('guildsync:configuration-updated',configuration);if(Object.keys(payload?.changes||{}).some(key=>key.startsWith('GUILDSYNC_VOICE_MUTE_')))io.to('GuildSyncClientAuthenticated').to('GuildSyncVoiceClient').emit('guildsync:voice-mute-access-changed');},
+    receiptPreviews: payload => getDepositMailPreviewExamples(applicationDB, {limit: payload?.limit})
   });
   registerDiscordOnboardingSocket(socket, onboardingService);
   registerVoiceForSocket(socket);
@@ -1865,13 +1876,14 @@ function registerGuildSyncConnection(socket) {
       if (admins[0]?.role !== 'admin') {
         throw new Error('Admin access is required to change raffle bonuses.');
       }
+      let warning = '';
       if (payload.raffleType) {
         await saveRaffleBonusOverride(applicationDB, payload);
       } else {
-        await saveRaffleBonusSettings(applicationDB, payload);
+        warning = (await saveRaffleBonusSettings(applicationDB, payload))?.warning || '';
       }
       const bonusSettings = await getRaffleBonusSettings(applicationDB);
-      sendSocketResponse(socket, 'guildsync:raffle-bonus-settings-result', callback, { ok: true, bonusSettings });
+      sendSocketResponse(socket, 'guildsync:raffle-bonus-settings-result', callback, { ok: true, bonusSettings, ...(warning ? { warning } : {}) });
       await broadcastBankingDataUpdate();
     } catch (error) {
       sendSocketResponse(socket, 'guildsync:raffle-bonus-settings-result', callback,

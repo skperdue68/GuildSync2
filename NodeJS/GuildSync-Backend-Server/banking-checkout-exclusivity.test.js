@@ -14,13 +14,15 @@ test('another sender receives no already-reserved deposit and candidates are loc
       return [row.mail_status==='unsent'?[{event_id:row.event_id}]:[]];
     }
     if(sql.startsWith('UPDATE')){
+      if(sql.includes('mailed_bonus_json')) return [{affectedRows:1}];
       assert.match(sql,/WHERE mail_status = 'unsent'/);
       row.mail_status='checked_out';row.mail_batch_id=args[0];row.checked_out_by=args[1];return [{affectedRows:1}];
     }
     return [[{...row}].filter(r=>r.checked_out_by===args[1] && r.mail_batch_id===args[0])];
   }};
   const ctx=vm.createContext({withEsoIdentityLock:async(db,fn)=>fn(db),releaseExpiredDepositMailCheckouts:async()=>0,randomUUID:()=> 'batch',normalizePositiveInteger:(n,d)=>n||d,
-    getRaffleBonusVersions:async()=>[],getRaffleBonusOverrides:async()=>[],addRenderedDepositMailContent:row=>row,safeRollback:async()=>{}});
+    getRaffleBonusVersions:async()=>[],getRaffleBonusOverrides:async()=>[],addRenderedDepositMailContent:row=>row,safeRollback:async()=>{},
+    loadNudgedRaffles:async()=>new Set(),depositMailRaffleKey:()=>'',mailedBonusSnapshot:()=>'{}'});
   vm.runInContext(source.slice(start,end).replace('export async','async'),ctx);
   const db={getConnection:async()=>connection};
   const first=await ctx.checkoutDepositMail(db,{checked_out_by:'sender1',mail_batch_id:'one'});

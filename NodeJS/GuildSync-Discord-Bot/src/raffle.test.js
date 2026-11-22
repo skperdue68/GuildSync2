@@ -235,3 +235,24 @@ test('startup one hour before cutoff catches up a two-hour sales warning', async
   f.at(16400); await createRaffleAnnouncer(f.options).tick();
   assert.equal(f.sent.length,1); assert.equal(f.sent[0].reminders[0].at,20000);
 });
+
+test('raffle posts list the whole remaining bonus ladder', async () => {
+  const { formatRaffles } = await import('./raffle.js');
+  const content = formatRaffles({ asOf: 100, raffles: [{
+    type: 'biweekly', prizeGold: 200000, totalTickets: 120, bonusEnabled: true, bonusTickets: 20,
+    bonusPercent: 20, bonusExpiresAt: 500,
+    bonusLadder: [{ percent: 20, expiresAt: 500 }, { percent: 10, expiresAt: 900 }, { percent: 5, expiresAt: 1200 }],
+    drawTime: 2000, salesOpen: true, salesEnd: 1500, latestTransactionAt: null
+  }] });
+  assert.match(content, /20% bonus expires <t:500:R>, then 10% until <t:900:R>, then 5% until <t:1200:R>/);
+});
+
+test('a raffle without a ladder still shows the current and next bonus step', async () => {
+  const { formatRaffles } = await import('./raffle.js');
+  const content = formatRaffles({ asOf: 100, raffles: [{
+    type: 'monthly', prizeGold: 500000, totalTickets: 50, bonusEnabled: true, bonusTickets: 5,
+    bonusPercent: 10, bonusExpiresAt: 500, nextBonusPercent: 5, nextBonusExpiresAt: 900,
+    drawTime: 2000, salesOpen: true, salesEnd: 1500, latestTransactionAt: null
+  }] });
+  assert.match(content, /10% bonus expires <t:500:R>, then 5% until <t:900:R>/);
+});

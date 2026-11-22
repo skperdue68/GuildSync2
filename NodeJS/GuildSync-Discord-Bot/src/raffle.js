@@ -16,6 +16,20 @@ export function requestActiveRaffles(socket, options = {}) {
     });
   });
 }
+// The whole bonus ladder still available, so the post shows every remaining step
+// instead of only the next percentage. Falls back to the two-value shape when an
+// older backend has no ladder.
+export function bonusSchedule(raffle = {}) {
+  const number = value => Number(value || 0).toLocaleString('en-US');
+  const ladder = (Array.isArray(raffle.bonusLadder) ? raffle.bonusLadder : [])
+    .filter(step => Number(step?.percent) > 0 && Number(step?.expiresAt) > 0);
+  if (ladder.length) {
+    return ladder.map((step, index) => `${number(step.percent)}% ${index === 0 ? 'bonus expires' : 'until'} <t:${step.expiresAt}:R>`).join(', then ');
+  }
+  if (!(Number(raffle.bonusPercent) > 0) || !Number(raffle.bonusExpiresAt)) return '';
+  return `${number(raffle.bonusPercent)}% bonus expires <t:${raffle.bonusExpiresAt}:R>${raffle.nextBonusPercent ? `, then ${number(raffle.nextBonusPercent)}% until <t:${raffle.nextBonusExpiresAt}:R>` : ''}`;
+}
+
 export function formatRaffles(snapshot, { includeTickets = false, verifyName = '', showTicketReminder = false } = {}) {
   const number = value => Number(value || 0).toLocaleString('en-US');
   const latestTransaction = raffle => raffle.latestTransactionAt === null
@@ -42,7 +56,7 @@ export function formatRaffles(snapshot, { includeTickets = false, verifyName = '
   return [...reminderLines, `As of <t:${snapshot.asOf}:f>. Based on the latest banking data received by GuildSync. Transaction times identify the latest entries recorded by GuildSync automation and may lag behind actual deposit data.`, '**GuildSync active raffle prizes**', ...snapshot.raffles.map(raffle => [
     `**${raffle.type === 'biweekly' ? 'Bi-Weekly' : '50/50'}: ${number(raffle.prizeGold)} gold available for the draw**`,
     ...(raffle.type === 'biweekly' ? [`${number(raffle.drawCount)} draws × 200,000 gold each (rounded up).`] : []),
-    `Tickets: ${number(raffle.totalTickets)}${raffle.bonusEnabled ? ` (includes ${number(raffle.bonusTickets || 0)} bonus; ${number(raffle.bonusPercent || 0)}% bonus expires <t:${raffle.bonusExpiresAt}:R>${raffle.nextBonusPercent ? `, then ${number(raffle.nextBonusPercent)}% until <t:${raffle.nextBonusExpiresAt}:R>` : ''})` : ''} · Draw: <t:${raffle.drawTime}:F>`,
+    `Tickets: ${number(raffle.totalTickets)}${raffle.bonusEnabled && bonusSchedule(raffle) ? ` (includes ${number(raffle.bonusTickets || 0)} bonus; ${bonusSchedule(raffle)})` : ''} · Draw: <t:${raffle.drawTime}:F>`,
     raffle.salesOpen ? `Ticket sales close <t:${raffle.salesEnd}:R>.` : 'Sales closed — awaiting the draw.',
     latestTransaction(raffle)
   ].join('\n')), ...(includeTickets ? [formatUserTickets(snapshot, verifyName)] : []), ...(showTicketReminder && !includeTickets ? ['Not sure whether you have bought tickets? Use /tickets to view your purchases for the current raffles.'] : [])].join('\n\n');
@@ -60,13 +74,26 @@ function formatUserTickets(snapshot, verifyName = '') {
   if (snapshot.tickets?.linked === false) return verifyName ? `No linked ESO account was found for **${verifyName}**.` : 'I could not determine your ESO name. Link your ESO account, or make your Discord name match your ESO account name.';
   if (!snapshot.tickets?.purchases?.length) return `No raffle tickets are recorded for your linked ESO account${snapshot.tickets?.esoAccountName ? ` (${snapshot.tickets.esoAccountName})` : ''}.`;
   const groups = new Map();
+  const totals = new Map();
   for (const item of snapshot.tickets.purchases) {
     const type = item.raffleType || item.raffleLabel;
     const lines = groups.get(type) || [];
     lines.push(`${item.raffleLabel}: ${item.totalTickets} tickets (${item.purchasedTickets} purchased${item.bonusEnabled || item.bonusPercent > 0 || item.bonusTickets ? ` + ${item.bonusPercent || 0}% bonus: ${item.bonusTickets || 0} tickets` : ''}) — <t:${item.time}:f>`);
     groups.set(type, lines);
+    const running = totals.get(type) || { label: item.raffleLabel, purchased: 0, bonus: 0, total: 0 };
+    running.purchased += Number(item.purchasedTickets) || 0;
+    running.bonus += Number(item.bonusTickets) || 0;
+    running.total += Number(item.totalTickets) || 0;
+    totals.set(type, running);
   }
-  return `**${verifyName ? 'Verified' : 'Your'} tickets (${snapshot.tickets.esoAccountName})**\n` + [...groups.values()].map(lines => lines.join('\n')).join('\n\n');
+  // Cumulative totals per raffle: individual deposits are small, so the running
+  // ticket count is what members actually want to see.
+  const summary = [...totals.values()]
+    .map(item => `${item.label} ${item.total} (${item.purchased} purchased${item.bonus > 0 ? ` + ${item.bonus} bonus` : ''})`)
+    .join(' · ');
+  return `**${verifyName ? 'Verified' : 'Your'} tickets (${snapshot.tickets.esoAccountName})**\n` +
+    [...groups.values()].map(lines => lines.join('\n')).join('\n\n') +
+    (summary ? `\n\n**Current raffle totals:** ${summary}` : '');
 }
 
 export function createRaffleAnnouncer({ channelId, intervalHours, thresholds, fetchRaffles, send, loadState, saveState,

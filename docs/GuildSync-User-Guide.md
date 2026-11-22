@@ -28,6 +28,7 @@ Type these in your guild's Discord server. In the examples, text after a colon i
 
 | Command | What it does |
 | --- | --- |
+| `/highlights` | Shows the Community Highlights report: raffle and guild trader rankings plus Discord activity. Trader gold is never included. Use the `public` option to post it visibly. |
 | `/raffle` | Privately shows the current Bi-Weekly and 50/50 raffles, prizes, tickets, draw times, available early purchase bonus, and latest recorded transaction time for each raffle period. |
 | `/raffle public:true` | Shows the raffle summary publicly in the channel. |
 | `/tickets` | Privately shows the raffle summary and your current ticket purchases for your linked ESO account. |

@@ -2,6 +2,7 @@ import {afterEsoIdentityUnlock,getEsoIdentitySourceDB,initializeEsoAccountIdenti
 import {initializeRosterNoteAccess} from './roster-note-access.js';
 import {biweeklySalesEndAtOrAfter, monthlySalesEndAtOrAfter, previousMonthlySalesEnd, shiftRaffleSalesEnd, normalizeScheduledSalesEnd} from './raffle-schedule.js';
 import {initializeCommunityStatisticsSchema} from './community-statistics.js';
+import {initializeUserSettingsSchema} from './user-settings.js';
 import {initializeSheetsExportQueue, enqueueSheetsExports, createSheetsExportStore} from './sheets-export-queue.js';
 import { notifyDiscordConfirmedLink } from './discord-onboarding.js';
 import {validateEsoGuildImport} from './eso-guild-origin.js';
@@ -15,7 +16,8 @@ import mysql from 'mysql2/promise';
 import {releaseExpiredDepositMailCheckouts} from './deposit-mail-lease.js';
 import { bankingSource } from './banking-source.js';
 import { randomUUID, createHash } from 'node:crypto';
-import { DEFAULT_BONUS_TIERS, parseBonusTiers, calculateRaffleBonus, nextRaffleBonus, selectRaffleBonusSettings } from './raffle-bonus.js';
+import { DEFAULT_BONUS_TIERS, parseBonusTiers, calculateRaffleBonus, nextRaffleBonus, selectRaffleBonusSettings, selectPurchasePolicy, remainingBonusLadder, bonusLadderHours } from './raffle-bonus.js';
+import { formatBonusDeadline, formatBonusLabel, formatBonusSchedule, formatBonusTickets } from './bonus-format.js';
 import { syncBankingEntriesToGoogleSheets, googleSheetsBankingConfig } from './google-sheets-banking-sync.js';
 
 
@@ -50,6 +52,10 @@ function normalizeDepositMailRecipient(value) {
 
 function getForcedDepositMailRecipient() {
   return normalizeDepositMailRecipient(process.env.GUILDSYNC_DEPOSIT_MAIL_FORCE_RECIPIENT || '');
+}
+
+function depositMailBonusNudgeEnabled() {
+  return String(process.env.GUILDSYNC_DEPOSIT_MAIL_BONUS_NUDGE_ENABLED || 'true').toLowerCase() !== 'false';
 }
 
 function formatDepositMailAmount(value) {
@@ -108,6 +114,15 @@ function getDepositMailNoteBlock(row = {}) {
   return note ? `Note: ${note}` : '';
 }
 
+// A moved entry records its partner in the note ("Ref <id>" on the replacement,
+// "Replacement <id>" on the original). Exposing it as its own placeholder keeps the
+// cross-reference usable in a custom receipt instead of buried in the note text.
+function getDepositMailRelatedTransactionId(row = {}) {
+  const note = String(row.note || '');
+  const match = /\bRef\s+([A-Za-z0-9_-]+)/.exec(note) || /\bReplacement\s+([A-Za-z0-9_-]+)/.exec(note);
+  return match ? match[1] : '';
+}
+
 function getDepositMailRaffleTimestamp(row = {}) {
   const type = normalizeDepositMailTicketType(row.transaction_type || row.ticket_type || row.type);
   if (type !== 'monthly' && type !== 'biweekly') return null;
@@ -150,7 +165,7 @@ function getDepositMailRaffleDateTimeEastern(row = {}) {
   }).format(date);
 }
 
-function renderDepositMailTemplate(template, row = {}) {
+function depositMailTemplateValues(row = {}) {
   const recipient = normalizeDepositMailRecipient(row.recipient || row.account_name || row.display_name || '');
   const ticketTypeRaw = normalizeDepositMailTicketType(row.transaction_type || row.ticket_type || row.type);
   const ticketTypeLabel = getDepositMailTicketTypeLabel(ticketTypeRaw);
@@ -161,6 +176,7 @@ function renderDepositMailTemplate(template, row = {}) {
 
   const values = {
     event_id: row.event_id || '',
+    related_transaction_id: getDepositMailRelatedTransactionId(row),
     transaction_type: row.transaction_type || '',
     ticket_type: ticketTypeLabel,
     ticket_type_raw: ticketTypeRaw,
@@ -178,6 +194,8 @@ function renderDepositMailTemplate(template, row = {}) {
     bonus_tickets: formatDepositMailAmount(row.bonusTickets),
     total_tickets: formatDepositMailAmount(row.totalTickets ?? row.ticket_quantity),
     bonus_deadline: row.bonusDeadline || '',
+    bonus_label: row.bonusLabel || '',
+    bonus_schedule: row.bonusSchedule || '',
     bonus_block: row.bonusBlock || '',
     bonus_note_block: row.bonusNoteBlock || '',
     bonus_upsell: row.bonusUpsellBlock || '',
@@ -201,6 +219,12 @@ function renderDepositMailTemplate(template, row = {}) {
     mail_batch_id: row.mail_batch_id || ''
   };
 
+  return values;
+}
+
+function renderDepositMailTemplate(template, row = {}) {
+  const values = depositMailTemplateValues(row);
+
   return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => {
     if (Object.prototype.hasOwnProperty.call(values, key)) {
       return values[key] == null ? '' : String(values[key]);
@@ -209,15 +233,6 @@ function renderDepositMailTemplate(template, row = {}) {
   }).trim();
 }
 
-function formatDepositMailBonusDeadline(timestamp) {
-  const seconds = Number(timestamp);
-  if (!Number.isFinite(seconds) || seconds <= 0) return '';
-
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric',
-    hour: 'numeric', minute: '2-digit', hour12: true
-  }).format(new Date(seconds * 1000)) + ' ET';
-}
 
 // Early-purchase nudge for a receipt: only when this raffle has bonuses on and the
 // purchase did not land in the best (first, highest-percentage) tier. It quotes the
@@ -226,26 +241,47 @@ function formatDepositMailBonusDeadline(timestamp) {
 function getDepositMailBonusUpsellBlock(bonus = {}) {
   const missed = Math.trunc(Number(bonus.bonusUpsellTickets) || 0);
   const percent = Number(bonus.bonusUpsellPercent);
-  const deadline = formatDepositMailBonusDeadline(bonus.bonusUpsellExpiresAt);
-  if (missed <= 0 || !(percent > 0) || !deadline) return '';
+  const deadline = formatBonusDeadline(bonus.bonusUpsellExpiresAt);
+  // A small purchase can miss the better tier by percentage while both tiers round
+  // down to the same number of tickets. The nudge still shows the higher rate rather
+  // than disappearing, which used to hide the whole upsell from 1–4 ticket buyers.
+  if (!(percent > 0) || !deadline) return '';
 
   const earlier = bonus.bonusUpsellHasHigherTier ? ', and even more if bought earlier than that' : '';
-  return `If you had bought your tickets by ${deadline} you could have earned ${formatDepositMailAmount(missed)} more ticket${missed === 1 ? '' : 's'} with the ${percent}% bonus${earlier}!! Buy Early!!`;
+  const reward = missed > 0
+    ? `you could have earned ${formatDepositMailAmount(missed)} more ticket${missed === 1 ? '' : 's'} with the ${percent}% bonus`
+    : `you could have earned the ${percent}% bonus instead of ${Number(bonus.bonusPercent) || 0}%`;
+  return `If you had bought your tickets by ${deadline} ${reward}${earlier}!! Buy Early!!`;
 }
 
-function addRenderedDepositMailContent(row = {}, versions = [], overrides = []) {
+// Builds every piece of a receipt from one entry, including the placeholder values,
+// so the queued mail and the real-purchase preview use exactly the same numbers.
+function buildDepositMailContent(row = {}, versions = [], overrides = [], options = {}) {
   const normalized = normalizeDepositMailRow(row);
   const bonus = calculateBankingEntryBonus(normalized, versions, overrides);
-  const bonusDeadline = formatDepositMailBonusDeadline(bonus.bonusExpiresAt);
+  const bonusDeadline = formatBonusDeadline(bonus.bonusExpiresAt);
+  const bonusLabel = formatBonusLabel({
+    percent: bonus.bonusPercent, tickets: bonus.bonusTickets, total: bonus.totalTickets
+  });
+  const bonusSchedule = formatBonusSchedule(bonus.bonusLadder);
+  const roundingNote = bonus.bonusPercent > 0 && bonus.bonusTickets === 0 && bonus.purchasedTickets > 0
+    ? 'Bonuses round down, so this purchase was too small to earn bonus tickets.' : '';
   const bonusBlock = bonus.bonusPercent > 0 ? [
     `Early Purchase Bonus: ${bonus.bonusPercent}% for buying before ${bonusDeadline}.`,
-    `Bonus Tickets: ${formatDepositMailAmount(bonus.bonusTickets)}`,
-    `Total Tickets: ${formatDepositMailAmount(bonus.totalTickets)}`
+    `Bonus Tickets: ${formatBonusTickets(bonus.bonusTickets)}`,
+    `Total Tickets: ${formatBonusTickets(bonus.totalTickets)}`,
+    ...(bonusSchedule ? [`Bonus schedule: ${bonusSchedule}.`] : []),
+    ...(roundingNote ? [roundingNote] : [])
   ].join('\n') : '';
   // The nudge is a footer of its own: it is appended at the bottom of the body
   // (after the signature) unless the template asks for it with {bonus_upsell}.
-  const bonusUpsellDeadline = formatDepositMailBonusDeadline(bonus.bonusUpsellExpiresAt);
-  const bonusUpsellBlock = getDepositMailBonusUpsellBlock(bonus);
+  // One reminder per raffle: once a receipt for this member carries the nudge, later
+  // receipts for the same raffle stay quiet.
+  const bonusUpsellDeadline = formatBonusDeadline(bonus.bonusUpsellExpiresAt);
+  const bonusUpsellBlock = depositMailBonusNudgeEnabled() && !options.suppressBonusNudge
+    ? getDepositMailBonusUpsellBlock(bonus) : '';
+  const mailedBonus = bonusUpsellBlock ? bonus : { ...bonus, bonusUpsellPercent: 0, bonusUpsellTickets: 0,
+    bonusUpsellExpiresAt: null, bonusUpsellHasHigherTier: false };
   // One placeholder for the optional bonus and note lines: it supplies the blank
   // line that follows them, so the two empty lines the separate placeholders left
   // above the transaction ID become one, and a receipt with neither keeps one.
@@ -254,8 +290,10 @@ function addRenderedDepositMailContent(row = {}, versions = [], overrides = []) 
   const recipient = getForcedDepositMailRecipient() || normalizeDepositMailRecipient(row.account_name || row.display_name || row.recipient || '');
   const templateRow = {
     ...row,
-    ...bonus,
+    ...mailedBonus,
     bonusDeadline,
+    bonusLabel,
+    bonusSchedule,
     bonusBlock,
     bonusNoteBlock: bonusNoteBlockValue,
     bonusUpsellDeadline,
@@ -275,16 +313,24 @@ function addRenderedDepositMailContent(row = {}, versions = [], overrides = []) 
   if (bonusUpsellBlock && !bodyTemplate.includes('{bonus_upsell}')) {
     body += '\n\n' + bonusUpsellBlock;
   }
+  return { normalized, bonus: mailedBonus, bonusBlock, bonusUpsellBlock, bonusLabel, bonusSchedule,
+    recipient, subject, body, templateRow };
+}
+
+function addRenderedDepositMailContent(row = {}, versions = [], overrides = [], options = {}) {
+  const content = buildDepositMailContent(row, versions, overrides, options);
   return {
-    ...normalized,
-    ...bonus,
-    recipient,
-    subject,
-    body,
-    mailSubject: subject,
-    mailBody: body
+    ...content.normalized,
+    ...content.bonus,
+    recipient: content.recipient,
+    subject: content.subject,
+    body: content.body,
+    mailSubject: content.subject,
+    mailBody: content.body,
+    bonusUpsellIncluded: Boolean(content.bonusUpsellBlock)
   };
 }
+
 
 export const MARIADB_HOST = process.env.MARIADB_HOST || '127.0.0.1';
 export const MARIADB_PORT = Number(process.env.MARIADB_PORT || 3306);
@@ -353,6 +399,7 @@ async function initializeSchema(db) {
   await initializeRosterNoteAccess(db);
   await initializeSheetsExportQueue(db);
   await initializeCommunityStatisticsSchema(db);
+  await initializeUserSettingsSchema(db);
   await initializeDiscordOnboardingSchema(db);
   await initializeVoiceMuteSchema(db);
 
@@ -569,6 +616,10 @@ async function initializeSchema(db) {
   await addColumnIfMissing(db, 'guildsync_banking_entries', 'written_to_eso_at', 'datetime DEFAULT NULL');
   await addColumnIfMissing(db, 'guildsync_banking_entries', 'sent_at', 'datetime DEFAULT NULL');
   await addColumnIfMissing(db, 'guildsync_banking_entries', 'failed_reason', 'text DEFAULT NULL');
+  // What the member was actually told: the bonus numbers and policy used when their
+  // receipt was rendered, so later settings changes cannot rewrite sent mail.
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'mailed_bonus_json', 'text DEFAULT NULL');
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'bonus_nudge_sent', 'TINYINT(1) NOT NULL DEFAULT 0');
   await dropColumnIfExists(db, 'guildsync_banking_entries', 'email_requested');
 
   await addIndexIfMissing(db, 'guildsync_banking_entries', 'idx_guildsync_banking_mail_status', 'mail_status');
@@ -1924,9 +1975,13 @@ export async function getBankingHistoryForAccount(applicationDB, accountName = '
 
   const versions = await getRaffleBonusVersions(applicationDB);
   const overrides = await getRaffleBonusOverrides(applicationDB);
-  return rows.map((row) => ({ ...row, ...calculateBankingEntryBonus({
-    type: row.transaction_type, time: row.event_timestamp, ticketAmount: row.ticket_quantity, dataSource: row.data_source
-  }, versions, overrides) }));
+  return rows.map((row) => {
+    // The policy snapshot stays internal; report rows carry the numbers only.
+    const { bonusPolicy, ...bonus } = calculateBankingEntryBonus({
+      type: row.transaction_type, time: row.event_timestamp, ticketAmount: row.ticket_quantity, dataSource: row.data_source
+    }, versions, overrides);
+    return { ...row, ...bonus };
+  });
 }
 
 export async function getBankingDataDate(applicationDB) {
@@ -2105,12 +2160,18 @@ export async function saveRaffleBonusSettings(applicationDB, input) {
     biweekly: parseBonusTiers(input.biweekly.map(({ hours, percent }) => `${hours}:${percent}`).join(',')),
     monthly: parseBonusTiers(input.monthly.map(({ hours, percent }) => `${hours}:${percent}`).join(','))
   };
+  let warning = '';
   for (const [type, tiers] of Object.entries(settings)) {
     if (!['biweekly', 'monthly'].includes(type)) continue;
     const availableHours = type === 'biweekly' ? 14 * 24 : 28 * 24;
-    const configuredHours = tiers.reduce((sum, tier) => sum + tier.hours, 0);
+    const configuredHours = bonusLadderHours(tiers);
     if (configuredHours > availableHours) {
       throw new Error(`${type === 'biweekly' ? 'Bi-weekly' : '50/50'} bonus periods total ${configuredHours} hours, but this raffle is only ${availableHours} hours long. Reduce the period hours and save again.`);
+    }
+    // A ladder that stops short of the raffle start silently pays nothing for early
+    // purchases, so say so instead of letting the first days of every raffle go bare.
+    if (!warning && settings.enabledByType[type] && configuredHours < availableHours) {
+      warning = `${type === 'biweekly' ? 'Bi-weekly' : '50/50'} bonus periods cover the last ${configuredHours} of ${availableHours} hours before sales close. Purchases made earlier than that in each raffle earn no bonus.`;
     }
   }
   const connection = await applicationDB.getConnection();
@@ -2135,7 +2196,47 @@ export async function saveRaffleBonusSettings(applicationDB, input) {
   } finally {
     connection.release();
   }
-  return settings;
+  return { ...settings, ...(warning ? { warning } : {}) };
+}
+
+// Real receipts for the admin configuration preview: a few recent purchases rendered
+// with the current policy, so the example shows real tickets, dates and bonus numbers
+// instead of a canned 20% sample. Only the placeholder values are sent; the client
+// renders them against whatever template is being edited.
+export async function getDepositMailPreviewExamples(applicationDB, { limit = 3 } = {}) {
+  const [rows] = await applicationDB.execute(`
+    SELECT event_id, transaction_type, account_name, event_timestamp, event_datetime,
+           deposit_amount, ticket_quantity, data_source, note
+    FROM guildsync_banking_entries
+    WHERE ticket_quantity > 0 AND LOWER(transaction_type) IN ('biweekly', 'monthly')
+    ORDER BY CAST(event_timestamp AS UNSIGNED) DESC
+    LIMIT 200
+  `);
+  if (!Array.isArray(rows) || !rows.length) return { examples: [] };
+  const versions = await getRaffleBonusVersions(applicationDB);
+  const overrides = await getRaffleBonusOverrides(applicationDB);
+  const records = rows.map((row) => ({ row, content: buildDepositMailContent(row, versions, overrides) }));
+  const picks = [
+    records.find(({ content }) => content.bonusUpsellIncluded && content.bonus.bonusTickets > 0),
+    records.find(({ content }) => content.bonus.bonusPercent > 0 && content.bonus.bonusTickets === 0),
+    records.find(({ row }) => String(row.note || '').trim()),
+    records[0]
+  ].filter(Boolean);
+  const examples = [];
+  const seen = new Set();
+  for (const { row, content } of picks) {
+    if (examples.length >= Math.max(1, Math.min(5, Number(limit) || 3))) break;
+    if (seen.has(row.event_id)) continue;
+    seen.add(row.event_id);
+    const tickets = Number(row.ticket_quantity) || 0;
+    const percent = Number(content.bonus.bonusPercent) || 0;
+    examples.push({
+      label: [getDepositMailTicketTypeLabel(row.transaction_type), `${tickets} ticket${tickets === 1 ? '' : 's'}`,
+        percent > 0 ? `${percent}% bonus` : 'no bonus', content.recipient].filter(Boolean).join(' · '),
+      values: depositMailTemplateValues(content.templateRow)
+    });
+  }
+  return { examples };
 }
 
 // Refresh dates use the same schedule's calendar boundaries, at 19:00 Eastern.
@@ -2239,6 +2340,8 @@ export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Dat
       ? Math.ceil(Math.max(0, deposits) / 2 / 200000) * 200000
       : Math.floor(Math.max(0, deposits) / 2);
     const bonus = getCurrentRaffleBonusInfo(type, salesEnd, salesStart, now, bonusVersions, bonusOverrides);
+    const totalTickets = rows.reduce((sum, entry) => sum + (Number(entry.totalTickets) || 0), 0);
+    const bonusTickets = rows.reduce((sum, entry) => sum + (Number(entry.bonusTickets) || 0), 0);
     return {
       id: `${type}:${salesEnd}`, type, label: getDepositMailTicketTypeLabel(type),
       activeStart: previousSalesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS,
@@ -2251,11 +2354,13 @@ export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Dat
         .map(entry => JSON.stringify([String(entry.eventId || ''), Number(entry.time), Number(entry.purchasedTickets), Number(entry.amount)]))
         .sort())).digest('hex'),
       ...(type === 'biweekly' ? { drawCount: prizeGold / 200000, goldPerDraw: 200000 } : {}),
-      totalTickets: rows.reduce((sum, entry) => sum + (Number(entry.totalTickets) || 0), 0),
+      totalTickets,
       bonusEnabled: bonus.enabled,
-      bonusTickets: rows.reduce((sum, entry) => sum + (Number(entry.bonusTickets) || 0), 0),
+      bonusTickets,
       bonusPercent: bonus.percent,
       bonusExpiresAt: bonus.expiresAt,
+      bonusLabel: formatBonusLabel({ percent: bonus.percent, tickets: bonusTickets, total: totalTickets }),
+      bonusLadder: bonus.ladder || [],
       ...(bonus.nextPercent > 0 ? { nextBonusPercent: bonus.nextPercent, nextBonusExpiresAt: bonus.nextExpiresAt } : {})
     };
   });
@@ -2265,7 +2370,7 @@ export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Dat
 function getCurrentRaffleBonusInfo(type, salesEnd, salesStart, now, versions, overrides) {
   const policy = selectRaffleBonusSettings(versions, overrides, type, salesEnd, now);
   if (!policy?.enabled || now >= salesEnd || now < salesStart || !Array.isArray(policy.tiers)) {
-    return { enabled: false, percent: 0, expiresAt: salesEnd, nextPercent: 0, nextExpiresAt: salesEnd };
+    return { enabled: false, percent: 0, expiresAt: salesEnd, nextPercent: 0, nextExpiresAt: salesEnd, ladder: [] };
   }
   const totalHours = policy.tiers.reduce((sum, tier) => sum + Number(tier.hours || 0), 0);
   const elapsedHours = Math.max(0, (now - (salesEnd - totalHours * 3600)) / 3600);
@@ -2277,11 +2382,23 @@ function getCurrentRaffleBonusInfo(type, salesEnd, salesStart, now, versions, ov
       const expiresAt = Math.min(salesEnd, Math.floor(salesEnd - (totalHours - endElapsed) * 3600));
       const next = policy.tiers[index + 1];
       const nextExpiresAt = next ? Math.min(salesEnd, Math.floor(expiresAt + Number(next.hours || 0) * 3600)) : salesEnd;
-      return { enabled: Number(tier.percent) > 0, percent: Number(tier.percent) || 0, expiresAt, nextPercent: next ? Number(next.percent) || 0 : 0, nextExpiresAt };
+      // The whole remaining ladder, so raffle posts and receipts can show every
+      // percentage still available instead of only the immediate next step.
+      const ladder = [];
+      if (Number(tier.percent) > 0) ladder.push({ percent: Number(tier.percent) || 0, expiresAt });
+      let running = endElapsed;
+      for (let later = index + 1; later < policy.tiers.length; later += 1) {
+        running += Number(policy.tiers[later].hours || 0);
+        const laterPercent = Number(policy.tiers[later].percent) || 0;
+        if (laterPercent > 0) ladder.push({ percent: laterPercent,
+          expiresAt: Math.min(salesEnd, Math.floor(salesEnd - (totalHours - running) * 3600)) });
+      }
+      return { enabled: Number(tier.percent) > 0, percent: Number(tier.percent) || 0, expiresAt,
+        nextPercent: next ? Number(next.percent) || 0 : 0, nextExpiresAt, ladder };
     }
     cumulative = endElapsed;
   }
-  return { enabled: false, percent: 0, expiresAt: salesEnd, nextPercent: 0, nextExpiresAt: salesEnd };
+  return { enabled: false, percent: 0, expiresAt: salesEnd, nextPercent: 0, nextExpiresAt: salesEnd, ladder: [] };
 }
 
 export async function getRaffleUserTickets(applicationDB, discordUserId, now = Math.floor(Date.now() / 1000), requestedEsoAccountName = '') {
@@ -2298,7 +2415,7 @@ export async function getRaffleUserTickets(applicationDB, discordUserId, now = M
     const salesEnd = type === 'monthly' ? getDepositMailMonthlySalesEndAtOrAfter(reference) : getDepositMailBiweeklySalesEndAtOrAfter(reference);
     const previousSalesEnd = type === 'monthly' ? getDepositMailPreviousMonthlySalesEnd(salesEnd) : shiftRaffleSalesEnd(salesEnd, -1);
     return entries.filter(entry => normalizeDepositMailTicketType(entry.type) === type && Number(entry.time) > previousSalesEnd && Number(entry.time) <= salesEnd && Number(entry.time) <= now && String(entry.displayName || '').replace(/^@+/, '').toLowerCase() === String(esoAccountName).toLowerCase() && Number(entry.purchasedTickets || 0) > 0)
-      .map(entry => ({ raffleType: type, raffleLabel: type === 'biweekly' ? 'Bi-weekly' : '50/50', time: Number(entry.time), purchasedTickets: Number(entry.purchasedTickets) || 0, bonusEnabled: entry.bonusEnabled === true, bonusPercent: Number(entry.bonusPercent) || 0, bonusTickets: Number(entry.bonusTickets) || 0, totalTickets: Number(entry.totalTickets) || 0 }));
+      .map(entry => ({ raffleType: type, raffleLabel: type === 'biweekly' ? 'Bi-weekly' : '50/50', time: Number(entry.time), purchasedTickets: Number(entry.purchasedTickets) || 0, bonusEnabled: entry.bonusEnabled === true, bonusPercent: Number(entry.bonusPercent) || 0, bonusTickets: Number(entry.bonusTickets) || 0, totalTickets: Number(entry.totalTickets) || 0, bonusLabel: formatBonusLabel({ percent: entry.bonusPercent, tickets: entry.bonusTickets, total: entry.totalTickets }) }));
   });
   if (!requestedEsoAccountName) {
     if (!linkedName) return { linked: false, purchases: [] };
@@ -2341,7 +2458,8 @@ export async function getBankingDataJSON(applicationDB, bonusVersions = null) {
         'checkoutExpiresAt', banking_rows.checkout_expires_at,
         'writtenToEsoAt', banking_rows.written_to_eso_at,
         'sentAt', banking_rows.sent_at,
-        'failedReason', banking_rows.failed_reason
+        'failedReason', banking_rows.failed_reason,
+        'mailedBonusJson', banking_rows.mailed_bonus_json
       )
     ) AS banking_json
     FROM (
@@ -2362,7 +2480,8 @@ export async function getBankingDataJSON(applicationDB, bonusVersions = null) {
         checkout_expires_at,
         written_to_eso_at,
         sent_at,
-        failed_reason
+        failed_reason,
+        mailed_bonus_json
       FROM guildsync_banking_entries
       ORDER BY CAST(event_timestamp AS UNSIGNED) DESC, CAST(event_id AS UNSIGNED) DESC
     ) AS banking_rows
@@ -2376,14 +2495,89 @@ export async function getBankingDataJSON(applicationDB, bonusVersions = null) {
 
   const entries = typeof bankingJson === 'string' ? JSON.parse(bankingJson) : bankingJson;
   const versions = bonusVersions || await getRaffleBonusVersions(applicationDB);
-  return entries.map((entry) => ({ ...entry, ...calculateBankingEntryBonus(entry, versions, bonusOverrides) }));
+  return entries.map((entry) => {
+    const { mailedBonusJson, ...rest } = entry;
+    const mailed = parseMailedBonus(mailedBonusJson);
+    // The policy snapshot is an audit record, not part of the client payload.
+    const { bonusPolicy, ...bonus } = mailed || calculateBankingEntryBonus(rest, versions, bonusOverrides);
+    return { ...rest, ...bonus, bonusSource: mailed ? 'mailed' : 'current' };
+  });
+}
+
+// A receipt snapshot is the record of what the member was told. It is used verbatim
+// wherever banking bonus numbers are shown, so editing bonus settings afterwards does
+// not make a sent receipt disagree with the table, the export or the raffle totals.
+function parseMailedBonus(value) {
+  let parsed = value;
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value); } catch { return null; }
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const number = (key) => Number(parsed[key]) || 0;
+  return {
+    purchasedTickets: number('purchasedTickets'),
+    bonusPercent: number('bonusPercent'),
+    bonusTickets: number('bonusTickets'),
+    totalTickets: number('totalTickets'),
+    bonusEnabled: parsed.bonusEnabled === true,
+    bonusUpsellPercent: number('bonusUpsellPercent'),
+    bonusUpsellTickets: number('bonusUpsellTickets'),
+    bonusUpsellExpiresAt: parsed.bonusUpsellExpiresAt ?? null,
+    bonusUpsellHasHigherTier: parsed.bonusUpsellHasHigherTier === true,
+    bonusLadder: Array.isArray(parsed.bonusLadder) ? parsed.bonusLadder : []
+  };
+}
+
+function mailedBonusSnapshot(record = {}) {
+  return JSON.stringify({
+    purchasedTickets: record.purchasedTickets,
+    bonusPercent: record.bonusPercent,
+    bonusTickets: record.bonusTickets,
+    totalTickets: record.totalTickets,
+    bonusEnabled: record.bonusEnabled,
+    bonusUpsellPercent: record.bonusUpsellPercent,
+    bonusUpsellTickets: record.bonusUpsellTickets,
+    bonusUpsellExpiresAt: record.bonusUpsellExpiresAt,
+    bonusUpsellHasHigherTier: record.bonusUpsellHasHigherTier,
+    bonusLadder: record.bonusLadder || [],
+    bonusPolicy: record.bonusPolicy || null
+  });
+}
+
+function depositMailRaffleKey(row = {}) {
+  const type = normalizeDepositMailTicketType(row.transaction_type || row.ticket_type || row.type);
+  if (type !== 'biweekly' && type !== 'monthly') return '';
+  const window = getAssociateTicketReportRaffleWindow({ transaction_type: type, event_timestamp: row.event_timestamp || row.time });
+  const account = String(row.account_name || '').trim().toLowerCase();
+  return window && account ? `${account}|${type}|${window.salesEnd}` : '';
+}
+
+// Raffles in this batch that already received an early-purchase nudge on an earlier
+// receipt for the same member and raffle.
+async function loadNudgedRaffles(connection, rows = []) {
+  const windows = rows
+    .map((row) => getAssociateTicketReportRaffleWindow({ transaction_type: normalizeDepositMailTicketType(row.transaction_type), event_timestamp: row.event_timestamp }))
+    .filter(Boolean);
+  if (!windows.length) return new Set();
+  const earliest = Math.min(...windows.map((window) => window.salesStart));
+  const [nudged] = await connection.query(`
+    SELECT account_name, transaction_type, event_timestamp
+    FROM guildsync_banking_entries
+    WHERE bonus_nudge_sent = 1 AND CAST(event_timestamp AS UNSIGNED) >= ?
+  `, [earliest]);
+  const keys = new Set();
+  for (const row of nudged || []) {
+    const key = depositMailRaffleKey(row);
+    if (key) keys.add(key);
+  }
+  return keys;
 }
 
 function calculateBankingEntryBonus(entry, versions, overrides = []) {
     const type = normalizeDepositMailTicketType(entry.type);
     const paid = Math.max(0, Math.floor(Number(entry.ticketAmount) || 0));
     const noBonus = { purchasedTickets: paid, bonusPercent: 0, bonusTickets: 0, totalTickets: paid, bonusEnabled: false,
-      bonusUpsellPercent: 0, bonusUpsellTickets: 0, bonusUpsellExpiresAt: null, bonusUpsellHasHigherTier: false };
+      bonusUpsellPercent: 0, bonusUpsellTickets: 0, bonusUpsellExpiresAt: null, bonusUpsellHasHigherTier: false, bonusLadder: [] };
     if (type !== 'monthly' && type !== 'biweekly') {
       return noBonus;
     }
@@ -2391,10 +2585,13 @@ function calculateBankingEntryBonus(entry, versions, overrides = []) {
     if (!windowInfo) {
       return noBonus;
     }
-    // Select the raffle's current policy for all of its purchases. Freeze that
-    // policy at the end of sales so changes cannot rewrite completed raffles.
-    // The purchase timestamp still selects the hour tier below.
-    const policy = selectRaffleBonusSettings(versions, overrides, type, windowInfo.salesEnd);
+    // A per-raffle override is a deliberate admin choice for that raffle. Otherwise the
+    // entry keeps the policy that was in force when it was bought, so editing bonus
+    // settings mid-raffle only affects later purchases instead of re-scoring an open
+    // raffle (and receipts already mailed). The purchase timestamp still selects the
+    // hour tier within that policy.
+    const override = overrides.find((item) => item.type === type && item.salesEnd === windowInfo.salesEnd);
+    const policy = override || selectPurchasePolicy(versions, type, entry.time);
     if (!policy) {
       return noBonus;
     }
@@ -2422,11 +2619,20 @@ function calculateBankingEntryBonus(entry, versions, overrides = []) {
       enabled: policy.enabled
     });
     const bonusUpsellTickets = policy.enabled ? Math.max(0, next.bonusTickets - result.bonusTickets) : 0;
+    // A higher percentage is worth mentioning even when floor rounding leaves both
+    // tiers at the same ticket count (small purchases used to get no nudge at all).
+    const improvedPercent = policy.enabled && next.bonusPercent > result.bonusPercent;
     return { ...result, bonusEnabled: policy.enabled,
-      bonusUpsellPercent: bonusUpsellTickets > 0 ? next.bonusPercent : 0,
+      bonusUpsellPercent: improvedPercent ? next.bonusPercent : 0,
       bonusUpsellTickets,
-      bonusUpsellExpiresAt: bonusUpsellTickets > 0 ? next.expiresAt || null : null,
-      bonusUpsellHasHigherTier: bonusUpsellTickets > 0 && !next.isHighestTier };
+      bonusUpsellExpiresAt: improvedPercent ? next.expiresAt || null : null,
+      bonusUpsellHasHigherTier: improvedPercent && !next.isHighestTier,
+      // Kept for the mailed snapshot's audit trail; clients receive the numbers only.
+      bonusPolicy: { type, salesEnd: windowInfo.salesEnd, enabled: policy.enabled, tiers: policy.tiers },
+      bonusLadder: remainingBonusLadder({
+        purchaseTimestamp: entry.time, salesStart: windowInfo.salesStart, salesEnd: windowInfo.salesEnd,
+        tiers: policy.tiers, enabled: policy.enabled
+      }) };
 }
 
 
@@ -2559,7 +2765,25 @@ async function checkoutDepositMailUnlocked(applicationDB, payload = {}) {
 
     const versions = await getRaffleBonusVersions(connection);
     const overrides = await getRaffleBonusOverrides(connection);
-    const records = checkedOutRows.map(row => addRenderedDepositMailContent(row, versions, overrides));
+    // One early-purchase nudge per member per raffle, so repeated small deposits do
+    // not repeat the same "buy early" footer on every receipt.
+    const alreadyNudged = await loadNudgedRaffles(connection, checkedOutRows);
+    const nudgedNow = new Set();
+    const records = checkedOutRows.map(row => {
+      const key = depositMailRaffleKey(row);
+      const suppressBonusNudge = Boolean(key) && (alreadyNudged.has(key) || nudgedNow.has(key));
+      const record = addRenderedDepositMailContent(row, versions, overrides, { suppressBonusNudge });
+      if (record.bonusUpsellIncluded && key) nudgedNow.add(key);
+      return record;
+    });
+    // Persist the numbers that were actually mailed, with the policy behind them.
+    for (const record of records) {
+      await connection.query(`
+        UPDATE guildsync_banking_entries
+        SET mailed_bonus_json = ?, bonus_nudge_sent = GREATEST(bonus_nudge_sent, ?)
+        WHERE event_id = ?
+      `, [mailedBonusSnapshot(record), record.bonusUpsellIncluded ? 1 : 0, record.eventId]);
+    }
     await connection.commit();
 
     return {

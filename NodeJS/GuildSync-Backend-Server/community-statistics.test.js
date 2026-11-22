@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildCommunityStatistics, registerCommunityStatisticsSocket, initializeCommunityStatisticsSchema} from './community-statistics.js';
+import {buildCommunityStatistics, registerCommunityStatisticsSocket, initializeCommunityStatisticsSchema, buyerRaffleWindow} from './community-statistics.js';
 test('history counts real joins only; tenure uses latest recorded join, not snapshot',()=>{
  const report=buildCommunityStatistics({now:200000,roster:[{account_name:'A',in_roster:1,joined_timestamp:'1'}],rosterEvents:[{account_name:'A',event_type:'joined',event_timestamp:'100000'},{account_name:'A',event_type:'joined',event_timestamp:'150000'}],discordHistory:[{discord_id:'1',username:'Snapshot',event_type:'joined_server',source:'bulk_sync'},{discord_id:'2',username:'Live',event_type:'joined_server',source:'live_event'}]});
  assert.equal(report.highlights.find(x=>x.id==='guild-joins').rows[0].value,2);
@@ -154,17 +154,114 @@ test('activity SQL bounds original event timestamps without deleting history',as
   assert.ok(!calls.some(([sql])=>/DELETE|UPDATE/i.test(sql)));
 });
 
-test('trader rankings fetch one rolling 30-day window from each request time',async()=>{
+test('one trader fetch covers the 14-day seller window and the current 50/50 raffle',async()=>{
  const handlers={},calls=[];let time=2000000;
  const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncUser:{role:'viewer'}};
- registerCommunityStatisticsSocket(socket,{db:{execute:async(...args)=>{calls.push(args);return [[]];}},loadBanking:async()=>[],now:()=>time});
+ registerCommunityStatisticsSocket(socket,{db:{execute:async(...args)=>{calls.push(args);return args[1]?.[0]==='eso_guild_id'?[[{value:'761817'}]]:[[]];}},loadBanking:async()=>[],now:()=>time});
  let result;await handlers['guildsync:request-community-statistics']({},r=>result=r);
  const query=()=>calls.filter(([sql])=>sql.includes('FROM guildsync_trader_entries')).at(-1);
- assert.deepEqual(query()[1],[time-30*86400,time]);
+ // A 50/50 raffle can span four to six weeks, so the fetch reaches back to its start.
+ const expectedStart=Math.min(time-14*86400,buyerRaffleWindow(time).salesStart);
+ assert.deepEqual(query()[1].slice(0,2),[expectedStart,time]);
+ assert.equal(query()[1].at(-1),'761817','the fetch is scoped to the bound guild');
+ assert.ok(query()[1][0]<=buyerRaffleWindow(time).salesStart,'the raffle start is always fetched');
  assert.match(query()[0],/buyer/);
- assert.ok(!calls.some(([sql])=>sql.includes('event_timestamp >=')),'the narrower windows are applied in the builder');
+ assert.ok(!calls.some(([sql])=>sql.includes('event_timestamp >=')),'the per-card windows are applied in the builder');
  time+=86400;await handlers['guildsync:request-community-statistics']({},r=>result=r);
- assert.deepEqual(query()[1],[time-30*86400,time]);
- assert.ok(query()[1][0]>2000000-30*86400);
+ assert.deepEqual(query()[1].slice(0,2),[Math.min(time-14*86400,buyerRaffleWindow(time).salesStart),time]);
 });
 
+
+test('the bonus card reports current-raffle bonus tickets and participation',()=>{
+ const end=30000000,start=end-336*3600;
+ const banking=[
+  {displayName:'Alice',type:'biweekly',time:end-300*3600,purchasedTickets:10,amount:5001},
+  {displayName:'Bob',type:'biweekly',time:end-200*3600,purchasedTickets:10,amount:5001},
+  {displayName:'Manual',type:'biweekly',time:end-100*3600,purchasedTickets:50,amount:5001,dataSource:'ManualBiweeklyTicket'}
+ ];
+ const tiers=[{hours:120,percent:20},{hours:120,percent:10},{hours:72,percent:5},{hours:24,percent:0}];
+ const report=buildCommunityStatistics({now:end-100,windows:[{type:'biweekly',salesStart:start,salesEnd:end}],banking,
+  bonusPolicies:[{type:'biweekly',effectiveFrom:0,enabled:true,tiers}]});
+ const card=report.highlights.find(h=>h.id==='raffle-bonus');
+ assert.equal(card.title,'Bonus Tickets Awarded (current raffles)');
+ assert.equal(card.unit,'bonus tickets');
+ assert.deepEqual(card.rows.map(r=>[r.name,r.value]),[['Bi-Weekly',3]]);
+ assert.match(card.rows[0].detail,/2 of 2 buyers earned bonus tickets/);
+});
+
+test('the trader fetch is limited to this installation ESO guild',async()=>{
+ const handlers={},calls=[];
+ const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncUser:{role:'viewer'}};
+ const db={execute:async(sql,args)=>{calls.push([sql,args]);return args?.at(-1)==='eso_guild_id'?[[{value:'761817'}]]:[[]];}};
+ registerCommunityStatisticsSocket(socket,{db,loadBanking:async()=>[],now:()=>2000000});
+ await new Promise(resolve=>handlers['guildsync:request-community-statistics']({},resolve));
+ const query=calls.find(([sql])=>sql.includes('FROM guildsync_trader_entries'));
+ assert.ok(query[0].includes('AND guild_id = ?'));
+ assert.equal(query[1].at(-1),'761817');
+});
+
+test('a demoted socket loses trader gold on its next refresh',async()=>{
+ const handlers={};let role='user';
+ const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncUser:{role:'user',discord_user_id:'1'}};
+ registerCommunityStatisticsSocket(socket,{db:{execute:async()=>[[]]},loadBanking:async()=>[],authorizeViewer:async()=>role,now:()=>2000000});
+ const ask=()=>new Promise(resolve=>handlers['guildsync:request-community-statistics']({},resolve));
+ const card=result=>result.report.highlights.find(h=>h.id==='trader-sales');
+ assert.equal(card(await ask()).hideValue,undefined,'the stored user role keeps gold');
+ role='viewer';
+ assert.equal(card(await ask()).hideValue,true,'the freshly-read viewer role withholds it');
+ role=false;
+ assert.equal((await ask()).ok,false,'a revoked approval is refused');
+});
+
+test('the Discord bot reads the viewer-safe report and never receives gold',async()=>{
+ const handlers={};const now=2000000;
+ const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncAuthType:'discord-bot',guildSyncBot:{guild_id:'761817'}};
+ const db={execute:async(sql)=>sql.includes('FROM guildsync_trader_entries')
+  ?[[{seller:'Alice',buyer:'Bob',quantity:1,price:500,net:400,event_timestamp:now-100}]]
+  :[[]]};
+ registerCommunityStatisticsSocket(socket,{db,loadBanking:async()=>[],now:()=>now});
+ let result;await handlers['guildsync:request-community-statistics']({timeZone:'America/New_York'},value=>result=value);
+ assert.equal(result.ok,true);
+ const trader=result.report.highlights.filter(h=>h.id.startsWith('trader-'));
+ assert.equal(trader.length,4);
+ // The item card is quantity-only; the three gold cards must withhold their amounts.
+ const goldCards=trader.filter(h=>h.id!=='trader-items');
+ assert.equal(goldCards.length,3);
+ assert.ok(goldCards.every(h=>h.hideValue===true),'the bot never receives amounts');
+ assert.ok(goldCards.every(h=>h.rows.every(row=>!('value' in row))));
+});
+
+test('two refreshes inside one snapshot window reuse the trader rows',async()=>{
+ const handlers={},calls=[];let time=2000000;
+ const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncUser:{role:'viewer'}};
+ const db={execute:async(sql,args)=>{calls.push([sql,args]);return args?.at(-1)==='eso_guild_id'?[[{value:'761817'}]]:[[]];}};
+ registerCommunityStatisticsSocket(socket,{db,loadBanking:async()=>[],now:()=>time});
+ const ask=()=>new Promise(resolve=>handlers['guildsync:request-community-statistics']({},resolve));
+ await ask();time+=60;await ask();
+ assert.equal(calls.filter(([sql])=>sql.includes('FROM guildsync_trader_entries')).length,1);
+ time+=300;await ask();
+ assert.equal(calls.filter(([sql])=>sql.includes('FROM guildsync_trader_entries')).length,2);
+});
+
+test('the trader cards fail closed when the guild binding cannot be read',async()=>{
+ const ask=async db=>{
+  const handlers={},calls=[];
+  const socket={on:(e,h)=>handlers[e]=h,guildSyncAuthenticated:true,guildSyncUser:{role:'admin'}};
+  registerCommunityStatisticsSocket(socket,{db:{execute:async(sql,args)=>{calls.push(sql);return db(sql,args);}},loadBanking:async()=>[],now:()=>2000000});
+  let result;await handlers['guildsync:request-community-statistics']({},value=>result=value);
+  return {result,calls};
+ };
+ const broken=await ask(async sql=>{if(sql.includes('eso_guild_id'))throw new Error('settings table unavailable');return [[]];});
+ assert.equal(broken.result.ok,true,'the rest of the report still loads');
+ assert.equal(broken.result.report.traderScoped,false);
+ assert.ok(!broken.calls.some(sql=>sql.includes('FROM guildsync_trader_entries')),'an unreadable binding reads no sales');
+ const brokenCards=broken.result.report.highlights.filter(h=>h.id.startsWith('trader-'));
+ assert.ok(brokenCards.every(h=>h.rows.length===0));
+ assert.ok(broken.result.report.highlights.find(h=>h.id==='trader-sales').description.includes('not bound to one ESO guild'));
+ // A database with no binding at all, or a malformed one, behaves the same way.
+ for(const value of [undefined,'','abc','0']){
+  const unbound=await ask(async sql=>sql.includes('eso_guild_id')?[value===undefined?[]:[{value}]]:[[]]);
+  assert.equal(unbound.result.report.traderScoped,false);
+  assert.ok(!unbound.calls.some(sql=>sql.includes('FROM guildsync_trader_entries')));
+ }
+});

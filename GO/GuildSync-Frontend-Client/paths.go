@@ -167,9 +167,12 @@ func getDefaultSavedVarsDir() string {
 	)
 }
 
+// getSavedVarsDir returns the folder from the signed-in account, then the default.
+// The old GuildSyncSettings.txt value is only a migration source; the database is
+// the source of authority.
 func getSavedVarsDir() string {
-	if envDir := resolvePathFromEnv(os.Getenv("SAVED_VARS_DIR")); envDir != "" {
-		return envDir
+	if override := currentSavedVarsDirOverride(); override != "" {
+		return override
 	}
 
 	return getDefaultSavedVarsDir()

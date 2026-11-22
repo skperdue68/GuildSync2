@@ -39,6 +39,8 @@ import {
   StopGuildSyncFileWatcher,
   GetGuildSyncFileWatcherStatus,
   SetGuildSyncSavedVarsWatchFileEnabled,
+  GetSavedVarsDirSetting,
+  SetSavedVarsDirSetting,
   GetESORunningStatus,
   CollectGuildSyncBankingData,
   CommitGuildSyncBankingData,
@@ -91,6 +93,12 @@ let resizeHandlerAttached = false;
 let profileMenuOpen = false;
 let sessionGeneration = 0;
 let userSwitchOptions = [];
+let savedVarsDirAccountValue = '';
+let userSettingsDialogOpen = false;
+let userSettingsSaving = false;
+let userSettingsError = '';
+let userSettingsInfo = null;
+let userSettingsForm = { savedVarsDir: '' };
 let userSwitchBusy = false;
 let userSwitchTransition = false;
 const userAdministrationPanel=createUserAdministrationPanel({request:(event,payload)=>emitSocketWithAck(event,payload,30000),getUser:()=>guildSyncSession.user,onCount:updateUserAdministrationBadge});
@@ -663,6 +671,7 @@ function renderGuildSyncTabContent() {
     ${content}
     ${manualBiweeklyTicketDialogOpen ? renderManualBiweeklyTicketDialog() : ''}
     ${bankingMoveDialogOpen ? renderBankingMoveDialog() : ''}
+    ${userSettingsDialogOpen ? renderUserSettingsDialog() : ''}
     ${bankingHistoryDialogOpen ? renderBankingHistoryDialog() : ''}
     ${memberLinkDialogOpen ? renderMemberLinkDialog() : ''}
     ${associateTicketReportDialogOpen ? renderAssociateTicketReportDialog() : ''}
@@ -679,6 +688,7 @@ function isBlockingModalOpen() {
     || discordHistoryDialogOpen
     || manualBiweeklyTicketDialogOpen
     || bankingMoveDialogOpen
+    || userSettingsDialogOpen
     || bankingHistoryDialogOpen
     || memberLinkDialogOpen
     || rosterNotesDialogOpen
@@ -994,6 +1004,7 @@ function renderGuildSyncTabLayout(options = {}) {
   wireDiscordLastSeenReportDialog();
   wireMemberLinksReportDialog();
   wireDiscordHistoryDialog();
+  wireUserSettingsDialog();
 
   restoreScrollPosition();
 
@@ -2088,7 +2099,9 @@ async function saveRaffleBonusSettings(event) {
     raffleBonusDraft = null;
     bonusResetToDefaults = false;
     await refreshBankingDataFromBackend({ silent: true });
-    addSystemMessage('bonus-settings', 'Raffle bonus settings saved.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    // A ladder shorter than the raffle is allowed, but early purchases earn nothing,
+    // so the save message says how much of each raffle the bonuses actually cover.
+    addSystemMessage('bonus-settings', `Raffle bonus settings saved.${response.warning ? ` ${response.warning}` : ''}`, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
     renderGuildSyncTabLayout();
   } catch (error) {
     addSystemMessage('bonus-settings-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
@@ -9094,6 +9107,7 @@ function renderOpenProfileMenuContents() {
       ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}
 
       ${renderUserSwitchControls(guildSyncSession.user,userSwitchOptions)}
+      <button id="openUserSettingsButton" class="discord-secondary-button profile-user-settings-button" type="button">User Settings</button>
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
     </section>
   `;
@@ -9119,6 +9133,11 @@ function renderOpenProfileMenuContents() {
     .forEach((toggle) => {
       toggle.addEventListener('change', handleProfileFileWatchToggleChange);
     });
+
+  document.querySelector('#openUserSettingsButton')?.addEventListener('click', () => {
+    closeProfileMenu(false);
+    openUserSettingsDialog();
+  });
 }
 
 async function loadUserSwitchOptions() {
@@ -9346,6 +9365,173 @@ function sanitizeID(value) {
   return String(value || '')
     .trim()
     .replace(/[^a-zA-Z0-9_-]+/g, '-') || 'file';
+}
+
+// The SavedVariables folder belongs to the GuildSync account. The desktop applies the
+// stored value for the signed-in user and moves an old settings-file value once.
+async function syncUserSettingsFromBackend() {
+  if (!canIngestGuildSyncData() || !socket?.connected || !desktopVersionAccepted) {
+    return false;
+  }
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-user-settings', {}, 15000);
+    if (!response?.ok) {
+      throw new Error(response?.message || 'Could not load your settings.');
+    }
+
+    let stored = String(response.settings?.savedVarsDir || '').trim();
+    const local = await GetSavedVarsDirSetting();
+    const legacy = String(local?.legacySavedVarsDir || '').trim();
+
+    // One-time migration: a value in GuildSyncSettings.txt becomes the account value.
+    if (!stored && legacy) {
+      const saved = await emitSocketWithAck('guildsync:save-user-settings', { savedVarsDir: legacy }, 15000);
+      if (saved?.ok) {
+        stored = String(saved.settings?.savedVarsDir || '');
+        addSystemMessage('user-settings-migrated', 'Moved your SavedVariables folder from GuildSyncSettings.txt into your GuildSync account.', {
+          ttlMs: TRANSIENT_MESSAGE_TTL_MS
+        });
+      }
+    }
+
+    savedVarsDirAccountValue = stored;
+    const applied = await SetSavedVarsDirSetting(stored);
+    if (applied?.error) {
+      addSystemMessage('user-settings-error', applied.error, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    logGuildSyncFileWatcher('User settings could not be loaded; using the default SavedVariables folder.', formatError(error));
+    return false;
+  }
+}
+
+function openUserSettingsDialog() {
+  userSettingsDialogOpen = true;
+  userSettingsSaving = false;
+  userSettingsError = '';
+  userSettingsInfo = null;
+  userSettingsForm = { savedVarsDir: savedVarsDirAccountValue };
+  renderGuildSyncTabLayout();
+  void loadUserSettingsDialogValues();
+}
+
+function closeUserSettingsDialog() {
+  userSettingsDialogOpen = false;
+  userSettingsSaving = false;
+  userSettingsError = '';
+  renderGuildSyncTabLayout();
+}
+
+async function loadUserSettingsDialogValues() {
+  try {
+    userSettingsInfo = await GetSavedVarsDirSetting();
+  } catch (error) {
+    userSettingsError = formatError(error);
+  }
+
+  if (userSettingsDialogOpen) {
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function saveUserSettingsDialog() {
+  if (userSettingsSaving) {
+    return;
+  }
+
+  userSettingsSaving = true;
+  userSettingsError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:save-user-settings', {
+      savedVarsDir: userSettingsForm.savedVarsDir
+    }, 30000);
+    if (!response?.ok) {
+      throw new Error(response?.message || 'Could not save your settings.');
+    }
+
+    savedVarsDirAccountValue = String(response.settings?.savedVarsDir || '');
+    const applied = await SetSavedVarsDirSetting(savedVarsDirAccountValue);
+    if (applied?.error) {
+      throw new Error(applied.error);
+    }
+
+    userSettingsDialogOpen = false;
+    await syncGuildSyncFileWatcherWithAuthState({ silent: true });
+    addSystemMessage('user-settings-saved', savedVarsDirAccountValue
+      ? 'SavedVariables folder saved. The desktop client uses it when you sign in.'
+      : 'SavedVariables folder returned to the default location.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } catch (error) {
+    userSettingsError = formatError(error);
+  } finally {
+    userSettingsSaving = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+function renderUserSettingsDialog() {
+  const info = userSettingsInfo || {};
+  const defaultValue = String(info.defaultSavedVarsDir || '').trim();
+  const value = String(userSettingsForm.savedVarsDir || '');
+  const appliedValue = String(savedVarsDirAccountValue || '').trim();
+  const defaultLabel = defaultValue || 'Documents\\Elder Scrolls Online\\live\\SavedVariables';
+
+  return `
+    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="userSettingsDialogTitle">
+      <div class="roster-history-dialog manual-ticket-dialog user-settings-dialog">
+        <div class="roster-history-header">
+          <div>
+            <h3 id="userSettingsDialogTitle">User Settings</h3>
+            <p>SavedVariables folder for this GuildSync account.</p>
+          </div>
+          <button id="closeUserSettingsDialogButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
+        </div>
+
+        ${userSettingsError ? `<div class="discord-data-error">${escapeHtml(userSettingsError)}</div>` : ''}
+
+        <div class="manual-ticket-form">
+          <label class="manual-ticket-note-field">
+            <span>ESO SavedVariables folder</span>
+            <input id="userSettingsSavedVarsDirInput" class="discord-search-input" type="text" spellcheck="false" placeholder="${escapeAttribute(defaultLabel)}" value="${escapeAttribute(value)}" />
+          </label>
+
+          <div class="roster-history-muted">
+            Leave blank to use the default folder. This value is stored with your GuildSync account, and a leading <code>~</code> expands to your home folder. An existing GuildSyncSettings.txt value was moved here automatically.
+          </div>
+          <div class="roster-history-muted">Default: ${escapeHtml(defaultLabel)}</div>
+          <div class="roster-history-muted">In use now: ${escapeHtml(appliedValue || defaultLabel)}</div>
+          <div class="roster-history-muted">The web client cannot read local folders; the desktop client uses this setting when you sign in.</div>
+
+          <div class="manual-ticket-actions banking-move-actions">
+            <button id="useDefaultUserSettingsButton" class="discord-secondary-button" type="button" ${userSettingsSaving ? 'disabled' : ''}>USE DEFAULT</button>
+            <button id="saveUserSettingsButton" class="refresh-discord-button" type="button" ${userSettingsSaving ? 'disabled' : ''}>${userSettingsSaving ? 'SAVING...' : 'SAVE'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireUserSettingsDialog() {
+  if (!userSettingsDialogOpen) {
+    return;
+  }
+
+  document.querySelector('#closeUserSettingsDialogButton')?.addEventListener('click', closeUserSettingsDialog);
+  document.querySelector('#useDefaultUserSettingsButton')?.addEventListener('click', () => {
+    userSettingsForm = { savedVarsDir: '' };
+    userSettingsError = '';
+    renderGuildSyncTabLayout();
+  });
+  document.querySelector('#userSettingsSavedVarsDirInput')?.addEventListener('input', (event) => {
+    userSettingsForm = { savedVarsDir: String(event.target.value || '') };
+  });
+  document.querySelector('#saveUserSettingsButton')?.addEventListener('click', () => void saveUserSettingsDialog());
 }
 
 function openProfileMenu() {
@@ -10098,6 +10284,7 @@ function updateStatusDot() {
 async function syncGuildSyncFileWatcherWithAuthState(options = {}) {
   try {
     if (canIngestGuildSyncData()) {
+      await syncUserSettingsFromBackend();
       const status = await StartGuildSyncFileWatcher();
       guildSyncFileWatcherStatus = status;
 

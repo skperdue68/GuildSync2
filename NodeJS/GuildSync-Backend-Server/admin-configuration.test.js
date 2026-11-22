@@ -16,6 +16,21 @@ test('purchase announcement switch is grouped, defaults off, and restores config
  assert.equal(service.view().settings.find(item=>item.key===key).value,true);
 });
 
+test('the buyer-card raffle linger is a backend administrator setting defaulting to one hour',async()=>{
+ const key='GUILDSYNC_COMMUNITY_BUYER_RAFFLE_LINGER_HOURS';
+ const item=configurationCatalog.find(setting=>setting.key===key);
+ assert.equal(item.owner,'backend');assert.equal(item.group,'Community highlights');
+ assert.equal(item.type,'number');assert.equal(item.defaultValue,1);assert.equal(item.min,0);assert.equal(item.max,168);
+ assert.match(item.help,/Guild Regulars and Window Shoppers/);
+ const env={};const service=createConfigurationService(memoryDB(),{env});await service.initialize();
+ assert.equal(service.view().settings.find(setting=>setting.key===key).value,1);
+ await service.save({revision:0,changes:{[key]:6}});
+ assert.equal(env[key],'6','the live override reaches the report on its next refresh');
+ const report=createConfigurationService(memoryDB(),{env:{}});await report.initialize();
+ await assert.rejects(report.save({revision:0,changes:{[key]:-1}}),/range/);
+ await assert.rejects(report.save({revision:0,changes:{[key]:169}}),/range/);
+});
+
 test('voice role overrides accept names and IDs but reject empty list entries',async()=>{
  const service=createConfigurationService(memoryDB(),{env:{}});await service.initialize();
  const key='GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS';
@@ -79,4 +94,34 @@ test('onboarding role defaults and administrator overrides accept a single name 
  await service.registerBotDefaults({[key]:'Gangsters'});await service.save({revision:0,changes:{[key]:'123'}});
  assert.equal((await service.botConfiguration()).overrides[key],'123');
  await assert.rejects(service.save({revision:1,changes:{[key]:'Gangsters,Associates'}}),/one role/);
+});
+
+test('community highlight settings are live backend settings with guarded values',async()=>{
+ const env={};const service=createConfigurationService(memoryDB(),{env});await service.initialize();
+ const item=key=>configurationCatalog.find(setting=>setting.key===key);
+ for(const [key,type,value] of [
+  ['GUILDSYNC_COMMUNITY_TRADER_WINDOW','select','raffle'],
+  ['GUILDSYNC_COMMUNITY_TRADER_TOP_LIMIT','number',5],
+  ['GUILDSYNC_COMMUNITY_TRADER_GOLD_VISIBILITY','select','user'],
+  ['GUILDSYNC_COMMUNITY_HIDDEN_HIGHLIGHTS','cards','']
+ ]){
+  assert.equal(item(key).group,'Community highlights');
+  assert.equal(item(key).owner,'backend');
+  assert.equal(item(key).type,type);
+  assert.equal(item(key).defaultValue,value);
+ }
+ await service.save({revision:0,changes:{
+  GUILDSYNC_COMMUNITY_TRADER_WINDOW:'14 days',
+  GUILDSYNC_COMMUNITY_TRADER_TOP_LIMIT:10,
+  GUILDSYNC_COMMUNITY_TRADER_GOLD_VISIBILITY:'admin',
+  GUILDSYNC_COMMUNITY_HIDDEN_HIGHLIGHTS:'guild-joins, trader-visitor-buyers'
+ }});
+ assert.equal(env.GUILDSYNC_COMMUNITY_TRADER_WINDOW,'14 days');
+ assert.equal(env.GUILDSYNC_COMMUNITY_TRADER_TOP_LIMIT,'10');
+ assert.equal(env.GUILDSYNC_COMMUNITY_TRADER_GOLD_VISIBILITY,'admin');
+ assert.equal(env.GUILDSYNC_COMMUNITY_HIDDEN_HIGHLIGHTS,'guild-joins, trader-visitor-buyers');
+ const fresh=createConfigurationService(memoryDB(),{env:{}});await fresh.initialize();
+ await assert.rejects(fresh.save({revision:0,changes:{GUILDSYNC_COMMUNITY_HIDDEN_HIGHLIGHTS:'not-a-card'}}),/card ids/);
+ await assert.rejects(fresh.save({revision:0,changes:{GUILDSYNC_COMMUNITY_TRADER_TOP_LIMIT:26}}),/range/);
+ await assert.rejects(fresh.save({revision:0,changes:{GUILDSYNC_COMMUNITY_TRADER_WINDOW:'weekly'}}),/Invalid/);
 });
