@@ -15,6 +15,7 @@ GetTimeStamp=function() return 1795521600 end
 GetDateStringFromTimestamp=function() return 'unused' end
 GetNumGuilds=function() return 1 end
 GetGuildId=function() return 123 end
+GetGuildName=function(id) return id==123 and 'Live Guild' or nil end
 GetGuildMemberIndexFromDisplayName=function(_,name) if name=='@Member' or name=='@Other' then return 1 end end
 RequestOpenMailbox=function() fire(EVENT_MAIL_OPEN_MAILBOX) end
 CloseMailbox=function() end
@@ -72,6 +73,10 @@ eq(#sent,3,'wrong world and duplicate not sent')
 SLASH_COMMANDS['/gsdr']('subject Custom {rank}')
 saved.mailQueue.e=record('e');SLASH_COMMANDS['/gsdr']('resume');tick(3000);tick(2000)
 eq(sent[#sent].subject,'Custom Associate','subject configurable')
+fire(EVENT_MAIL_SEND_SUCCESS,'@Member')
+saved.mailQueue.f=record('f');saved.mailQueue.f.guildName='Your guild'
+tick(3000)
+assert(sent[#sent].body:find('Live Guild'),'placeholder guild name replaced with the live one')
 fire(EVENT_MAIL_CLOSE_MAILBOX)
 local closed=false
 for _,message in ipairs(messages) do if tostring(message):find('Mailbox closed') then closed=true end end

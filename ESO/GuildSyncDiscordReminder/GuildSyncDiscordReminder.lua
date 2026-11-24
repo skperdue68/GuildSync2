@@ -19,8 +19,19 @@ local function key(value) return string.lower(tostring(value or "")):gsub("^@+",
 local function fill(template, values)
     return (tostring(template or ""):gsub("{([%w]+)}", function(token) return tostring(values[token] or "") end))
 end
+-- The backend can only name the guild from its environment, and the game always
+-- knows it. Replace a blank or placeholder name with the live guild name so a
+-- reminder (or test mail) never reads "Your guild".
+local function guildName(item)
+    local saved = tostring(item.guildName or "")
+    if saved ~= "" and saved ~= "Your guild" then return saved end
+    local id = tonumber(item.guildId)
+    local live = id and GetGuildName(id)
+    if type(live) == "string" and live ~= "" then return live end
+    return saved ~= "" and saved or "your guild"
+end
 local function message(item)
-    local values = {account = item.recipient, guild = item.guildName, rank = item.rank, candidateName = item.candidateDiscordName}
+    local values = {account = item.recipient, guild = guildName(item), rank = item.rank, candidateName = item.candidateDiscordName}
     values.candidate = item.candidateDiscordName and item.candidateDiscordName ~= "" and fill(sv.settings.candidate, values) or ""
     return fill(sv.settings.subject, values), fill(sv.settings.body, values)
 end
@@ -180,7 +191,7 @@ end
 local function settingsPanel()
     local lam = LibAddonMenu2
     if not lam then return end
-    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.2", registerForRefresh = true})
+    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.3", registerForRefresh = true})
     local options = {{type = "checkbox", name = "Automatically send queued reminders", getFunc = function() return sv.settings.enabled end,
         setFunc = function(value) sv.settings.enabled = value; if value then start() end end}}
     for _, entry in ipairs({{"subject", "Subject"}, {"body", "Message body"}, {"candidate", "Optional candidate paragraph"}}) do

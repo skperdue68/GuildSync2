@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {selectReminderRecipients, reminderInterval, registerDiscordReminderSocket,createDiscordReminders} from './discord-reminders.js';
+import {selectReminderRecipients, reminderInterval, registerDiscordReminderSocket,createDiscordReminders,testRecipientRank} from './discord-reminders.js';
 
 const now = new Date('2026-11-24T12:00:00Z');
 test('only current, unlinked, opted-in members beyond the cooldown qualify', () => {
@@ -76,6 +76,12 @@ test('historical unsuccessful acknowledgements cannot resurrect cancelled reques
 test('sent and export timestamps both enforce cooldown; malformed dates fail closed',()=>{
   assert.equal(selectReminderRecipients([{account_name:'A',in_roster:1,reminder_exported_at:'2026-10-01',reminder_sent_at:'2026-11-23'}],30,now).length,0);
   assert.equal(selectReminderRecipients([{account_name:'A',in_roster:1,reminder_sent_at:'invalid'}],30,now).length,0);
+});
+test("a test mail uses the tester's own roster rank instead of a placeholder",()=>{
+ const rows=[{account_name:'@Officer',rank_name:'Guild Master'},{account_name:'Member',rank_name:'Associate'}];
+ assert.equal(testRecipientRank(rows,'@officer','@Officer'),'Guild Master');
+ assert.equal(testRecipientRank(rows,'@Stranger','@officer'),'Guild Master');
+ assert.equal(testRecipientRank([],'@Stranger','@Officer'),'');
 });
 test('interval rejects fractional, zero, excessive and nonnumeric values',()=>{
   assert.equal(reminderInterval(30),30);

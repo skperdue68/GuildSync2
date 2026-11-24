@@ -169,7 +169,7 @@ voiceIdentityService=createVoiceIdentityService(loginDB,{secret:GUILDSYNC_JWT_SE
 const app = express();
 const roleViews = createRoleViews(loginDB);
 const discordReminders=createDiscordReminders(applicationDB,{guildId:ESO_GUILD_CONFIGURATION.guildId,
-  guildName:process.env.GUILDSYNC_ESO_GUILD_NAME||'Your guild'});
+  guildName:process.env.GUILDSYNC_ESO_GUILD_NAME||''});
 const userSwitches = createUserSwitches(loginDB,{log:Log});
 const rosterNoteAccess=createRosterNoteAccess({db:applicationDB,loginDB,
   effectiveRole:(socket,role)=>roleViews.effective(socket.guildSyncRoleViewId,role),

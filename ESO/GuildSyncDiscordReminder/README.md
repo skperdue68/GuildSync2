@@ -10,7 +10,7 @@ Sends officer-requested ESO mail asking active guild members for their Discord u
 4. Start ESO. After player activation the add-on waits for Banking and any observed outstanding send, opens the mailbox, waits two seconds for it to become usable (the same way GuildSyncBanking does), then sends one reminder at a time. It waits for ESO's confirmation and then waits three seconds before the next message. Mailbox open/close events are not used, so a close during login cannot stop the queue.
 5. Exit ESO or `/reloadui` to persist the results, then use **Read saved delivery results** in the dialog to import them. GuildSync no longer places this SavedVariables file on its File Watch list; the export and read buttons handle it directly.
 
-The backend must have `GUILDSYNC_ESO_GUILD_ID` configured. Optional `GUILDSYNC_ESO_GUILD_NAME` supplies the message's guild name; set it to your guild. The database remains scoped to one ESO guild.
+The backend must have `GUILDSYNC_ESO_GUILD_ID` configured. Optional `GUILDSYNC_ESO_GUILD_NAME` overrides the guild name in the message; when it is unset, or a queued request still carries the old "Your guild" placeholder, the add-on fills in the in-game guild name from the request's guild ID. The database remains scoped to one ESO guild.
 
 ## Test a message
 
