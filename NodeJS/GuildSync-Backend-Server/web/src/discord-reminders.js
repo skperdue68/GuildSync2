@@ -157,6 +157,7 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
           <p>Reminders are written to the add-on only while ESO is closed, so you can queue them at any time. Start ESO afterward and the add-on sends them automatically; exit ESO or /reloadui to save the results.</p>
           <button data-reminder-sync type="button">Read saved delivery results</button>`:'<p>Use the GuildSync desktop app to write the add-on SavedVariables file. You can manage the reminder interval and roster opt-outs here.</p>'}
         <h3>Recent batches</h3><div>${batches.map(batch=>`<p>${escape(date(batch.created_at))} · ${escape(batch.sending_account)} · ${escape(batch.world_name)} · ${escape(batch.exported_at?'Exported':'Awaiting export confirmation')}${desktop?` <button type="button" data-reminder-resume="${escape(batch.batch_id)}" data-account="${escape(batch.sending_account)}" data-world="${escape(batch.world_name)}">Retry same batch</button>`:''}</p>`).join('')||'<p>No reminder batches yet.</p>'}</div>
+        <p class="discord-reminder-reset"><button type="button" data-reminder-reset>Reset reminder data</button> Clears every ESO reminder batch, request, send date and opt-out. The Discord membership DM campaign is not affected.</p>
         <p data-reminder-status role="status"></p>`;
       dialog.querySelector('[data-reminder-close]').onclick=()=>{if(!busy)dialog.close();};
       dialog.querySelector('[data-reminder-config]').onsubmit=event=>{event.preventDefault();const days=Number(new FormData(event.currentTarget).get('days'));task(async()=>{checked(await request({action:'configure',intervalDays:days}));await open();});};
@@ -180,6 +181,15 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
         const result=await exportReminderBatch({request,bridge,batchId:button.dataset.reminderResume,account:button.dataset.account,world:button.dataset.world,resume:true});
         await changed();await open();message(result.message);
       }));
+      dialog.querySelector('[data-reminder-reset]')?.addEventListener('click',()=>{
+        if(!window.confirm('Reset all ESO reminder data? This clears reminder batches, requests, send dates and opt-outs. The Discord membership DM campaign is not affected. Reminders already written to the add-on are not removed.'))return;
+        task(async()=>{
+          const result=checked(await request({action:'reset'}));
+          clearPendingReminderWrites();
+          await changed();await open();
+          message(`Cleared ${result?.deletedRequests||0} reminder request(s), ${result?.deletedBatches||0} batch(es) and ${result?.deletedMembers||0} member record(s).`);
+        });
+      });
       message(setupMessage,Boolean(setupMessage));
     }catch(error){message(error.message,true);}
     finally{busy=false;}

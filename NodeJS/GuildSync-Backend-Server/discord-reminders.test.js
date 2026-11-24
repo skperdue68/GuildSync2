@@ -123,3 +123,24 @@ test('socket operations require a reminder officer except for community opt-outs
   let response;await officerHandlers['guildsync:discord-reminders']({action:'preview'},r=>response=r);
   assert.equal(response.ok,true);assert.deepEqual(response.recipients,[]);
 });
+
+test('reset clears only the ESO reminder mail tables',async()=>{
+ const {db,data}=batchDatabase(),deleted=[];
+ const connection=await db.getConnection(),original=connection.execute;
+ connection.execute=async(sql,args)=>{
+  if(sql.startsWith('DELETE FROM ')){deleted.push(sql);return [{affectedRows:2}];}
+  return original(sql,args);
+ };
+ const result=await createDiscordReminders(db,{guildId:'123',now:()=>now}).reset();
+ assert.deepEqual(deleted,['DELETE FROM guildsync_discord_reminder_requests',
+  'DELETE FROM guildsync_discord_reminder_batches','DELETE FROM guildsync_discord_reminder_members']);
+ assert.deepEqual(result,{deletedRequests:2,deletedBatches:2,deletedMembers:2});
+ assert.equal(data.commits,1);
+});
+test('reset is available to officers and reported over the socket',async()=>{
+ const handlers={},socket={guildSyncAuthenticated:true,guildSyncUser:{role:'admin',discord_user_id:'1'},on:(event,fn)=>handlers[event]=fn};
+ registerDiscordReminderSocket(socket,{reset:async()=>({deletedRequests:3,deletedBatches:1,deletedMembers:2})},
+  {authorize:async()=>'admin',officerAccess:async()=>true});
+ let response;await handlers['guildsync:discord-reminders']({action:'reset'},r=>response=r);
+ assert.equal(response.ok,true);assert.equal(response.deletedRequests,3);assert.equal(response.deletedBatches,1);
+});

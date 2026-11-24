@@ -215,6 +215,17 @@ export function createDiscordReminders(db,{guildId='',guildName='',now=()=>new D
         return {exportedAt:at};
       });
     },
+    // Clears only the ESO reminder-mail records. Roster links, other saved
+    // variables and the Discord membership DM campaign are untouched.
+    async reset() {
+      return transaction(async c=>{
+        const [requests]=await c.execute('DELETE FROM guildsync_discord_reminder_requests');
+        const [batches]=await c.execute('DELETE FROM guildsync_discord_reminder_batches');
+        const [members]=await c.execute('DELETE FROM guildsync_discord_reminder_members');
+        return {deletedRequests:Number(requests?.affectedRows||0),deletedBatches:Number(batches?.affectedRows||0),
+          deletedMembers:Number(members?.affectedRows||0)};
+      });
+    },
     async acknowledge(officerId,acks) {
       if(!Array.isArray(acks)||acks.length>1000)throw Error('Invalid reminder acknowledgements.');
       return transaction(async c=>{
@@ -261,6 +272,7 @@ export function registerDiscordReminderSocket(socket,service,{authorize,officerA
         case 'exported':result=await service.exported(id,payload.batchId);break;
         case 'acknowledge':result=await service.acknowledge(id,payload.acks);break;
         case 'reconcile':result=await service.reconcile(payload.requestIds);break;
+        case 'reset':result=await service.reset();break;
         default:throw Error('Unknown Discord reminder action.');
       }
       callback?.({ok:true,...result});
