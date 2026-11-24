@@ -6,5 +6,3 @@
 .discord-reminder-dialog input, .discord-reminder-dialog select, .discord-reminder-dialog button { padding: 8px 12px; border-radius: 6px; }
 .discord-reminder-dialog input[type=number] { width: 80px; }
 .discord-reminder-preview { max-height: 35vh; overflow: auto; }
-.discord-reminder-roster-cell { font-size: .8rem; min-width: 180px; }
-.discord-reminder-roster-cell label { display: flex; gap: 6px; align-items: center; margin-top: 5px; }

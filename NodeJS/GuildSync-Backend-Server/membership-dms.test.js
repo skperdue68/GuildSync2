@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createDMCampaignEngine,dmConfig,membershipDMManaged} from './membership-dms.js';
+import {createDMCampaignEngine,dmConfig,membershipDMManaged,pruneMembershipState} from './membership-dms.js';
 
 function fixture(random=()=>0) {
  let time=10000000;
@@ -58,6 +58,21 @@ test('next slot is paced from actual successful completion, not an earlier claim
  const job=engine.claim(state,members,30);advance(100);
  engine.finish(state,job.id,job.token,{status:'sent',messageId:'message'});
  assert.equal(state.campaign.nextAt,10001300);
+});
+test('settled responses and old deliveries are pruned so guild state stays bounded',()=>{
+ const state={history:{},preferences:{},deliveries:{},events:[]};
+ for(let index=0;index<205;index++)state.events.push({eventId:String(index),forwardStatus:index<150?'sent':'pending',roleStatus:'sent'});
+ for(let index=0;index<1005;index++)state.deliveries['d'+index]={id:'d'+index,status:index<800?'sent':'uncertain',claimedAt:index};
+ pruneMembershipState(state);
+ assert.equal(state.events.length,200);
+ assert.equal(state.events[0].eventId,'5');
+ assert.equal(state.events.at(-1).eventId,'204');
+ assert.equal(Object.keys(state.deliveries).length,1000);
+ assert.equal(state.deliveries.d1004.status,'uncertain');
+ assert.equal(state.deliveries.d0,undefined);
+ const pending={history:{},preferences:{},deliveries:{},events:Array.from({length:205},(_,index)=>({eventId:String(index),forwardStatus:'pending',roleStatus:'sent'}))};
+ pruneMembershipState(pending);
+ assert.equal(pending.events.length,205,'unforwarded responses are never dropped');
 });
 test('only confirmed, ambiguous or preferred contacts suppress onboarding reminders',async()=>{
  const managed=state=>membershipDMManaged({execute:async()=>[[{state_json:JSON.stringify(state)}]]},'1','10');

@@ -2,11 +2,6 @@ const escape=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'
 const checked=response=>{if(!response?.ok)throw Error(response?.message||'Discord reminder operation failed.');return response;};
 const date=value=>value?new Date(value).toLocaleString():'Never';
 
-export function renderReminderRosterCell(member,editable=false) {
-  return `<td class="discord-reminder-roster-cell"><div>Exported: ${escape(date(member.reminder_exported_at))}</div><div>Sent: ${escape(date(member.reminder_sent_at))}</div>
-    ${editable?`<label><input type="checkbox" data-discord-opt-out="${escape(member.account_name)}" ${member.discord_opt_out?'checked':''}> Does not use Discord</label>`:member.discord_opt_out?'Does not use Discord':''}</td>`;
-}
-
 export async function exportReminderBatch({request,bridge,batchId,account,world,resume=false,testRecipient}) {
   const batch=checked(await request({action:resume?'batch':'prepare',batchId,sendingAccount:account,worldName:world,testRecipient}));
   const result=checked(await bridge.WriteDiscordReminderQueue(account,world,batch.records));
@@ -108,15 +103,6 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
     wire(root){
       const button=root?.querySelector('#openDiscordRemindersButton');
       if(button)button.onclick=open;
-      root?.querySelectorAll('[data-discord-opt-out]').forEach(input=>input.onchange=async()=>{
-        input.disabled=true;
-        try{
-          checked(await request({action:'opt-out',accountName:input.dataset.discordOptOut,optOut:input.checked}));await changed();
-          if(desktop){try{await syncReminderAcks(bridge,request);}catch(error){window.alert(`Preference saved. Queued mail cleanup needs attention: ${error.message}`);}}
-        }
-        catch(error){input.checked=!input.checked;window.alert(error.message);}
-        finally{input.disabled=false;}
-      });
     }
   };
 }

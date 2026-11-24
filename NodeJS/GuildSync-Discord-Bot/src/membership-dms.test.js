@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {membershipDMMessage,createMembershipDMWorker,formatMembershipStatus} from './membership-dms.js';
+import {membershipDMMessage,createMembershipDMWorker,formatMembershipStatus,formatMembershipReplyChoice} from './membership-dms.js';
 
 const job={id:'12345678-1234-1234-1234-123456789abc',userId:'10',name:'Member',token:'claim'};
 const config={template:'Hello {name}, please tell {guild} your ESO name.',destinationType:'channel',destinationId:'99'};
@@ -50,24 +50,41 @@ test('buttons open forms, and submitted responses are routed to the backend with
  await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>false,isModalSubmit:()=>true,inGuild:()=>false,user:{id:'10'},id:'123',fields:{getTextInputValue:()=>'@ESO'},deferReply:async()=>{},editReply:async value=>{reply=value;}});
  assert.equal(calls[0][1].userId,'10');assert.equal(calls[0][1].text,'@ESO');assert.equal(reply,'Linked');
 });
-test('forwarding includes identity, outcome and full long response, disables mentions and persists completion',async()=>{
+test('forwarding names the server and member, describes the option, and omits internal delivery IDs',async()=>{
  const event={eventId:'123',userId:'10',name:'Member',choice:'other',text:'X'.repeat(4000),at:100,deliveryId:job.id,result:{status:'review'},destinationType:'channel',destinationId:'99',token:'token'};
  const calls=[];
  const {worker,forwards}=fixture(async(action,payload)=>{calls.push([action,payload]);return action==='claim-forward'?{event}:{};});
  await worker.forwardOne();assert.equal(forwards.length,1);assert.ok(forwards[0].files?.length);assert.deepEqual(forwards[0].allowedMentions.parse,[]);
- assert.equal(calls.at(-1)[1].success,true);assert.match(forwards[0].content,/123/);
+ assert.equal(calls.at(-1)[1].success,true);
+ assert.match(forwards[0].content,/Server: Guild\n/);assert.doesNotMatch(forwards[0].content,/Server: 1\b/);
+ assert.match(forwards[0].content,/Discord: Member \(10\)/);
+ assert.match(forwards[0].content,/Choice: Other response \(full text below\)/);
+ assert.doesNotMatch(forwards[0].content,/Delivery:/);assert.doesNotMatch(forwards[0].content,/Response:/);
+});
+test('each option reads as a sentence and an empty reply omits placeholder text',async()=>{
+ assert.equal(formatMembershipReplyChoice('eso','@Name','Guild'),'I play ESO — my ESO account name is @Name');
+ assert.equal(formatMembershipReplyChoice('eso','','Guild'),'I play ESO — my ESO account name is not supplied');
+ assert.equal(formatMembershipReplyChoice('community','','Guild'),'I am no longer in Guild but would like to stay on Discord');
+ assert.equal(formatMembershipReplyChoice('not_playing','','Guild'),'I do not play ESO but would like to stay on Discord');
+ assert.equal(formatMembershipReplyChoice('other','Short note','Guild'),'Other response: Short note');
+ assert.equal(formatMembershipReplyChoice('other','','Guild'),'Other response');
 });
 test('status reports last attempted, last delivered and next scheduled time',()=>{
  const text=formatMembershipStatus({campaign:{status:'paused',remaining:2,nextAt:100,lastAttempted:{name:'A',at:50},lastSent:{name:'B',at:40},uncertain:1,uncertainMembers:[{userId:'10',name:'Member'}]}});
  assert.match(text,/Last attempted: A/);assert.match(text,/Last sent: B/);assert.match(text,/paused/);
  assert.match(text,/Uncertain deliveries: Member \(10\)/);
+ const withResponse=formatMembershipStatus({member:{userId:'10',history:{sentAt:40},preference:null,lastResponse:{choice:'not_playing',at:50}}});
+ assert.match(withResponse,/Last response: no longer plays ESO, staying on Discord \(<t:50:f>\)/);
+ const withAccount=formatMembershipStatus({member:{userId:'10',history:{},lastResponse:{choice:'eso',accountName:'Name',at:60}}});
+ assert.match(withAccount,/ESO @Name/);
 });
-test('typed replies survive a backend outage and replay once the connection returns',async()=>{
- let online=false,saved=0;const replies=[];
- const {worker}=fixture(async action=>{assert.equal(action,'response');if(!online)throw Error('Backend disconnected');saved++;return {message:'Received'};});
- await worker.message({id:'123',author:{id:'10'},content:'My ESO name is @Member',reply:async value=>replies.push(value)});
- assert.match(replies[0]?.content||'',/saved.*reconnect/i);
- online=true;await worker.retryIntake();await worker.retryIntake();assert.equal(saved,1);
+test('general DMs are never forwarded; only button and form responses reach the backend',async()=>{
+ const calls=[];
+ const {worker}=fixture(async action=>{calls.push(action);return {message:'Received'};});
+ assert.equal(worker.message,undefined);
+ assert.equal(typeof worker.interaction,'function');
+ await worker.retryIntake();
+ assert.deepEqual(calls,[]);
 });
 test('lookup, validation and rendering failures are recorded as failed, never uncertain',async()=>{
  for(const failure of ['validate','render']) {

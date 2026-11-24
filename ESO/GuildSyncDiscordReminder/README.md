@@ -32,7 +32,7 @@ ESO enforces subject/body limits. The add-on stops rather than silently truncati
 
 ## Reminder history and opt-outs
 
-The roster's **Discord Reminder** column shows separate **Exported** and **Sent** timestamps and a **Does not use Discord** checkbox. Opt-outs and history use stable ESO member IDs, surviving account renames and leaving/rejoining. The repeat interval defaults to 30 days and can be changed to 1–365 days. Recent exports or sends and unresolved requests prevent new duplicate campaigns.
+Open a member's link window from the roster's **Discord Account Linked** dot (or from the Discord member list) to see a **Guild Roster · Discord reminder** section with separate **Exported** and **Sent** timestamps and a **Does not use Discord** checkbox. Opted-out members show a purple link dot in both lists. Opt-outs and history use stable ESO member IDs, surviving account renames and leaving/rejoining. The repeat interval defaults to 30 days and can be changed to 1–365 days. Recent exports or sends and unresolved requests prevent new duplicate campaigns.
 
 Re-exporting a batch rechecks confirmed links, roster presence and opt-outs. Cancelled requests are removed from the local queue. Setting an opt-out in the desktop app also attempts that cleanup; ESO must be closed for local changes. If ESO is running, pause the add-on and close ESO so GuildSync can remove already queued messages. A saved opt-out cannot recall mail already sent.
 

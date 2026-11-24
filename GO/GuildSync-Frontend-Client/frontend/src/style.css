@@ -2814,6 +2814,33 @@ body {
   box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.11), 0 0 16px rgba(71, 85, 105, 0.30);
 }
 
+.member-link-status-opt-out {
+  background: linear-gradient(180deg, #c4b5fd, #7c3aed);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.14), 0 0 16px rgba(124, 58, 237, 0.34);
+}
+
+.member-link-reminder-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.member-link-reminder-opt-out {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.member-link-reminder-help {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+
 .member-link-dialog {
   max-width: 760px;
   max-height: min(86vh, 760px);

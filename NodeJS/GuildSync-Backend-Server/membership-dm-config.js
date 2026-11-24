@@ -1,4 +1,4 @@
-export const DEFAULT_MEMBERSHIP_DM='Hello {name}! We could not find an ESO account linked to your Discord account for {guild}. Please choose an option below, or type a reply.';
+export const DEFAULT_MEMBERSHIP_DM='Hello {name}! We could not find an ESO account linked to your Discord account for {guild}. Please choose an option below.';
 export function dmConfig(env={}) {
   const get=(key,fallback='')=>String(env['GUILDSYNC_MEMBERSHIP_DM_'+key]??fallback).trim();
   const enabled=get('ENABLED','false');
