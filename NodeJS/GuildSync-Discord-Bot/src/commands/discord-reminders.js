@@ -1,11 +1,17 @@
-import {SlashCommandBuilder,PermissionFlagsBits,MessageFlags} from 'discord.js';
+import {SlashCommandBuilder,MessageFlags} from 'discord.js';
 import {membershipDMRequest,formatMembershipStatus} from '../membership-dms.js';
 import {syncDiscordRolesAndMembers} from '../discord-sync.js';
 
 const safeLine=value=>String(value??'').replace(/[\n\r]/g,' ').slice(0,120);
 
+// Campaign controls belong to guild officers: members holding the Consigliere or
+// Kingpin Discord role. The approved GuildSync User/Admin check below still applies.
+const officerRoles=new Set(['consigliere','consiglieri','consiglieres','kingpin','kingpins']);
+const roleKey=value=>String(value||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+export const isReminderOfficer=member=>Boolean(member?.roles?.cache?.some?.(role=>officerRoles.has(roleKey(role.name))));
+
 export const data=new SlashCommandBuilder().setName('discord-reminders')
-  .setDescription('Manage the slow GuildSync membership DM campaign.').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDescription('Manage the slow GuildSync membership DM campaign (Consigliere or Kingpin).')
   .addSubcommand(s=>s.setName('start').setDescription('Start an alphabetical campaign for eligible unlinked Discord members.'))
   .addSubcommand(s=>s.setName('pause').setDescription('Pause new campaign DMs.'))
   .addSubcommand(s=>s.setName('resume').setDescription('Resume the saved campaign without a catch-up burst.'))
@@ -21,8 +27,8 @@ export const data=new SlashCommandBuilder().setName('discord-reminders')
 
 export async function execute(interaction,socket) {
   await interaction.deferReply({flags:[MessageFlags.Ephemeral]});
-  if(!interaction.guildId||!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)){
-    await interaction.editReply('Use this command in the configured server with Manage Server permission and approved GuildSync User/Admin access.');return;
+  if(!interaction.guildId||!isReminderOfficer(interaction.member)){
+    await interaction.editReply('Use this command in the configured server with the Consigliere or Kingpin role and approved GuildSync User/Admin access.');return;
   }
   const command=interaction.options.getSubcommand(),target=interaction.options.getUser('user');
   try{

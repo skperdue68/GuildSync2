@@ -108,7 +108,8 @@ export async function syncReminderAcks(bridge,request) {
 }
 
 export function createDiscordReminderControls({request,bridge,canEdit,changed}) {
-  let dialog=null,busy=false;
+  let dialog=null,busy=false,officerAccess=false;
+  const canOpen=()=>Boolean(canEdit())&&officerAccess;
   const desktop=Boolean(bridge?.WriteDiscordReminderQueue);
   const message=(text,error=false)=>{
     const status=dialog?.querySelector('[data-reminder-status]');
@@ -123,7 +124,7 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
     finally{busy=false;controls.forEach(([el,disabled])=>el.disabled=disabled);}
   }
   async function open() {
-    if(!canEdit())return;
+    if(!canOpen())return;
     dialog?.remove();
     dialog=document.createElement('dialog');
     dialog.className='discord-reminder-dialog';
@@ -184,8 +185,9 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
     finally{busy=false;}
   }
   if(desktop)startReminderWriteWatcher({bridge,request});
-  return {open,
-    async sync(){if(canEdit()&&desktop){await syncReminderAcks(bridge,request);await changed();}},
+  return {open,canOpen,resetAccess(){officerAccess=false;},
+    async refreshAccess(){officerAccess=false;if(!canEdit())return false;try{officerAccess=Boolean(checked(await request({action:'access'})).officer);}catch{officerAccess=false;}return officerAccess;},
+    async sync(){if(canOpen()&&desktop){await syncReminderAcks(bridge,request);await changed();}},
     wire(root){
       const button=root?.querySelector('#openDiscordRemindersButton');
       if(button)button.onclick=open;

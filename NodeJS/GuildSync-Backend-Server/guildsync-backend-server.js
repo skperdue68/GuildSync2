@@ -1,4 +1,4 @@
-import {initializeDiscordReminders,createDiscordReminders,registerDiscordReminderSocket} from './discord-reminders.js';
+import {initializeDiscordReminders,createDiscordReminders,registerDiscordReminderSocket,hasOfficerRole} from './discord-reminders.js';
 import {initializeMembershipDMs,createMembershipDMService,registerMembershipDMSocket,membershipDMManaged} from './membership-dms.js';
 import {dmConfig} from './membership-dm-config.js';
 import {createEsoAccountRenames,registerEsoAccountRenameSocket} from './eso-account-identity.js';
@@ -685,6 +685,12 @@ function registerGuildSyncConnection(socket) {
   registerDiscordReminderSocket(socket,discordReminders,{authorize:async current=>{
     const [rows]=await loginDB.execute('SELECT role,allowed FROM guildsync_users WHERE discord_user_id=? LIMIT 1',[current.guildSyncUser.discord_user_id]);
     return Number(rows[0]?.allowed)===1 ? (roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role)||rows[0]?.role) : false;
+  },officerAccess:async current=>{
+    const userId=current.guildSyncUser?.discord_user_id;
+    if(!userId)return false;
+    const [roles]=await applicationDB.execute('SELECT role_id,role_name FROM discord_roles');
+    const [held]=await applicationDB.execute('SELECT role_id FROM discord_member_roles WHERE discord_id = ?',[userId]);
+    return hasOfficerRole(roles,held.map(row=>row.role_id));
   }});
   registerRolePermissions(socket,loginDB,roleViews,{authorizeUserSwitch:async current=>{
     if(!current.guildSyncAuthenticated||current.guildSyncAuthType!=='GuildSync user')return false;

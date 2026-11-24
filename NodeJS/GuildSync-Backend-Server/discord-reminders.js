@@ -1,6 +1,16 @@
 import {randomUUID} from 'node:crypto';
 import {esoAccountKey, withEsoIdentityLock} from './eso-account-identity.js';
 
+// Reminder management is an officer tool: the caller must hold the Consigliere or
+// Kingpin Discord role, matching the guild ranks the bot already recognizes.
+const officerRoleNames=['consigliere','consiglieri','consiglieres','kingpin','kingpins'];
+const officerRoleKey=value=>String(value||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+export const isOfficerRoleName=name=>officerRoleNames.includes(officerRoleKey(name));
+export function hasOfficerRole(roles,memberRoleIds) {
+  const held=new Set((memberRoleIds||[]).map(id=>String(id)));
+  return (roles||[]).some(role=>held.has(String(role.role_id))&&isOfficerRoleName(role.role_name));
+}
+
 export function reminderInterval(value) {
   if (value === null || value === '' || !Number.isInteger(Number(value)) || Number(value)<1 || Number(value)>365) {
     throw Error('Reminder interval must be a whole number from 1 to 365 days.');
@@ -230,12 +240,16 @@ export function createDiscordReminders(db,{guildId='',guildName='',now=()=>new D
   };
 }
 
-export function registerDiscordReminderSocket(socket,service,{authorize}={}) {
+export function registerDiscordReminderSocket(socket,service,{authorize,officerAccess}={}) {
   socket.on('guildsync:discord-reminders',async(payload={},callback)=>{
     try {
       if(!socket.guildSyncAuthenticated || !socket.guildSyncUser?.discord_user_id || socket.guildSyncAuthType==='discord-bot')throw Error('User or Admin access is required.');
       const role=await authorize(socket);
       if(!['user','admin'].includes(role))throw Error('User or Admin access is required.');
+      const officer=Boolean(await officerAccess?.(socket));
+      if(payload.action==='access'){callback?.({ok:true,officer});return;}
+      // Community opt-outs stay available to any approved User; campaign data is officer-only.
+      if(payload.action!=='opt-out'&&!officer)throw Error('Only members with the Consigliere or Kingpin role can manage Discord reminders.');
       const id=socket.guildSyncUser.discord_user_id;
       let result;
       switch(payload.action){

@@ -18,7 +18,7 @@ Deploy the updated bot and backend together. Register the new command with the b
 
 ## Officer commands
 
-The commands require Discord **Manage Server** permission and an approved GuildSync **User** or **Admin** account:
+The commands require the Discord **Consigliere** or **Kingpin** role and an approved GuildSync **User** or **Admin** account. Members without either officer role are refused. The **Discord Reminders** button in GuildSync applies the same rule: it appears only for an approved User or Admin whose guild rank role is Consigliere or Kingpin.
 
 | Command | Result |
 | --- | --- |

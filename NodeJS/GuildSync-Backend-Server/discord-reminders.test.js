@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {selectReminderRecipients, reminderInterval, registerDiscordReminderSocket,createDiscordReminders,testRecipientRank} from './discord-reminders.js';
+import {selectReminderRecipients, reminderInterval, registerDiscordReminderSocket,createDiscordReminders,testRecipientRank,hasOfficerRole,isOfficerRoleName} from './discord-reminders.js';
 
 const now = new Date('2026-11-24T12:00:00Z');
 test('only current, unlinked, opted-in members beyond the cooldown qualify', () => {
@@ -96,4 +96,30 @@ test('socket operations reject unauthenticated users, bots and viewers',async()=
     await handlers['guildsync:discord-reminders']({action:'preview'},r=>response=r);
     assert.equal(response.ok,false);assert.equal(called,false);
   }
+});
+
+test('only Consigliere and Kingpin roles qualify as reminder officers',()=>{
+  const roles=[{role_id:'1',role_name:'Consigliere'},{role_id:'2',role_name:'Kingpins'},{role_id:'3',role_name:'Soldiers'},{role_id:'4',role_name:'Decorative'}];
+  assert.equal(hasOfficerRole(roles,['1']),true);
+  assert.equal(hasOfficerRole(roles,['2','3']),true);
+  assert.equal(hasOfficerRole(roles,['3']),false);
+  assert.equal(hasOfficerRole(roles,[]),false);
+  assert.equal(hasOfficerRole([],['1']),false);
+  assert.equal(isOfficerRoleName('  consiglieres '),true);
+  assert.equal(isOfficerRoleName('Associates'),false);
+});
+test('socket operations require a reminder officer except for community opt-outs',async()=>{
+  const handlers={},socket={guildSyncAuthenticated:true,guildSyncUser:{role:'user',discord_user_id:'1'},on:(event,fn)=>handlers[event]=fn};
+  let previews=0,optOuts=0;
+  registerDiscordReminderSocket(socket,{overview:async()=>{previews++;return {recipients:[]};},optOut:async()=>{optOuts++;return {discord_opt_out:true};}},
+    {authorize:async()=>'user',officerAccess:async()=>false});
+  const send=async payload=>{let response;await handlers['guildsync:discord-reminders'](payload,r=>response=r);return response;};
+  assert.deepEqual(await send({action:'access'}),{ok:true,officer:false});
+  const denied=await send({action:'preview'});
+  assert.equal(denied.ok,false);assert.match(denied.message,/Consigliere or Kingpin/);assert.equal(previews,0);
+  assert.equal((await send({action:'opt-out',accountName:'@A',optOut:true})).ok,true);assert.equal(optOuts,1);
+  const officerHandlers={},officerSocket={...socket,on:(event,fn)=>officerHandlers[event]=fn};
+  registerDiscordReminderSocket(officerSocket,{overview:async()=>({recipients:[]})},{authorize:async()=>'admin',officerAccess:async()=>true});
+  let response;await officerHandlers['guildsync:discord-reminders']({action:'preview'},r=>response=r);
+  assert.equal(response.ok,true);assert.deepEqual(response.recipients,[]);
 });
