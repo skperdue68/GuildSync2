@@ -58,6 +58,7 @@ for (const [client, directory] of [['web', './web/src/'], ['desktop', '../../GO/
         }));
       </script></body></html>`);
       const result = spawnSync(browser, ['--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+        ...(process.env.CI ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
         `--user-data-dir=${path.join(temporary, 'profile')}`, '--virtual-time-budget=3000', '--dump-dom', pathToFileURL(file).href],
         {encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024});
       assert.equal(result.status, 0, result.stderr);

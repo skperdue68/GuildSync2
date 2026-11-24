@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { REST, Routes } from 'discord.js';
 
+import * as discordReminders from './commands/discord-reminders.js';
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
 import * as tickets from './commands/tickets.js';
@@ -14,6 +15,7 @@ import { staleTraderReasons, subcommandNames } from './command-registration.js';
 // both, so registering it in both places gives you two identical /trader
 // entries in the picker.
 const guildCommands = [
+  discordReminders.data.toJSON(),
   roles.data.toJSON(),
   raffle.data.toJSON(),
   tickets.data.toJSON(),

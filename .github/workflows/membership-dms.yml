@@ -1,0 +1,42 @@
+name: Test membership DM workflow
+
+on:
+  pull_request:
+    paths: ['NodeJS/**', '.github/workflows/membership-dms.yml']
+  push:
+    branches: [master]
+    paths: ['NodeJS/**', '.github/workflows/membership-dms.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  membership-dms:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            NodeJS/GuildSync-Backend-Server/package-lock.json
+            NodeJS/GuildSync-Backend-Server/web/package-lock.json
+            NodeJS/GuildSync-Discord-Bot/package-lock.json
+      - name: Install backend dependencies
+        working-directory: NodeJS/GuildSync-Backend-Server
+        run: npm ci
+      - name: Install bot dependencies
+        working-directory: NodeJS/GuildSync-Discord-Bot
+        run: npm ci
+      - name: Build web administrator interface
+        working-directory: NodeJS/GuildSync-Backend-Server
+        run: npm run build:web
+      - name: Test backend and workflow integration
+        working-directory: NodeJS/GuildSync-Backend-Server
+        run: node --test *.test.js
+      - name: Test bot, persistent components and reply intake
+        working-directory: NodeJS/GuildSync-Discord-Bot
+        run: node --test src/*.test.js src/commands/*.test.js
