@@ -1,5 +1,5 @@
 import './discord-reminders.css';
-import {createDiscordReminderControls,renderReminderRosterCell} from './discord-reminders.js';
+import {createDiscordReminderControls} from './discord-reminders.js';
 import './eso-account-rename.css';
 import {createEsoAccountRename} from './eso-account-rename.js';
 import {createDesktopSupport} from './desktop-support.js';
@@ -1120,7 +1120,6 @@ function renderEsoRosterPanel() {
                 ${renderRosterSortableHeader('notes', 'Notes', 'roster-notes-header')}
                 <th class="member-history-header">History</th>
                 ${renderRosterSortableHeader('linked', 'Discord Account Linked', 'member-link-action-header')}
-                <th>Discord Reminder</th>
               </tr>
             </thead>
             <tbody>
@@ -1149,7 +1148,6 @@ function renderEsoRosterRow(member, index = -1) {
       <td class="roster-notes-cell">${renderRosterNotesButton(member)}</td>
       <td class="member-history-cell">${renderMemberHistoryButton({kind:'roster',id:member.account_name,name:member.account_name})}</td>
       <td class="member-link-action-cell">${renderMemberLinkStatusButton({ mode: 'eso-to-discord', esoAccountName: member.account_name })}</td>
-      ${renderReminderRosterCell(member,canEditGuildSyncData())}
     </tr>
   `;
 }
@@ -1267,7 +1265,7 @@ function renderEmptyEsoRosterRow() {
 
   return `
     <tr>
-      <td class="bank-empty-row" colspan="7">${escapeHtml(message)}</td>
+      <td class="bank-empty-row" colspan="6">${escapeHtml(message)}</td>
     </tr>
   `;
 }
@@ -3236,6 +3234,18 @@ function getDiscordMemberDisplayNameById(discordUserId) {
   return member.server_nickname || member.global_name || member.username || member.discord_id || cleanId;
 }
 
+function getRosterMemberByAccount(accountName) {
+  const cleanName = normalizeMemberLinkName(accountName);
+  if (!cleanName) return null;
+  return rosterMembers.find((member) => normalizeMemberLinkName(member.account_name) === cleanName) || null;
+}
+
+function getMemberLinkReminderOptOut(context) {
+  if (context?.mode === 'eso-to-discord') return Boolean(getRosterMemberByAccount(context.esoAccountName)?.discord_opt_out);
+  return getMemberLinksByDiscordUserId(context?.discordUserId).some((link) => String(link?.link_status || '').trim().toLowerCase() === 'linked'
+    && Boolean(getRosterMemberByAccount(link?.eso_account_name)?.discord_opt_out));
+}
+
 function getMemberLinkButtonData(context) {
   const mode = context?.mode || '';
   const links = mode === 'discord-to-eso'
@@ -3245,6 +3255,10 @@ function getMemberLinkButtonData(context) {
   const status = String(link?.link_status || '').trim().toLowerCase();
   const linkedCount = links.filter((item) => String(item.link_status || '').trim().toLowerCase() === 'linked').length;
   const candidateCount = links.filter((item) => String(item.link_status || '').trim().toLowerCase() === 'candidate').length;
+
+  if (getMemberLinkReminderOptOut(context)) {
+    return { color: 'purple', label: 'Does not use Discord', className: 'opt-out', title: 'Marked as “Does not use Discord”. Excluded from Discord reminder exports.' };
+  }
 
   if (linkedCount > 0) {
     const linkedName = mode === 'discord-to-eso'
@@ -3543,6 +3557,39 @@ function renderMemberLinkDialogOption(option, options = {}) {
   `;
 }
 
+function getMemberLinkDialogEsoAccount() {
+  if (!memberLinkDialogContext) return '';
+  if (memberLinkDialogContext.mode === 'eso-to-discord') return memberLinkDialogContext.esoAccountName || '';
+  const linked = getMemberLinksByDiscordUserId(memberLinkDialogContext.discordUserId)
+    .find((link) => String(link?.link_status || '').trim().toLowerCase() === 'linked');
+  return linked?.eso_account_name || '';
+}
+
+function formatReminderHistoryValue(value) {
+  if (!value) return 'Never';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Never' : date.toLocaleString();
+}
+
+function renderMemberLinkReminderSection() {
+  const member = getRosterMemberByAccount(getMemberLinkDialogEsoAccount());
+  if (!member) return '';
+  const editable = canEditGuildSyncData();
+  return `
+          <section class="member-link-dialog-section member-link-reminder-section">
+            <h4>Guild Roster · Discord reminder</h4>
+            <div class="member-link-reminder-history">
+              <span>Exported: ${escapeHtml(formatReminderHistoryValue(member.reminder_exported_at))}</span>
+              <span>Sent: ${escapeHtml(formatReminderHistoryValue(member.reminder_sent_at))}</span>
+            </div>
+            <label class="member-link-reminder-opt-out">
+              <input type="checkbox" data-member-link-reminder-opt-out="${escapeAttribute(member.account_name || '')}"${member.discord_opt_out ? ' checked' : ''}${editable ? '' : ' disabled'}>
+              Does not use Discord
+            </label>
+            <p class="member-link-reminder-help">Marked members remain on Discord but are skipped by reminder exports, and their link dot turns purple in both the Guild Roster and the Discord member list.</p>
+          </section>`;
+}
+
 function renderMemberLinkDialog() {
   const mode = memberLinkDialogContext?.mode || '';
   const sourceLabel = getMemberLinkDialogSourceLabel();
@@ -3563,6 +3610,8 @@ function renderMemberLinkDialog() {
           <section class="member-link-dialog-section member-link-current-section">
             ${renderMemberLinkDialogCurrentLink()}
           </section>
+
+          ${renderMemberLinkReminderSection()}
 
           <section class="member-link-dialog-section" ${canManageGuildSyncLinks() ? '' : 'hidden inert'}>
             <h4>Suggested Matches</h4>
@@ -3798,6 +3847,24 @@ async function unblockMemberAutoLinkFromDialog(esoAccountName = '', discordUserI
 }
 
 
+async function saveMemberLinkReminderOptOut(input) {
+  const accountName = input.dataset.memberLinkReminderOptOut || '';
+  const optOut = Boolean(input.checked);
+  input.disabled = true;
+  try {
+    const response = await emitSocketWithAck('guildsync:discord-reminders', { action: 'opt-out', accountName, optOut });
+    if (!response?.ok) throw new Error(response?.message || 'Could not save the Discord reminder preference.');
+    const member = getRosterMemberByAccount(accountName);
+    if (member) member.discord_opt_out = optOut;
+    renderGuildSyncTabLayout();
+  } catch (error) {
+    input.checked = !optOut;
+    addSystemMessage('member-link-reminder-opt-out-error', error.message || 'Could not save the Discord reminder preference.');
+  } finally {
+    input.disabled = false;
+  }
+}
+
 function wireMemberLinkDialog() {
   if (!memberLinkDialogOpen) return;
 
@@ -3823,6 +3890,10 @@ function wireMemberLinkDialog() {
 
   document.querySelectorAll('[data-member-link-option-value]').forEach((button) => {
     button.addEventListener('click', () => selectMemberLinkDialogOption(button.dataset.memberLinkOptionValue || ''));
+  });
+
+  document.querySelectorAll('[data-member-link-reminder-opt-out]').forEach((input) => {
+    input.addEventListener('change', () => saveMemberLinkReminderOptOut(input));
   });
 
   document.querySelectorAll('[data-accept-dialog-member-candidate]').forEach((button) => {

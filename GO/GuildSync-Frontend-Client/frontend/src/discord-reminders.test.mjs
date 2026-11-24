@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {exportReminderBatch, renderReminderRosterCell, syncReminderAcks} from './discord-reminders.js';
+import {exportReminderBatch, syncReminderAcks} from './discord-reminders.js';
 
 test('records the export only after SavedVariables write succeeds',async()=>{
  const calls=[];
@@ -15,12 +15,6 @@ test('records the export only after SavedVariables write succeeds',async()=>{
 test('a failed server confirmation preserves a retryable batch and explains that the file was written',async()=>{
  const request=async p=>p.action==='prepare'?{ok:true,records:[]}:{ok:false,message:'offline'};
  await assert.rejects(()=>exportReminderBatch({request,bridge:{WriteDiscordReminderQueue:async()=>({ok:true})},batchId:'b',account:'@A',world:'NA Megaserver'}),/written.*retry/i);
-});
-test('roster displays export and sent dates separately, escapes names, and exposes opt-out',()=>{
- const html=renderReminderRosterCell({account_name:'<member>',discord_opt_out:true,reminder_exported_at:'2026-11-20',reminder_sent_at:null},true);
- assert.match(html,/Does not use Discord/);assert.match(html,/checked/);assert.match(html,/&lt;member&gt;/);
- assert.match(html,/Exported:/);assert.match(html,/Sent: Never/);
- assert.doesNotMatch(renderReminderRosterCell({account_name:'A'},false),/type="checkbox"/);
 });
 test('ack sync sends bounded chunks and reports collection errors',async()=>{
  const acks=Array.from({length:501},(_,i)=>({requestId:String(i)}));let sizes=[];

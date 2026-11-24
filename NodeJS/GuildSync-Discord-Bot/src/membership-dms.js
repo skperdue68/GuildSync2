@@ -8,7 +8,7 @@ const safeText=value=>String(value||'').replace(/([\\`*_~|<>])/g,'\\$1');
 const choices=[['eso','Provide my ESO account'],['community','Not in guild; keep Discord'],['not_playing','No longer play ESO; stay'],['other','Other response']];
 export function membershipDMMessage(job,config,{name,guildName}) {
   const content=(job.isTest?'[TEST] ':'')+config.template.replace(/\{(name|guild)\}/g,(_,key)=>safeText(key==='name'?name:guildName))+
-    '\n\nYour answers and DM replies are forwarded to guild officers.'+(job.isTest?' This is a test; replies will not change account links, preferences or roles.':'');
+    '\n\nYour answers are forwarded to guild officers.'+(job.isTest?' This is a test; replies will not change account links, preferences or roles.':'');
   if(content.length>2000)throw Error('Rendered membership DM exceeds Discord’s message limit.');
   return {content,allowedMentions:{parse:[]},nonce:nonce(job.id),enforceNonce:true,
     components:[new ActionRowBuilder().addComponents(choices.map(([choice,label])=>new ButtonBuilder()
@@ -26,6 +26,13 @@ export function membershipDMRequest(socket,guildId,action,payload={}) {
   });
 }
 
+export function membershipChoiceSummary(choice) {
+  if(choice==='eso')return 'provided an ESO account';
+  if(choice==='community')return 'not in the guild, staying on Discord';
+  if(choice==='not_playing')return 'no longer plays ESO, staying on Discord';
+  return 'other response';
+}
+
 export function formatMembershipStatus({campaign,member}={}) {
   const who=value=>value?`${value.name} (<t:${value.at}:f>)`:'None';
   const lines=campaign?[
@@ -36,8 +43,18 @@ export function formatMembershipStatus({campaign,member}={}) {
     `Next scheduled attempt: <t:${campaign.nextAt}:f>`
   ]:['No membership DM campaign has been started.'];
   if(member)lines.push(`User ${member.userId}: last confirmed DM ${member.history?.sentAt?`<t:${member.history.sentAt}:f>`:'Never'}; preference: ${member.preference||'None'}${member.history?.uncertain?'; delivery uncertain—review before retrying':''}`);
+  if(member?.lastResponse)lines.push(`Last response: ${membershipChoiceSummary(member.lastResponse.choice)}${member.lastResponse.accountName?` — ESO @${safeText(member.lastResponse.accountName)}`:''}${member.lastResponse.at?` (<t:${member.lastResponse.at}:f>)`:''}`);
   if(campaign?.uncertainMembers?.length)lines.push(`Uncertain deliveries: ${campaign.uncertainMembers.map(entry=>`${safeText(entry.name)} (${entry.userId})`).join(', ')}. Resolve each with /discord-reminders resolve.`);
   return lines.join('\n');
+}
+
+export function formatMembershipReplyChoice(choice,text,guildName) {
+  const value=String(text||'').trim();
+  if(choice==='eso')return `I play ESO — my ESO account name is ${value?`@${value.replace(/^@+/,'')}`:'not supplied'}`;
+  if(choice==='community')return `I am no longer in ${guildName} but would like to stay on Discord`;
+  if(choice==='not_playing')return 'I do not play ESO but would like to stay on Discord';
+  if(!value)return 'Other response';
+  return value.length<=200?`Other response: ${value}`:'Other response (full text below)';
 }
 
 export function createMembershipDMWorker({client,guildId,request,log=console.log,intake=createMemoryDMIntake()}) {
@@ -90,11 +107,13 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
     const {event}=await request('claim-forward');
     if(!event)return;
     let success=event.forwardStatus==='sent',roleSuccess=!event.roleId||['sent','superseded'].includes(event.roleStatus);
+    let guild=null;
+    try{guild=await client.guilds.fetch(guildId);}catch{}
     try {
       let roleNote='';
       if(!roleSuccess){
         try{
-          const guild=await client.guilds.fetch(guildId),member=await guild.members.fetch(event.userId);
+          const member=await guild.members.fetch(event.userId);
           if(event.roleAction==='remove')await member.roles.remove(event.roleId,'GuildSync membership response');
           else await member.roles.add(event.roleId,'GuildSync membership response');
           roleSuccess=true;
@@ -104,9 +123,15 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       const destination=event.destinationType==='user'?await client.users.fetch(event.destinationId):await client.channels.fetch(event.destinationId);
       if(event.destinationType==='channel'&&destination?.guildId!==guildId)throw Error('Reply destination must be in the configured Discord server.');
       if(typeof destination?.send!=='function')throw Error('Reply destination cannot receive messages.');
-      const header=`${event.isTest?'[TEST] ':''}GuildSync membership reply\nServer: ${guildId}\nDiscord: ${safeText(event.name)} (${event.userId})\nChoice: ${event.choice}\nOutcome: ${event.result.status}${event.result.accountName?' — ESO @'+safeText(event.result.accountName):''}\nReceived: <t:${event.at}:f>\nDelivery: ${event.deliveryId}\nResponse: ${event.eventId}${roleNote}`;
-      const full=`${header}\n\n${event.text||'(No text supplied)'}`;
-      const content=full.length<=1950?full:header+'\n\n'+String(event.text).slice(0,Math.max(0,1750-header.length))+'\n[Full response attached]';
+      let displayName=event.name;
+      try{displayName=(await guild?.members?.fetch?.(event.userId))?.displayName||displayName;}catch{}
+      const guildName=guild?.name||String(guildId);
+      const choiceLine=formatMembershipReplyChoice(event.choice,event.text,guildName);
+      const header=`${event.isTest?'[TEST] ':''}GuildSync membership reply\nServer: ${safeText(guildName)}\nDiscord: ${safeText(displayName)} (${event.userId})\nChoice: ${safeText(choiceLine)}\nOutcome: ${event.result.status}${event.result.accountName?' — ESO @'+safeText(event.result.accountName):''}\nReceived: <t:${event.at}:f>${roleNote}`;
+      const replyText=String(event.text||'').trim();
+      const body=replyText&&!choiceLine.includes(replyText)?replyText:'';
+      const full=body?`${header}\n\n${body}`:header;
+      const content=full.length<=1950?full:header+(body?`\n\n${body.slice(0,Math.max(0,1750-header.length)).trimEnd()}`:'')+'\n[Full response attached]';
       await destination.send({content,allowedMentions:{parse:[]},nonce:nonce('forward-'+event.eventId),enforceNonce:true,
         ...(full.length>1950?{files:[{attachment:Buffer.from(full,'utf8'),name:`membership-response-${event.eventId}.txt`}]}:{})});
       success=true;
@@ -155,21 +180,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       return true;
     }
   }
-  async function message(message) {
-    if(message.guild||message.author?.bot)return false;
-    const attachments=Array.from(message.attachments?.values?.()||[]).map(file=>`${file.name||'Attachment'}: ${file.url}`).join('\n');
-    const text=[message.content||'',attachments].filter(Boolean).join('\n');
-    if(!text)return false;
-    try{
-      const result=await saveResponse({userId:message.author.id,eventId:message.id,choice:'text',text,replyTo:message.reference?.messageId});
-      await message.reply({content:result.message,allowedMentions:{parse:[]}});
-      return true;
-    }catch(error){
-      if(!error.message.includes('No membership DM'))log('Could not save membership DM reply: '+error.message);
-      return false;
-    }
-  }
-  return {sendNext,forwardOne,interaction,message,retryIntake,
+  return {sendNext,forwardOne,interaction,retryIntake,
     async test(actorId,targetId){const work=await request('test',{actorId,targetId});return deliver(work);},
     async tick(){
       if(busy||!client.isReady()||!guildId)return;
@@ -183,8 +194,7 @@ export function startMembershipDMWorker({client,socket,guildId,log=console.log})
   const worker=createMembershipDMWorker({client,guildId,log,intake:createFileDMIntake(String(process.env.GUILDSYNC_MEMBERSHIP_DM_SPOOL_DIR||'').trim()||fileURLToPath(new URL('../data/membership-dm-intake',import.meta.url))),
     request:(action,payload)=>membershipDMRequest(socket,guildId,action,payload)});
   const interaction=value=>{worker.interaction(value).catch(error=>log(error.message));};
-  const message=value=>{worker.message(value).catch(error=>log(error.message));};
-  client.on(Events.InteractionCreate,interaction);client.on(Events.MessageCreate,message);
+  client.on(Events.InteractionCreate,interaction);
   const timer=setInterval(()=>{if(socket.connected)worker.tick();},15000);timer.unref?.();
-  return {...worker,stop(){clearInterval(timer);client.off(Events.InteractionCreate,interaction);client.off(Events.MessageCreate,message);}};
+  return {...worker,stop(){clearInterval(timer);client.off(Events.InteractionCreate,interaction);}};
 }

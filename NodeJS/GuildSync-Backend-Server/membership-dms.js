@@ -77,6 +77,33 @@ export async function initializeMembershipDMs(db) {
   await db.query(`CREATE TABLE IF NOT EXISTS guildsync_membership_dm_state (
     guild_id VARCHAR(32) NOT NULL PRIMARY KEY,state_json LONGTEXT NOT NULL
   ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  await db.query(`CREATE TABLE IF NOT EXISTS guildsync_membership_dm_responses (
+    guild_id VARCHAR(32) NOT NULL,discord_user_id VARCHAR(32) NOT NULL,
+    display_name VARCHAR(255) NOT NULL DEFAULT '',eso_account_name VARCHAR(255) DEFAULT NULL,
+    choice VARCHAR(20) NOT NULL,response_text LONGTEXT NOT NULL,responded_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (guild_id,discord_user_id),INDEX idx_membership_dm_response_choice (guild_id,choice)
+  ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+}
+
+// The per-guild JSON keeps only operational state. Fully forwarded responses live in
+// guildsync_membership_dm_responses, so settled events and old delivery claims are
+// dropped instead of accumulating for the life of the guild.
+export function pruneMembershipState(state,{maxEvents=200,maxDeliveries=1000}={}) {
+  const settled=event=>event.forwardStatus==='sent'&&['sent','superseded'].includes(event.roleStatus);
+  if(state.events?.length>maxEvents) {
+    let excess=state.events.length-maxEvents;
+    state.events=state.events.filter(event=>{
+      if(excess>0&&settled(event)){excess--;return false;}
+      return true;
+    });
+  }
+  const ids=Object.keys(state.deliveries||{});
+  if(ids.length>maxDeliveries) {
+    const removable=ids.filter(id=>['sent','failed','skipped'].includes(state.deliveries[id].status))
+      .sort((left,right)=>(state.deliveries[left].claimedAt||0)-(state.deliveries[right].claimedAt||0));
+    for(const id of removable.slice(0,ids.length-maxDeliveries))delete state.deliveries[id];
+  }
+  return state;
 }
 
 export function createMembershipDMService(db,{configuration,upsertLink,authorizeOfficer,now=()=>Math.floor(Date.now()/1000),random=Math.random}={}) {
@@ -118,6 +145,12 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       linkStatus:'linked',linkMethod:'dm-self-report',matchConfidence:100,matchReason:'Account name supplied by this Discord user in a membership DM.'});
     return {status:'linked',accountName:rows[0].account_name,message:'Your Discord and ESO accounts are now linked. Thank you!'};
   }
+  async function lastResponse(connection,guildId,userId) {
+    const [rows]=await connection.execute('SELECT choice,eso_account_name,responded_at FROM guildsync_membership_dm_responses WHERE guild_id=? AND discord_user_id=?',[guildId,userId]);
+    const row=rows[0];
+    return row?{choice:row.choice,accountName:row.eso_account_name||null,
+      at:row.responded_at?Math.floor(new Date(row.responded_at).getTime()/1000):null}:null;
+  }
   return {
     async command(guildId,actorId,action,targetId) {
       if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
@@ -131,7 +164,8 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         return {campaign:c?{id:c.id,status:c.status,lastAttempted:c.lastAttempted,lastSent:c.lastSent,nextAt:c.nextAt,
           remaining:c.queue.filter(q=>q.status==='pending').length,uncertain:c.queue.filter(q=>q.status==='uncertain').length,
           uncertainMembers:c.queue.filter(q=>q.status==='uncertain').map(q=>({userId:q.userId,name:q.name})).slice(0,25)}:null,
-          member:targetId?{userId:targetId,history:state.history[targetId]||null,preference:state.preferences[targetId]||null}:null};
+          member:targetId?{userId:targetId,history:state.history[targetId]||null,preference:state.preferences[targetId]||null,
+            lastResponse:await lastResponse(connection,guildId,targetId)}:null};
       });
     },
     async test(guildId,actorId,userId) {
@@ -185,12 +219,11 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         (await candidates(connection)).some(m=>m.id===job.userId))))};
     });},
     async finish(guildId,id,token,result){return atomic(guildId,state=>engine.finish(state,id,token,result));},
-    async response(guildId,{userId,deliveryId,eventId,choice,text='',replyTo}) {
-      if(!['eso','community','not_playing','other','text'].includes(choice)||String(text).length>10000||!/^\d+$/.test(String(eventId)))throw Error('Invalid membership response.');
+    async response(guildId,{userId,deliveryId,eventId,choice,text=''}) {
+      if(!['eso','community','not_playing','other'].includes(choice)||String(text).length>10000||!/^\d+$/.test(String(eventId)))throw Error('Invalid membership response.');
       return atomic(guildId,async(state,connection,config)=>{
-        if(!deliveryId&&replyTo)deliveryId=Object.values(state.deliveries).find(job=>job.userId===userId&&job.messageId===replyTo)?.id;
-        if(!deliveryId)deliveryId=Object.values(state.deliveries).reverse().filter(job=>job.userId===userId&&['sent','uncertain','sending'].includes(job.status))
-          .sort((a,b)=>b.claimedAt-a.claimedAt)[0]?.id;
+        // Only the exact DM button or form a member pressed can answer a campaign;
+        // an unrelated message is never attributed to the latest delivery.
         const job=state.deliveries[deliveryId];
         if(!job||job.userId!==userId||!['sent','uncertain','sending'].includes(job.status))throw Object.assign(Error('No membership DM for this user was found.'),{code:'NO_MEMBERSHIP_DM'});
         const existing=state.events.find(e=>e.eventId===eventId);
@@ -204,12 +237,18 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         if(!job.isTest&&(['community','not_playing'].includes(choice)||result.status==='linked')){
           for(const previous of state.events)if(previous.userId===userId&&previous.roleStatus==='pending')previous.roleStatus='superseded';
         }
+        if(!job.isTest)await connection.execute(`INSERT INTO guildsync_membership_dm_responses(guild_id,discord_user_id,display_name,eso_account_name,choice,response_text,responded_at)
+          VALUES(?,?,?,?,?,?,?)
+          ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),eso_account_name=COALESCE(VALUES(eso_account_name),eso_account_name),
+          choice=VALUES(choice),response_text=VALUES(response_text),responded_at=VALUES(responded_at)`,
+          [guildId,userId,String(job.name||'').slice(0,255),result.accountName?String(result.accountName).slice(0,255):null,choice,String(text||'').slice(0,10000),new Date(now()*1000)]);
         state.events.push({eventId,deliveryId,userId,name:job.name,choice,text:String(text),at:now(),result,
           isTest:Boolean(job.isTest),destinationType:config.destinationId?config.destinationType:job.destinationType,destinationId:config.destinationId||job.destinationId,
           roleId:!job.isTest&&(['community','not_playing'].includes(choice)||result.status==='linked')?config.communityRoleId:'',
           roleAction:result.status==='linked'?'remove':'add',
           roleStatus:!job.isTest&&config.communityRoleId&&(['community','not_playing'].includes(choice)||result.status==='linked')?'pending':'sent',
           forwardStatus:'pending',retryAt:now()});
+        pruneMembershipState(state);
         return result;
       });
     },
@@ -232,6 +271,7 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       if(success)event.forwardStatus='sent';
       if(roleSuccess&&event.roleStatus==='pending')event.roleStatus='sent';
       if(state.forwardToken===token){state.forwardLeaseUntil=0;state.forwardToken=null;}
+      pruneMembershipState(state);
       event.retryAt=now()+120;return {ok:true};
     });}
   };

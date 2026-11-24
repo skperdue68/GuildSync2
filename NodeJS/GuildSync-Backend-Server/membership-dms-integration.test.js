@@ -7,9 +7,10 @@ import {createMembershipDMWorker} from '../GuildSync-Discord-Bot/src/membership-
 function fixture() {
  let time=1800000000,json=JSON.stringify({history:{},preferences:{},events:[],deliveries:{}}),snapshot;
  let links=[],roster=[{account_name:'ESOName'}],upserts=0,roleId='';
+ const responses=new Map();
  const members=[{id:'10',name:'Alice'},{id:'20',name:'Zebra'}];
  const connection={
-  beginTransaction:async()=>{snapshot={json,links:structuredClone(links)};},commit:async()=>{},rollback:async()=>{json=snapshot.json;links=snapshot.links;},release(){},
+  beginTransaction:async()=>{snapshot={json,links:structuredClone(links),responses:structuredClone(responses)};},commit:async()=>{},rollback:async()=>{json=snapshot.json;links=snapshot.links;responses.clear();for(const [key,value] of snapshot.responses)responses.set(key,value);},release(){},
   async execute(sql,args=[]) {
    if(sql.includes('GET_LOCK'))return [[{acquired:1}]];
    if(sql.includes('RELEASE_LOCK'))return [[{released:1}]];
@@ -20,6 +21,12 @@ function fixture() {
    if(sql.startsWith('SELECT account_name FROM guildsync_roster_members'))return [roster.filter(r=>r.account_name.toLowerCase()===args[0])];
    if(sql.startsWith('SELECT * FROM guildsync_member_links'))return [links.filter(l=>l.eso_account_name.toLowerCase()===args[0]||l.discord_user_id===args[1])];
    if(sql.startsWith('SELECT * FROM discord_members'))return [[{discord_id:args[0],username:'Alice'}]];
+   if(sql.startsWith('INSERT INTO guildsync_membership_dm_responses')){
+    const [guild,user,displayName,eso,choice,text,at]=args,key=guild+':'+user,previous=responses.get(key);
+    responses.set(key,{guild_id:guild,discord_user_id:user,display_name:displayName,eso_account_name:eso??previous?.eso_account_name??null,choice,response_text:text,responded_at:at});
+    return [{affectedRows:1}];
+   }
+   if(sql.startsWith('SELECT choice,eso_account_name,responded_at FROM guildsync_membership_dm_responses'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
    throw Error('Unexpected query: '+sql);
   }
  };
@@ -41,7 +48,7 @@ function fixture() {
  };
  return {db,service,worker:createMembershipDMWorker({client,guildId:'1',request,log:()=>{}}),request,sends,forwards,
   advance:seconds=>time+=seconds,state:()=>JSON.parse(json),restart:()=>createMembershipDMService(db,options),
-  block:()=>{links=[{eso_account_name:'ESOName',discord_user_id:'30',link_status:'linked'}];},upserts:()=>upserts,setRole:id=>roleId=id};
+  block:()=>{links=[{eso_account_name:'ESOName',discord_user_id:'30',link_status:'linked'}];},upserts:()=>upserts,responses:()=>[...responses.values()],setRole:id=>roleId=id};
 }
 test('bot → authenticated backend → persisted send date → modal auto-link → durable forwarding',async()=>{
  const f=fixture();await f.service.command('1','officer','start');f.advance(600);
@@ -58,7 +65,7 @@ test('bot → authenticated backend → persisted send date → modal auto-link 
 });
 test('community choices persist across restart and prevent future campaigns contacting that member',async()=>{
  const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
- await f.request('response',{userId:'10',eventId:'301',choice:'community'});
+ await f.request('response',{deliveryId:f.state().history['10'].deliveryId,userId:'10',eventId:'301',choice:'community'});
  assert.equal(f.state().preferences['10'],'community');
  f.advance(40*86400);await f.restart().command('1','officer','restart');
  assert.deepEqual(f.state().campaign.queue.map(q=>q.userId),['20']);
@@ -76,7 +83,28 @@ test('test delivery and responses leave normal dates, preferences, links and cam
  assert.deepEqual(f.state().history,{});assert.equal(f.state().campaign.nextAt,before);
  const delivery=f.state().testHistory['10'].deliveryId;
  const result=await f.request('response',{deliveryId:delivery,userId:'10',eventId:'304',choice:'eso',text:'@ESOName'});
- assert.equal(result.status,'test');assert.equal(f.upserts(),0);assert.deepEqual(f.state().preferences,{});
+ assert.equal(result.status,'test');assert.equal(f.upserts(),0);assert.deepEqual(f.state().preferences,{});assert.equal(f.responses().length,0);
+});
+test('a response must name the delivered membership DM it answers',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ await assert.rejects(()=>f.request('response',{userId:'10',eventId:'330',choice:'community'}),/No membership DM/);
+ await assert.rejects(()=>f.request('response',{deliveryId:'unknown',userId:'10',eventId:'331',choice:'community'}),/No membership DM/);
+ assert.deepEqual(f.state().preferences,{});
+});
+test('the latest response per member stores the choice, ESO name and response time',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ const delivery=f.state().history['10'].deliveryId;
+ await f.request('response',{deliveryId:delivery,userId:'10',eventId:'340',choice:'eso',text:'@ESOName'});
+ f.advance(30);
+ await f.request('response',{deliveryId:delivery,userId:'10',eventId:'341',choice:'other',text:'Away this month'});
+ const rows=f.responses();
+ assert.equal(rows.length,1);
+ assert.equal(rows[0].choice,'other');
+ assert.equal(rows[0].eso_account_name,'ESOName');
+ assert.equal(rows[0].response_text,'Away this month');
+ assert.equal(rows[0].responded_at.getTime(),(1800000600+30)*1000);
+ const status=await f.service.command('1','officer','status','10');
+ assert.deepEqual(status.member.lastResponse,{choice:'other',accountName:'ESOName',at:1800000630});
 });
 test('unapproved actors and unauthenticated or cross-guild callers cannot run campaigns',async()=>{
  const f=fixture();await assert.rejects(()=>f.service.command('1','stranger','start'),/approved/i);
@@ -87,10 +115,10 @@ test('unapproved actors and unauthenticated or cross-guild callers cannot run ca
 });
 test('a newer linked response supersedes a failed community role addition',async()=>{
  const f=fixture();f.setRole('77');await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
- await f.request('response',{userId:'10',eventId:'310',choice:'community'});
+ await f.request('response',{deliveryId:f.state().history['10'].deliveryId,userId:'10',eventId:'310',choice:'community'});
  const {event}=await f.service.claimForward('1');
  await f.service.finishForward('1',event.eventId,event.token,true,false);
- await f.request('response',{userId:'10',eventId:'311',choice:'eso',text:'@ESOName'});
+ await f.request('response',{deliveryId:f.state().history['10'].deliveryId,userId:'10',eventId:'311',choice:'eso',text:'@ESOName'});
  assert.equal(f.state().events[0].roleStatus,'superseded');
  const next=await f.service.claimForward('1');assert.equal(next.event.roleAction,'remove');
  await f.service.finishForward('1',next.event.eventId,next.event.token,true,true);
