@@ -42,8 +42,9 @@ local sv, active, current, mailboxReady, opening, paused = nil, false, nil, fals
 local generation = 0
 local sendingNow, ownedSend = false, nil
 local skippedRequests = {}
+local sessionSent, sessionTotal = 0, nil
 local start, nextMail
-local function say(text) CHAT_ROUTER:AddSystemMessage("GuildSyncDiscordReminder: " .. text) end
+local function say(text) CHAT_ROUTER:AddSystemMessage("|c88CCFF[GSDiscord]|r " .. text) end
 local function key(value) return string.lower(tostring(value or "")):gsub("^@+", "") end
 local function fill(template, values)
     return (tostring(template or ""):gsub("{([%w]+)}", function(token) return tostring(values[token] or "") end))
@@ -72,6 +73,7 @@ local function acknowledgement(item, status, detail)
 end
 local function stop(reason)
     active, opening = false, false
+    sessionSent, sessionTotal = 0, nil
     generation = generation + 1
     if GuildSyncMailQueueOwner == NAME then
         GuildSyncMailQueueOwner = nil
@@ -107,6 +109,19 @@ ZO_PostHook("SendMail", function(recipient)
 end)
 EVENT_MANAGER:RegisterForEvent(NAME .. "MailMonitor", EVENT_MAIL_SEND_SUCCESS, function() GuildSyncMailSendInFlight = nil end)
 EVENT_MANAGER:RegisterForEvent(NAME .. "MailMonitor", EVENT_MAIL_SEND_FAILED, function() GuildSyncMailSendInFlight = nil end)
+-- Mirrors the "n of N" progress line GuildSyncBanking prints for its deposit mail.
+local function dueCount()
+    local total = 0
+    for id, queued in pairs(sv.mailQueue) do
+        local ack = sv.mailAck[id]
+        if type(queued) == "table" and not sv.sentMailIds[id] and not skippedRequests[id]
+            and queued.worldName == GetWorldName() and key(queued.sendingAccount) == key(GetDisplayName())
+            and (not ack or ack.status ~= "uncertain") then
+            total = total + 1
+        end
+    end
+    return total
+end
 local function inGuild(item)
     for index = 1, GetNumGuilds() do
         local guild = GetGuildId(index)
@@ -168,6 +183,8 @@ nextMail = function()
     -- rejection still arrives as EVENT_MAIL_SEND_FAILED.
     ClearQueuedMail()
     if leftover then say("Cleared a stale mail draft before sending.") end
+    if not sessionTotal then sessionTotal = dueCount() end
+    say("Sending reminder mail " .. tostring(item.requestId) .. " to " .. tostring(item.recipient) .. ": " .. subject)
     local token = generation
     sendingNow = true
     SendMail(item.recipient, subject, body)
@@ -180,6 +197,7 @@ start = function()
     if not sv or active or paused or not sv.settings.enabled or not next(sv.mailQueue) then return end
     if GuildSyncMailSendInFlight or (GuildSyncMailQueueOwner and GuildSyncMailQueueOwner ~= NAME) then zo_callLater(start, 3000); return end
     GuildSyncMailQueueOwner = NAME
+    sessionSent, sessionTotal = 0, nil
     active, opening = true, true
     generation = generation + 1
     local token = generation
@@ -232,7 +250,7 @@ end
 local function settingsPanel()
     local lam = LibAddonMenu2
     if not lam then return end
-    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.5", registerForRefresh = true})
+    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.6", registerForRefresh = true})
     local options = {{type = "checkbox", name = "Automatically send queued reminders", getFunc = function() return sv.settings.enabled end,
         setFunc = function(value) sv.settings.enabled = value; if value then start() end end}}
     for _, entry in ipairs({{"subject", "Subject"}, {"body", "Message body"}, {"candidate", "Optional candidate paragraph"}}) do
@@ -264,7 +282,9 @@ EVENT_MANAGER:RegisterForEvent(NAME, EVENT_ADD_ON_LOADED, function(_, addon)
         sv.mailQueue[item.requestId] = nil
         current = nil
         ownedSend = nil
-        say("Mail confirmed sent to " .. item.recipient)
+        sessionSent = sessionSent + 1
+        say("Processed reminder mail " .. tostring(item.requestId) .. " to " .. tostring(item.recipient) ..
+            " (" .. tostring(sessionSent) .. " of " .. tostring(sessionTotal or sessionSent) .. ")")
         local token = generation
         zo_callLater(function() if token == generation then nextMail() end end, 3000)
     end)
