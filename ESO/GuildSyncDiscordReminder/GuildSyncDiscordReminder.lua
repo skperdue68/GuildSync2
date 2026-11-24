@@ -1,18 +1,47 @@
 GuildSyncDiscordReminder = GuildSyncDiscordReminder or {}
 local NAME = "GuildSyncDiscordReminder"
 local MAILBOX_OPEN_DELAY_MS = 2000
+-- ESO reports EVENT_MAIL_SEND_FAILED with a MAIL_SEND_RESULT_* code. Name the
+-- common ones so /gsdr status explains a rejection instead of only its number.
+local MAIL_REASONS = {
+    [1] = "the mail server reported an error",
+    [2] = "the recipient name is invalid",
+    [3] = "your ESO mailbox is full",
+    [4] = "the recipient may be ignoring you",
+    [5] = "there is not enough gold for the requested COD",
+    [6] = "an attached item is invalid",
+    [7] = "the mail is blank",
+    [8] = "cash on delivery cannot be sent that way",
+    [10] = "another mail send is already in progress",
+    [11] = "ESO does not allow mailing the sending account",
+    [12] = "mail is currently disabled",
+    [13] = "the mailbox is not open",
+    [16] = "the send was canceled",
+}
+-- These rejections belong to one recipient and retrying cannot fix them, so the
+-- request is marked failed and the rest of the campaign continues.
+local MAIL_SKIP_REASONS = {[2] = true, [4] = true, [11] = true}
+local function mailReason(code)
+    local number = tonumber(code)
+    if number == nil then return "ESO reported an unknown mail result" end
+    return tostring(MAIL_REASONS[number] or "ESO reported an unrecognized mail result") .. " (reason " .. tostring(number) .. ")"
+end
 local defaults = {
     settings = {
         enabled = true,
         subject = "{guild}: your Discord account",
-        body = "Hello {account},\n\nWe are updating the Discord links for {guild}. Your ESO guild rank is {rank}. Please reply with your Discord username so we can match your accounts.\n{candidate}\nIf you do not use Discord and do not plan to, please let us know so we can stop these reminders. Thank you!",
+        body = "Hello {account},\n\nThe Alphabet Mafia has a new system that links ESO and Discord accounts so officers know who’s who and guild tools work correctly. You’re getting this note because we haven’t confirmed your Discord account.\n{candidate}\nDiscord is optional for membership, but required for promotion, and where we coordinate many guild activities. To automatically link your accounts, type /nick <@esoname> on our Discord server or reply with your Discord username. If you don’t plan to use Discord, just let us know and we’ll stop the reminders. Thank you!\n\n--Alphabet Mafia Consigliere",
         candidate = "\nWe found a possible match: {candidateName}. Is that your Discord account?\n",
     },
     mailQueue = {}, mailAck = {}, sentMailIds = {},
 }
+-- GuildSync rewrote this default after the first live reminders. Updating the
+-- add-on replaces only a body still holding the old wording; custom edits stay.
+local PREVIOUS_DEFAULT_BODY = "Hello {account},\n\nWe are updating the Discord links for {guild}. Your ESO guild rank is {rank}. Please reply with your Discord username so we can match your accounts.\n{candidate}\nIf you do not use Discord and do not plan to, please let us know so we can stop these reminders. Thank you!"
 local sv, active, current, mailboxReady, opening, paused = nil, false, nil, false, false, false
 local generation = 0
 local sendingNow, ownedSend = false, nil
+local skippedRequests = {}
 local start, nextMail
 local function say(text) CHAT_ROUTER:AddSystemMessage("GuildSyncDiscordReminder: " .. text) end
 local function key(value) return string.lower(tostring(value or "")):gsub("^@+", "") end
@@ -51,10 +80,20 @@ local function stop(reason)
     mailboxReady = false
     if reason then say(reason) end
 end
-local function fail(status, detail)
+local function fail(status, detail, skipRecipient)
+    local failedId = current and current.requestId
     if current then acknowledgement(current, status, detail); current = nil end
     ownedSend = nil
     if GuildSyncMailSendInFlight and GuildSyncMailSendInFlight.owner == NAME then GuildSyncMailSendInFlight = nil end
+    if skipRecipient then
+        -- Keep the failed request for review and a later retry, but do not loop
+        -- on it during this run.
+        if failedId then skippedRequests[failedId] = true end
+        say(detail .. " Skipping this recipient; /gsdr status lists the failure.")
+        local token = generation
+        zo_callLater(function() if token == generation then nextMail() end end, 3000)
+        return
+    end
     paused = true
     stop(detail .. " Queue paused. Use /gsdr status; /gsdr resume retries failed requests, but never uncertain ones.")
 end
@@ -87,6 +126,8 @@ local function nextEligible()
         if type(queued) == "table" then
             if sv.sentMailIds[id] then
                 sv.mailQueue[id] = nil
+            elseif skippedRequests[id] then
+                -- Rejected by ESO for this recipient in this run; resume retries it.
             elseif queued.worldName == GetWorldName() and key(queued.sendingAccount) == key(GetDisplayName()) then
                 local ack = sv.mailAck[id]
                 if not ack or ack.status ~= "uncertain" then return queued end
@@ -168,13 +209,13 @@ local function command(text)
     if verb == "pause" then
         paused = true
         if current then say("Pausing after ESO responds to the current mail.") else stop("Paused.") end
-    elseif verb == "resume" then paused = false; start()
+    elseif verb == "resume" then paused = false; skippedRequests = {}; start()
     elseif verb == "retry" then
         if current then say("Wait for the current send to finish."); return end
         local ack = sv.mailAck[value]
         if not ack or ack.status ~= "uncertain" or not sv.mailQueue[value] then say("Provide an uncertain request ID from /gsdr status."); return end
         ack.status = "failed"; ack.detail = "Officer explicitly requested a retry after reviewing delivery."
-        paused = false; start()
+        skippedRequests[value] = nil; paused = false; start()
     elseif verb == "subject" or verb == "body" or verb == "candidate" then
         if value == "" then say("Provide the template text. Use \\n for a new line.")
         else sv.settings[verb] = value:gsub("\\n", "\n"); say(verb .. " template updated.") end
@@ -191,7 +232,7 @@ end
 local function settingsPanel()
     local lam = LibAddonMenu2
     if not lam then return end
-    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.3", registerForRefresh = true})
+    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.5", registerForRefresh = true})
     local options = {{type = "checkbox", name = "Automatically send queued reminders", getFunc = function() return sv.settings.enabled end,
         setFunc = function(value) sv.settings.enabled = value; if value then start() end end}}
     for _, entry in ipairs({{"subject", "Subject"}, {"body", "Message body"}, {"candidate", "Optional candidate paragraph"}}) do
@@ -207,6 +248,7 @@ EVENT_MANAGER:RegisterForEvent(NAME, EVENT_ADD_ON_LOADED, function(_, addon)
     EVENT_MANAGER:UnregisterForEvent(NAME, EVENT_ADD_ON_LOADED)
     sv = ZO_SavedVars:NewAccountWide(NAME, 1, nil, defaults)
     for setting, value in pairs(defaults.settings) do if sv.settings[setting] == nil then sv.settings[setting] = value end end
+    if sv.settings.body == PREVIOUS_DEFAULT_BODY then sv.settings.body = defaults.settings.body end
     SLASH_COMMANDS["/gsdr"] = command
     settingsPanel()
     EVENT_MANAGER:RegisterForEvent(NAME, EVENT_PLAYER_ACTIVATED, function()
@@ -227,7 +269,11 @@ EVENT_MANAGER:RegisterForEvent(NAME, EVENT_ADD_ON_LOADED, function(_, addon)
         zo_callLater(function() if token == generation then nextMail() end end, 3000)
     end)
     EVENT_MANAGER:RegisterForEvent(NAME, EVENT_MAIL_SEND_FAILED, function(_, reason)
-        if active and current and GuildSyncMailQueueOwner == NAME then fail("failed", "ESO rejected mail (reason " .. tostring(reason) .. ").") end
+        if active and current and GuildSyncMailQueueOwner == NAME then
+            local code = tonumber(reason)
+            fail("failed", "ESO rejected the mail to " .. tostring(current.recipient) .. ": " .. mailReason(code) .. ".",
+                code ~= nil and MAIL_SKIP_REASONS[code] == true)
+        end
     end)
     say("Loaded. Queued reminders will send automatically after login. /gsdr for controls.")
 end)

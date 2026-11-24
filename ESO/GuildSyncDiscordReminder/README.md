@@ -24,11 +24,13 @@ Edit the subject, body and optional candidate paragraph under **Settings → Add
 - `/gsdr body <text>`
 - `/gsdr candidate <text>`
 
-Use `\n` for new lines. Placeholders: `{account}`, `{guild}`, `{rank}`, `{candidate}` and `{candidateName}`. `{candidate}` expands to the configurable candidate paragraph only when a candidate Discord name exists. Candidate matches are explicitly presented as questions.
+Use `\n` for new lines. Placeholders: `{account}`, `{guild}`, `{rank}`, `{candidate}` and `{candidateName}`. The shipped default body is the current Alphabet Mafia wording; updating from an older add-on replaces a body that still holds the previous default and leaves an edited template untouched. `{candidate}` expands to the configurable candidate paragraph only when a candidate Discord name exists. Candidate matches are explicitly presented as questions.
 
 `/gsdr status` reports counts and failed/uncertain request IDs. `/gsdr preview` prints a queued message. `/gsdr pause` pauses after the current send result. `/gsdr resume` resumes pending/failed work. An uncertain delivery is never automatically retried: first review your sent mail, then use `/gsdr retry <requestId>` only if you intend to retry it.
 
 ESO enforces subject/body limits. The add-on stops rather than silently truncating a message. It never sends attached gold, items or COD; clear an existing attachment draft before resuming.
+
+When ESO rejects a mail, the status reports the recipient and a readable reason, for example `ESO rejected the mail to @Name: the recipient name is invalid (reason 2).` A rejection that belongs to one recipient — an invalid name, a recipient ignoring you, or the sending account itself — marks that request failed and continues with the next member. Server, mailbox, attachment and money problems pause the queue for an officer to fix. `/gsdr resume` retries failed requests.
 
 ## Reminder history and opt-outs
 
