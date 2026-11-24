@@ -1,4 +1,4 @@
-import {ActionRowBuilder,ButtonBuilder,ButtonStyle,ModalBuilder,TextInputBuilder,TextInputStyle,Events} from 'discord.js';
+import {ActionRowBuilder,ButtonBuilder,ButtonStyle,MessageFlags,ModalBuilder,TextInputBuilder,TextInputStyle,Events} from 'discord.js';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {createFileDMIntake,createMemoryDMIntake} from './membership-dm-intake.js';
@@ -6,13 +6,17 @@ import {createFileDMIntake,createMemoryDMIntake} from './membership-dm-intake.js
 const nonce=id=>createHash('sha256').update(String(id)).digest('hex').slice(0,24);
 const safeText=value=>String(value||'').replace(/([\\`*_~|<>])/g,'\\$1');
 const choices=[['eso','Provide my ESO account'],['community','Not in guild; keep Discord'],['not_playing','No longer play ESO; stay'],['other','Other response']];
-export function membershipDMMessage(job,config,{name,guildName}) {
-  const content=(job.isTest?'[TEST] ':'')+config.template.replace(/\{(name|guild)\}/g,(_,key)=>safeText(key==='name'?name:guildName))+
-    '\n\nYour answers are forwarded to guild officers.'+(job.isTest?' This is a test; replies will not change account links, preferences or roles.':'');
+export function membershipDMMessage(job,config,{name,guildName,position,total}={}) {
+  const recipient=job.simulated?`${safeText(name)}${job.userId?` (${safeText(job.userId)})`:''}`:'';
+  const lead=job.simulated?`Test mode ${position||1}${total?` of ${total}`:''} — this is what ${recipient} would receive.\n\n`:'';
+  const footer=job.simulated?'\n\nSimulation only. No response, account link, preference or role is saved.'
+    :'\n\nYour answers are forwarded to guild officers.'+(job.isTest?' This is a test; replies will not change account links, preferences or roles.':'');
+  // Simulated messages render the member-facing body verbatim: no [TEST] prefix.
+  const content=lead+(job.isTest&&!job.simulated?'[TEST] ':'')+config.template.replace(/\{(name|guild)\}/g,(_,key)=>safeText(key==='name'?name:guildName))+footer;
   if(content.length>2000)throw Error('Rendered membership DM exceeds Discord’s message limit.');
   return {content,allowedMentions:{parse:[]},nonce:nonce(job.id),enforceNonce:true,
     components:[new ActionRowBuilder().addComponents(choices.map(([choice,label])=>new ButtonBuilder()
-      .setCustomId(`gs-membership:${job.id}:${choice}`).setLabel(label).setStyle(choice==='eso'?ButtonStyle.Primary:ButtonStyle.Secondary)))]};
+      .setCustomId(`${job.simulated?'gs-membership-sim':'gs-membership'}:${job.id}:${choice}`).setLabel(label).setStyle(choice==='eso'?ButtonStyle.Primary:ButtonStyle.Secondary)))]};
 }
 
 export function membershipDMRequest(socket,guildId,action,payload={}) {
@@ -156,6 +160,12 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
     }
   }
   async function interaction(interaction) {
+    // Test mode buttons are answered here so no backend delivery or response is created.
+    const simulated=/^gs-membership-sim:([0-9a-f-]{36}):(eso|community|not_playing|other)$/i.exec(interaction.customId||'');
+    if(simulated&&!interaction.inGuild?.()){
+      if(interaction.isButton?.()||interaction.isModalSubmit?.())await interaction.reply({content:'Test mode simulation only. Nothing was saved.',flags:[MessageFlags.Ephemeral]}).catch(()=>{});
+      return true;
+    }
     const match=/^gs-membership:([0-9a-f-]{36}):(eso|community|not_playing|other)$/i.exec(interaction.customId||'');
     if(!match||interaction.inGuild?.())return false;
     const [,deliveryId,choice]=match;

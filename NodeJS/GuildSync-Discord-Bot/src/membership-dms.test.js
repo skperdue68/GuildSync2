@@ -99,3 +99,14 @@ test('lookup, validation and rendering failures are recorded as failed, never un
   assert.deepEqual(outcomes,['failed'],failure);assert.equal(sends.length,0,failure);
  }
 });
+
+test('simulated test mode messages name the member and never use real button IDs',()=>{
+ const message=membershipDMMessage({...job,isTest:true,simulated:true},config,{name:'Alice',guildName:'Alphabet Mafia',position:2,total:5});
+ assert.match(message.content,/^Test mode 2 of 5 — this is what Alice \(10\) would receive\./);
+ assert.doesNotMatch(message.content,/\[TEST\]/);
+ assert.match(message.content,/Hello Alice, please tell Alphabet Mafia your ESO name\./);
+ assert.match(message.content,/Simulation only/);
+ const buttons=message.components[0].toJSON().components;
+ assert.equal(buttons.length,4);
+ assert.ok(buttons.every(button=>button.custom_id.startsWith('gs-membership-sim:')));
+});

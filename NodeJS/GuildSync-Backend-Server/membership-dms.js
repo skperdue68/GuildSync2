@@ -178,6 +178,14 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         return {job,config};
       });
     },
+    // Read-only list for the Discord test mode: same candidates the campaign would
+    // contact, but nothing is written to state, history or deliveries.
+    async testPlan(guildId,actorId) {
+      if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
+      const [rows]=await db.execute(`SELECT d.discord_id AS id,COALESCE(NULLIF(d.server_nickname,''),NULLIF(d.global_name,''),d.username) AS name
+        FROM discord_members d WHERE NOT EXISTS (SELECT 1 FROM guildsync_member_links l WHERE l.discord_user_id=d.discord_id AND l.link_status='linked')`);
+      return {members:rows.map(row=>({userId:String(row.id),name:row.name})),config:configuration()};
+    },
     async resolve(guildId,actorId,userId,outcome) {
       if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
       const key=String(userId??'').trim();
@@ -278,7 +286,7 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
 }
 
 export function registerMembershipDMSocket(socket,service,{guildId,onLinked=async()=>{}}={}) {
-  const actions={command:p=>service.command(guildId,p.actorId,p.command,p.targetId),test:p=>service.test(guildId,p.actorId,p.targetId),resolve:p=>service.resolve(guildId,p.actorId,p.userId,p.outcome),claim:()=>service.claim(guildId),
+  const actions={command:p=>service.command(guildId,p.actorId,p.command,p.targetId),test:p=>service.test(guildId,p.actorId,p.targetId),'test-plan':p=>service.testPlan(guildId,p.actorId),resolve:p=>service.resolve(guildId,p.actorId,p.userId,p.outcome),claim:()=>service.claim(guildId),
     validate:p=>service.validate(guildId,p.deliveryId,p.token),finish:p=>service.finish(guildId,p.deliveryId,p.token,p.result),
     response:async p=>{const result=await service.response(guildId,p);if(result.status==='linked')await onLinked();return result;},'claim-forward':()=>service.claimForward(guildId),
     'finish-forward':p=>service.finishForward(guildId,p.eventId,p.token,p.success,p.roleSuccess)};

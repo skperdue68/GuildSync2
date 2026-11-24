@@ -155,3 +155,13 @@ test('an officer can confirm an uncertain delivery as sent',async()=>{
  assert.equal(f.state().campaign.queue.find(q=>q.userId==='10').status,'sent');
  await f.service.command('1','officer','restart');assert.deepEqual(f.state().campaign.queue.map(q=>q.userId),['20']);
 });
+
+test('the test mode plan is read-only and lists unlinked members',async()=>{
+ const f=fixture();
+ const before=JSON.stringify(f.state());
+ const plan=await f.request('test-plan',{actorId:'officer'});
+ assert.deepEqual(plan.members.map(member=>member.name),['Alice','Zebra']);
+ assert.equal(plan.config.enabled,true);
+ assert.equal(JSON.stringify(f.state()),before,'plan never writes campaign state');
+ await assert.rejects(()=>f.request('test-plan',{actorId:'stranger'}),/approved/i);
+});

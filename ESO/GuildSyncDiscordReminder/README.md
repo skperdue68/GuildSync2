@@ -6,15 +6,15 @@ Sends officer-requested ESO mail asking active guild members for their Discord u
 
 1. Install this folder in ESO's `live/AddOns` directory. Update GuildSyncBanking too: both add-ons now cooperate through the shared runtime `GuildSyncMailQueueOwner` lock.
 2. Enable the add-on, log in once with the account that will send the mail, then exit ESO completely. ESO creates `SavedVariables/GuildSyncDiscordReminder.lua`.
-3. In GuildSync, open **Guild Roster → Discord Reminders**, beside **Lookup Roster History**. User or Admin access is required. Review eligible members, choose the sending account and NA/EU server, then choose **Write reminders to add-on**.
-4. Start ESO. After player activation the add-on waits for Banking and any observed outstanding send, opens the mailbox and sends one reminder at a time. It waits for ESO's confirmation and then waits three seconds before the next message.
-5. Exit ESO or `/reloadui` to persist the results. GuildSync's Discord Reminders file watcher reads acknowledgements; the dialog also offers **Read saved delivery results**.
+3. In GuildSync, open **Guild Roster → Discord Reminders**, beside **Lookup Roster History**. User or Admin access is required. Review eligible members, choose the sending account and NA/EU server, then choose **Queue reminders**. You can queue while ESO is running: GuildSync stores the batch and writes it to the add-on SavedVariables file as soon as ESO is closed, keeping a backup of the previous file.
+4. Start ESO. After player activation the add-on waits for Banking and any observed outstanding send, opens the mailbox, waits two seconds for it to become usable (the same way GuildSyncBanking does), then sends one reminder at a time. It waits for ESO's confirmation and then waits three seconds before the next message. Mailbox open/close events are not used, so a close during login cannot stop the queue.
+5. Exit ESO or `/reloadui` to persist the results, then use **Read saved delivery results** in the dialog to import them. GuildSync no longer places this SavedVariables file on its File Watch list; the export and read buttons handle it directly.
 
 The backend must have `GUILDSYNC_ESO_GUILD_ID` configured. Optional `GUILDSYNC_ESO_GUILD_NAME` supplies the message's guild name; set it to your guild. The database remains scoped to one ESO guild.
 
 ## Test a message
 
-In the same dialog, choose the sending account/server, enter an ESO account under **Test recipient**, and click **Write one test mail** while ESO is closed. On the next login the add-on sends it through the same coordinated queue, with `[TEST]` in the subject. Tests do not change a member's normal reminder dates or cooldown.
+In the same dialog, choose the sending account/server, enter an ESO account under **Test recipient**, and click **Queue one test mail**. It joins the next export and is written when ESO is closed. On the next login the add-on sends it through the same coordinated queue, with `[TEST]` in the subject. Tests do not change a member's normal reminder dates or cooldown.
 
 ## Templates and controls
 

@@ -57,3 +57,8 @@ Reply forwarding and optional role changes retry independently. A newer membersh
 ## Smoke test after deployment
 
 Configure a private officer destination, then send a test to your own Discord account. Exercise all four buttons, submit an ESO account and an Other response, and confirm a message typed to the bot without pressing a button is ignored. Confirm the forwarded records are labelled TEST and that actual links, roles, preferences and normal send dates are unchanged. Then start a small real campaign, inspect status, pause/resume it, and verify its next scheduled time and the member’s confirmed send date. No live Discord send or role operation was performed during implementation.
+## Simulated test mode
+
+`/discord-reminders test-mode` sends a simulated copy of the membership DM to the officer who started it, one message every 30 seconds, cycling through the members a real campaign would contact. Each message is rendered from the live template for that member but is delivered only to the operator.
+
+Test mode writes nothing: no delivery claim, send date, preference, account link, role change or response row. Buttons on simulated messages are acknowledged privately and save nothing. Stop it with `/discord-reminders test-mode-stop`; it also stops when the bot restarts.

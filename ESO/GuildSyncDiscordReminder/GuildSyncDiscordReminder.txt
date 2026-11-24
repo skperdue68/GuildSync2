@@ -1,6 +1,6 @@
 ## Title: GuildSyncDiscordReminder
 ## APIVersion: 101051
-## Version: 1.0.0
+## Version: 1.0.1
 ## Author: @evainefaye
 ## SavedVariables: GuildSyncDiscordReminder
 ## OptionalDependsOn: LibAddonMenu-2.0 GuildSyncBanking

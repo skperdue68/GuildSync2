@@ -10259,10 +10259,6 @@ function handleGuildSyncSavedVarsFileModified(payload = {}) {
 
   const key = String(payload.key || payload.fileName || 'saved-vars-file').trim() || 'saved-vars-file';
   const normalizedKey = key.toLowerCase();
-  if(normalizedKey==='discord-reminders'){
-    discordReminderControls.sync().catch(error=>addSystemMessage('discord-reminder-sync',error.message,{ttlMs:TRANSIENT_MESSAGE_TTL_MS}));
-    return;
-  }
   const label = String(payload.label || '').trim();
   const fileName = String(payload.fileName || 'SavedVariables file').trim() || 'SavedVariables file';
   const filePath = String(payload.filePath || '').trim();
