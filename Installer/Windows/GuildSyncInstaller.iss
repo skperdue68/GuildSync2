@@ -43,6 +43,7 @@ Source: "{#SourceRoot}\ESO\GuildSyncBanking\*"; DestDir: "{code:GetESOAddonDir}\
 Source: "{#SourceRoot}\ESO\GuildSyncRoster\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncRoster"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#SourceRoot}\ESO\GuildSyncApplications\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncApplications"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#SourceRoot}\ESO\GuildSyncTrader\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncTrader"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#SourceRoot}\ESO\GuildSyncDiscordReminder\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncDiscordReminder"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\GuildSync"; Filename: "{app}\{#MyAppExeName}"

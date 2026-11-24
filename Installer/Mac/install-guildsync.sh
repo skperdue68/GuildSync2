@@ -6,7 +6,7 @@ APP_VERSION="__GUILDSYNC_APP_VERSION__"
 replace_managed_path() {
   local source="$1" parent="$2" name="$3" stage
   case "$name" in
-    GuildSync.app|GuildSyncSettings.txt|.env.example|.env|GuildSyncBanking|GuildSyncRoster|GuildSyncApplications|GuildSyncTrader) ;;
+    GuildSync.app|GuildSyncSettings.txt|.env.example|.env|GuildSyncBanking|GuildSyncRoster|GuildSyncApplications|GuildSyncTrader|GuildSyncDiscordReminder) ;;
     *) echo "Refusing unmanaged destination: $name" >&2; return 1 ;;
   esac
   [[ -e "$source" && ! -L "$source" ]] || { echo "Missing or linked payload: $source" >&2; return 1; }
@@ -160,7 +160,7 @@ main() {
   TMP_PAYLOAD="$(mktemp -d)"
   tar -xzf "$archive" -C "$TMP_PAYLOAD"
   [[ -d "$TMP_PAYLOAD/GuildSync.app/Contents/MacOS" ]] || { echo 'Application missing from payload' >&2; return 1; }
-  for addon in GuildSyncBanking GuildSyncRoster GuildSyncApplications GuildSyncTrader; do
+  for addon in GuildSyncBanking GuildSyncRoster GuildSyncApplications GuildSyncTrader GuildSyncDiscordReminder; do
     [[ -f "$TMP_PAYLOAD/ESO/$addon/$addon.txt" ]] || { echo "Incomplete add-on payload: $addon" >&2; return 1; }
   done
   # Check existing objects too: a writable parent can contain root-owned app/settings.
@@ -178,7 +178,7 @@ on run args
 end run
 OSA
   fi
-  for addon in GuildSyncBanking GuildSyncRoster GuildSyncApplications GuildSyncTrader; do
+  for addon in GuildSyncBanking GuildSyncRoster GuildSyncApplications GuildSyncTrader GuildSyncDiscordReminder; do
     replace_managed_path "$TMP_PAYLOAD/ESO/$addon" "$addons_dir" "$addon"
   done
   [[ -d "$install_parent/GuildSync.app/Contents/MacOS" ]] || { echo 'Application verification failed' >&2; return 1; }

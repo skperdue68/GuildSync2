@@ -1,3 +1,5 @@
+import './discord-reminders.css';
+import {createDiscordReminderControls,renderReminderRosterCell} from './discord-reminders.js';
 import './eso-account-rename.css';
 import {createEsoAccountRename} from './eso-account-rename.js';
 import {matchApplicationsToJoins,renderJoinApplication} from './application-history.js';
@@ -145,6 +147,10 @@ let latestDesktopClientDownloadError = '';
 let socket = null;
 
 const memberHistoryActions = createMemberHistoryActions({openRoster:openRosterMemberHistory, openDiscord:openDiscordMemberHistory});
+const discordReminderControls=createDiscordReminderControls({
+  request:payload=>emitSocketWithAck('guildsync:discord-reminders',payload),
+  bridge:null,canEdit:canEditGuildSyncData,changed:()=>refreshRosterDataFromBackend()
+});
 let discordHistoryLoadGeneration = 0;
 let rosterHistorySearchGeneration = 0;
 let discordMembers = [];
@@ -1165,6 +1171,7 @@ function renderEsoRosterPanel() {
         </div>
         <div class="discord-history-header-action" style="flex: 1; display: flex; justify-content: center; align-items: center;">
           <button id="openRosterHistoryButton" class="refresh-discord-button" type="button">Lookup Roster History</button>
+          ${canEditGuildSyncData()?'<button id="openDiscordRemindersButton" class="refresh-discord-button" type="button" style="margin-left:12px">Discord Reminders</button>':''}
         </div>
         <div class="discord-data-actions">
           <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatRosterRefreshDate(rosterLastRefreshValue))}</span>
@@ -1234,6 +1241,7 @@ function renderEsoRosterPanel() {
                 ${renderRosterSortableHeader('notes', 'Notes', 'roster-notes-header')}
                 <th class="member-history-header">History</th>
                 ${renderRosterSortableHeader('linked', 'Discord Account Linked', 'member-link-action-header')}
+                <th>Discord Reminder</th>
               </tr>
             </thead>
             <tbody>
@@ -1262,6 +1270,7 @@ function renderEsoRosterRow(member, index = -1) {
       <td class="roster-notes-cell">${renderRosterNotesButton(member)}</td>
       <td class="member-history-cell">${renderMemberHistoryButton({kind:'roster',id:member.account_name,name:member.account_name})}</td>
       <td class="member-link-action-cell">${renderMemberLinkStatusButton({ mode: 'eso-to-discord', esoAccountName: member.account_name })}</td>
+      ${renderReminderRosterCell(member,canEditGuildSyncData())}
     </tr>
   `;
 }
@@ -1379,7 +1388,7 @@ function renderEmptyEsoRosterRow() {
 
   return `
     <tr>
-      <td class="bank-empty-row" colspan="6">${escapeHtml(message)}</td>
+      <td class="bank-empty-row" colspan="7">${escapeHtml(message)}</td>
     </tr>
   `;
 }
@@ -5002,6 +5011,7 @@ async function submitRosterMemberNote() {
 }
 
 function wireEsoRosterPanel() {
+  discordReminderControls.wire(document.querySelector('.eso-roster-panel'));
   memberHistoryActions.wire(document.querySelector('.eso-roster-panel'));
   const refreshButton = document.querySelector('#refreshRosterDataButton');
   if (refreshButton) {
@@ -5591,6 +5601,9 @@ function normalizeRosterMembers(members) {
         account_name: String(member.account_name || member.accountName || '').trim(),
         rank: String(member.rank || member.rankName || '').trim(),
         joined: member.joined ?? '',
+        discord_opt_out: Boolean(Number(member.discord_opt_out)),
+        reminder_exported_at: member.reminder_exported_at || null,
+        reminder_sent_at: member.reminder_sent_at || null,
         aliases: Array.isArray(member.aliases)?member.aliases.map(String):[],
         note_count: Number(member.note_count ?? member.noteCount ?? 0) || 0
       }))
@@ -7422,6 +7435,7 @@ function mergeBankingEntries(entries) {
 
 function bindLiveDataActions(root) {
   memberHistoryActions.wire(root);
+  discordReminderControls.wire(root);
   root.querySelectorAll('[data-open-member-link-dialog]').forEach(button => {
     button.addEventListener('click', () => openMemberLinkDialog(button.dataset.openMemberLinkDialog || '', button.dataset.memberLinkValue || ''));
   });

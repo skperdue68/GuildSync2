@@ -1,3 +1,4 @@
+import {initializeDiscordReminders,createDiscordReminders,registerDiscordReminderSocket} from './discord-reminders.js';
 import {createEsoAccountRenames,registerEsoAccountRenameSocket} from './eso-account-identity.js';
 import {registerTraderSalesSubscriptionSocket, planTraderSaleNotices, announceTraderSaleNotices, markTraderSaleNoticesDelivered} from './trader-sales-subscriptions.js';
 import {createUserSwitches,initializeUserSwitchSchema,registerUserSwitchSocket,registerUserSwitchGuard} from './user-switch.js';
@@ -139,6 +140,7 @@ await initializeVoiceIdentitySchema(loginDB);
 voiceIdentityService=createVoiceIdentityService(loginDB,{secret:GUILDSYNC_JWT_SECRET});
   applicationDB = await openAppDataDB();
   await initializeEsoGuildIdentity(applicationDB);
+  await initializeDiscordReminders(applicationDB);
   Log(ESO_GUILD_CONFIGURATION.strict ? `ESO imports restricted to guild ${ESO_GUILD_CONFIGURATION.guildId}.` : 'ESO guild isolation: legacy mode; set GUILDSYNC_ESO_GUILD_ID after updating add-ons to enforce guild identity.');
   configurationService = createConfigurationService(applicationDB,{applyAtBoundary:fn=>sheetsRuntime?sheetsRuntime.applyConfiguration(fn):fn()});
   await configurationService.initialize();
@@ -162,6 +164,8 @@ voiceIdentityService=createVoiceIdentityService(loginDB,{secret:GUILDSYNC_JWT_SE
 
 const app = express();
 const roleViews = createRoleViews(loginDB);
+const discordReminders=createDiscordReminders(applicationDB,{guildId:ESO_GUILD_CONFIGURATION.guildId,
+  guildName:process.env.GUILDSYNC_ESO_GUILD_NAME||'Your guild'});
 const userSwitches = createUserSwitches(loginDB,{log:Log});
 const rosterNoteAccess=createRosterNoteAccess({db:applicationDB,loginDB,
   effectiveRole:(socket,role)=>roleViews.effective(socket.guildSyncRoleViewId,role),
@@ -666,6 +670,10 @@ function registerGuildSyncConnection(socket) {
     }
   });
   registerTraderSalesSubscriptionSocket(socket,{db:applicationDB});
+  registerDiscordReminderSocket(socket,discordReminders,{authorize:async current=>{
+    const [rows]=await loginDB.execute('SELECT role,allowed FROM guildsync_users WHERE discord_user_id=? LIMIT 1',[current.guildSyncUser.discord_user_id]);
+    return Number(rows[0]?.allowed)===1 ? (roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role)||rows[0]?.role) : false;
+  }});
   registerRolePermissions(socket,loginDB,roleViews,{authorizeUserSwitch:async current=>{
     if(!current.guildSyncAuthenticated||current.guildSyncAuthType!=='GuildSync user')return false;
     return userSwitches.authorize(current.guildSyncActorId);
@@ -2269,7 +2277,7 @@ function registerGuildSyncConnection(socket) {
   socket.on('guildsync:request-roster-data', async (payload = {}, callback) => {
     try {
       const [members, refreshDate] = await Promise.all([
-        getRosterDataJSON(applicationDB).then(members=>rosterNoteAccess.decorate(socket,members)),
+        getRosterDataJSON(applicationDB).then(members=>discordReminders.decorate(members)).then(members=>rosterNoteAccess.decorate(socket,members)),
         getRosterDataDate(applicationDB)
       ]);
 
@@ -3098,7 +3106,7 @@ async function broadcastMemberLinksUpdate(existingLinks = null) {
 async function broadcastRosterDataUpdate() {
   try {
     const [members, refreshDate] = await Promise.all([
-      getRosterDataJSON(applicationDB),
+      getRosterDataJSON(applicationDB).then(members=>discordReminders.decorate(members)),
       getRosterDataDate(applicationDB)
     ]);
 
