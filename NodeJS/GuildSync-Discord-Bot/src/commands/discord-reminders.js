@@ -9,6 +9,10 @@ export const data=new SlashCommandBuilder().setName('discord-reminders')
   .addSubcommand(s=>s.setName('resume').setDescription('Resume the saved campaign without a catch-up burst.'))
   .addSubcommand(s=>s.setName('restart').setDescription('Build a fresh campaign; preserve send dates and community preferences.'))
   .addSubcommand(s=>s.setName('status').setDescription('Show progress, last recipient and next attempt.').addUserOption(o=>o.setName('user').setDescription('Also show this member’s send date and preference.')))
+  .addSubcommand(s=>s.setName('resolve').setDescription('Record whether an uncertain DM arrived, or make the member eligible again.')
+    .addUserOption(o=>o.setName('user').setDescription('Member whose membership DM delivery is uncertain.').setRequired(true))
+    .addStringOption(o=>o.setName('outcome').setDescription('Whether the membership DM arrived.').setRequired(true)
+      .addChoices({name:'Delivered',value:'sent'},{name:'Not delivered; allow retry',value:'retry'})))
   .addSubcommand(s=>s.setName('test').setDescription('Send one labelled test DM immediately; do not change normal cooldowns.').addUserOption(o=>o.setName('user').setDescription('Discord server member to receive the test.').setRequired(true)));
 
 export async function execute(interaction,socket) {
@@ -18,6 +22,11 @@ export async function execute(interaction,socket) {
   }
   const command=interaction.options.getSubcommand(),target=interaction.options.getUser('user');
   try{
+    if(command==='resolve'){
+      const result=await membershipDMRequest(socket,interaction.guildId,'resolve',{actorId:interaction.user.id,userId:target.id,outcome:interaction.options.getString('outcome')});
+      await interaction.editReply({content:result.message,allowedMentions:{parse:[]}});
+      return;
+    }
     if(command==='test'){
       if(!interaction.client.membershipDM)throw Error('Membership DM worker is unavailable.');
       const outcome=await interaction.client.membershipDM.test(interaction.user.id,target.id);

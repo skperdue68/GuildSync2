@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createDMCampaignEngine,dmConfig} from './membership-dms.js';
+import {createDMCampaignEngine,dmConfig,membershipDMManaged} from './membership-dms.js';
 
 function fixture(random=()=>0) {
  let time=10000000;
@@ -58,4 +58,12 @@ test('next slot is paced from actual successful completion, not an earlier claim
  const job=engine.claim(state,members,30);advance(100);
  engine.finish(state,job.id,job.token,{status:'sent',messageId:'message'});
  assert.equal(state.campaign.nextAt,10001300);
+});
+test('only confirmed, ambiguous or preferred contacts suppress onboarding reminders',async()=>{
+ const managed=state=>membershipDMManaged({execute:async()=>[[{state_json:JSON.stringify(state)}]]},'1','10');
+ assert.equal(await managed({history:{10:{lastAttemptAt:1,deliveryId:'job'}},preferences:{}}),false);
+ assert.equal(await managed({history:{10:{uncertain:false}},preferences:{},campaign:{queue:[{userId:'10',status:'pending'}]}}),false);
+ assert.equal(await managed({history:{10:{sentAt:1}},preferences:{}}),true);
+ assert.equal(await managed({history:{10:{uncertain:true}},preferences:{}}),true);
+ assert.equal(await managed({history:{},preferences:{10:'community'}}),true);
 });

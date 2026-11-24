@@ -102,3 +102,28 @@ test('a member becomes eligible again after the configured cooldown, including s
  f.advance(31*86400);await f.service.command('1','officer','restart');f.advance(600);
  await f.worker.sendNext();assert.equal(f.sends.length,2);assert.equal(f.state().campaign.lastSent.userId,'10');
 });
+test('an uncertain delivery can be retried in the current campaign without editing the database',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);
+ const job=(await f.request('claim')).job;
+ await f.request('finish',{deliveryId:job.id,token:job.token,result:{status:'uncertain',detail:'Send timed out.'}});
+ assert.equal(f.state().history['10'].uncertain,true);
+ const status=await f.service.command('1','officer','status');
+ assert.deepEqual(status.campaign.uncertainMembers,[{userId:'10',name:'Alice'}]);
+ await assert.rejects(()=>f.request('resolve',{actorId:'stranger',userId:'10',outcome:'retry'}),/approved/i);
+ await assert.rejects(()=>f.request('resolve',{actorId:'officer',userId:'20',outcome:'retry'}),/no uncertain/i);
+ const resolved=await f.request('resolve',{actorId:'officer',userId:'10',outcome:'retry'});
+ assert.match(resolved.message,/requeued/i);
+ assert.equal(f.state().history['10'].uncertain,false);
+ assert.equal(f.state().campaign.queue.find(q=>q.userId==='10').status,'pending');
+ f.advance(600);await f.worker.sendNext();assert.equal(f.sends.length,1);
+});
+test('an officer can confirm an uncertain delivery as sent',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);
+ const job=(await f.request('claim')).job;
+ await f.request('finish',{deliveryId:job.id,token:job.token,result:{status:'uncertain',detail:'Send timed out.'}});
+ const resolved=await f.request('resolve',{actorId:'officer',userId:'10',outcome:'sent'});
+ assert.match(resolved.message,/delivered/i);
+ assert.equal(f.state().history['10'].uncertain,false);assert.equal(f.state().history['10'].sentAt,1800000600);
+ assert.equal(f.state().campaign.queue.find(q=>q.userId==='10').status,'sent');
+ await f.service.command('1','officer','restart');assert.deepEqual(f.state().campaign.queue.map(q=>q.userId),['20']);
+});
