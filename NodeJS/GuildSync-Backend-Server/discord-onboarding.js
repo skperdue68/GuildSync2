@@ -7,7 +7,7 @@ export async function notifyDiscordConfirmedLink(db,userId) {
  const service=services.get(getEsoIdentitySourceDB(db));
  if(service)await afterEsoIdentityUnlock(db,()=>service.observeConfirmedLink(userId).catch(error=>service.log('Onboarding link queue retry needed: '+error.message)));
 }
-export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=()=>Math.floor(Date.now()/1000),log=console.log,wake=()=>{}}={}) {
+export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=()=>Math.floor(Date.now()/1000),log=console.log,wake=()=>{},suppressReminder=async()=>false}={}) {
  const id=(g,u,kind,generation=0)=>createHash('sha256').update(g+':'+u+':'+kind+':'+generation).digest('hex');
  const reminderOn=config=>config?.enabled && config.reminderEnabled;
  async function enqueue(s,g,u,kind,esoName) {
@@ -36,6 +36,7 @@ export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=
   const member=await s.member(g,job.userId),linked=await s.confirmed(job.userId);
   if(!member?.present)return false;
   if(job.kind==='promotion')return Boolean(state.config.promotionEnabled && linked);
+  if(await suppressReminder(g,job.userId))return false;
   return Boolean(reminderOn(state.config) && member.eligibleSince===state.reminderSince && member.eligibleSince!==null && !member.remindedAt && !linked && now()>=member.joinedAt+state.config.reminderHours*3600);
  }
  async function claimed(s,g,jobId,token) {

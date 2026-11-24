@@ -1,4 +1,6 @@
 import {initializeDiscordReminders,createDiscordReminders,registerDiscordReminderSocket} from './discord-reminders.js';
+import {initializeMembershipDMs,createMembershipDMService,registerMembershipDMSocket,membershipDMManaged} from './membership-dms.js';
+import {dmConfig} from './membership-dm-config.js';
 import {createEsoAccountRenames,registerEsoAccountRenameSocket} from './eso-account-identity.js';
 import {registerTraderSalesSubscriptionSocket, planTraderSaleNotices, announceTraderSaleNotices, markTraderSaleNoticesDelivered} from './trader-sales-subscriptions.js';
 import {createUserSwitches,initializeUserSwitchSchema,registerUserSwitchSocket,registerUserSwitchGuard} from './user-switch.js';
@@ -86,6 +88,7 @@ import {
   getRosterRankHistoryMatches,
   getRosterStreamHistoryForAccount,
   getMemberLinks,
+  upsertMemberLink,
   getMemberLinkOptions,
   acceptMemberLinkCandidate,
   manualLinkMember,
@@ -141,6 +144,7 @@ voiceIdentityService=createVoiceIdentityService(loginDB,{secret:GUILDSYNC_JWT_SE
   applicationDB = await openAppDataDB();
   await initializeEsoGuildIdentity(applicationDB);
   await initializeDiscordReminders(applicationDB);
+  await initializeMembershipDMs(applicationDB);
   Log(ESO_GUILD_CONFIGURATION.strict ? `ESO imports restricted to guild ${ESO_GUILD_CONFIGURATION.guildId}.` : 'ESO guild isolation: legacy mode; set GUILDSYNC_ESO_GUILD_ID after updating add-ons to enforce guild identity.');
   configurationService = createConfigurationService(applicationDB,{applyAtBoundary:fn=>sheetsRuntime?sheetsRuntime.applyConfiguration(fn):fn()});
   await configurationService.initialize();
@@ -547,7 +551,15 @@ io.use(async (socket, next) => {
   }
 });
 
-const onboardingService = createDiscordOnboarding(applicationDB, {log:Log,wake:()=>io.to('GuildSyncDiscordBot').emit('guildsync:onboarding-wake')});
+const membershipDMService=createMembershipDMService(applicationDB,{
+  configuration:()=>dmConfig(process.env),upsertLink:upsertMemberLink,
+  authorizeOfficer:async id=>{
+    const [rows]=await loginDB.execute('SELECT role,allowed FROM guildsync_users WHERE discord_user_id=? LIMIT 1',[id]);
+    return Number(rows[0]?.allowed)===1&&['user','admin'].includes(rows[0]?.role);
+  }
+});
+const onboardingService = createDiscordOnboarding(applicationDB, {log:Log,wake:()=>io.to('GuildSyncDiscordBot').emit('guildsync:onboarding-wake'),
+  suppressReminder:(guildId,userId)=>membershipDMManaged(applicationDB,guildId,userId)});
 const voiceMuteStore = createVoiceMuteStore(applicationDB);
 
 const userAdministration = createUserAdministration(loginDB, {log:Log,onChange:async change=>{
@@ -705,6 +717,8 @@ function registerGuildSyncConnection(socket) {
     receiptPreviews: payload => getDepositMailPreviewExamples(applicationDB, {limit: payload?.limit})
   });
   registerDiscordOnboardingSocket(socket, onboardingService);
+  registerMembershipDMSocket(socket,membershipDMService,{guildId:socket.guildSyncBot?.guild_id,
+    onLinked:()=>Promise.allSettled([broadcastMemberLinksUpdate(),broadcastRosterDataUpdate()])});
   registerVoiceForSocket(socket);
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
   registerArchiveSocket(socket, applicationDB);

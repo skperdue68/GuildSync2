@@ -1,6 +1,13 @@
+import {DEFAULT_MEMBERSHIP_DM} from './membership-dm-config.js';
 import {COMMUNITY_HIGHLIGHT_IDS} from './community-statistics.js';
 // Only these operational settings may be displayed or overridden. Never accept arbitrary env keys.
 const configurationHelp={
+ "GUILDSYNC_MEMBERSHIP_DM_ENABLED": {section:"Sending",help:"Allows an officer to start or resume the alphabetical Discord membership DM campaign. Turning this on alone does not start a campaign. Pause it with /discord-reminders pause; one DM already in flight may finish."},
+ "GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS": {section:"Sending",help:"Minimum whole days since a member’s last confirmed membership DM before another campaign may contact them. Defaults to 30 days. Recent contacts are skipped immediately; actual attempts remain 10–15 minutes apart."},
+ "GUILDSYNC_MEMBERSHIP_DM_MESSAGE": {section:"Message",help:"Text sent above the four response buttons. Use {name} for the member’s current display name and {guild} for the Discord server name. A fixed notice explains that replies are forwarded to guild officers."},
+ "GUILDSYNC_MEMBERSHIP_DM_DESTINATION_TYPE": {section:"Reply forwarding",help:"Choose whether membership responses go to a Discord channel in this server or directly to a Discord user. Configure the corresponding numeric destination ID below."},
+ "GUILDSYNC_MEMBERSHIP_DM_DESTINATION_ID": {section:"Reply forwarding",help:"Numeric Discord channel or user ID receiving the response, sender identity, submitted ESO account and linking outcome. The bot must be able to send there. Failed forwarding is retained for retry."},
+ "GUILDSYNC_MEMBERSHIP_DM_COMMUNITY_ROLE_ID": {section:"Community preference",help:"Optional numeric role ID added when a member chooses to remain on Discord without guild membership or without playing ESO. Blank records the preference without role changes. The bot needs Manage Roles and a higher role position."},
  "GUILDSYNC_VOICE_MUTE_ENABLED": {
   "section": "Access and permissions",
   "help": "Allows authenticated desktop users with an allowed Discord role to hold a shortcut to mute lower-ranked members in their current voice channel. Turning it off ends temporary sessions; confirmed moderator mutes remain."
@@ -146,6 +153,12 @@ const define=(owner,group,key,label,type,defaultValue,extra={})=>({owner,group,k
 const onboarding=(key,label,type,value,extra)=>define('bot','Member onboarding','GUILDSYNC_ONBOARDING_'+key,label,type,value,extra);
 const raffle=(key,label,type,value,extra)=>define('bot','Raffle announcements','GUILDSYNC_RAFFLE_'+key,label,type,value,extra);
 export const configurationCatalog=[
+ define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_ENABLED','Enable officer-initiated membership DMs','boolean',false),
+ define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS','Minimum days between membership DMs','number',30,{min:1,max:365}),
+ define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_MESSAGE','Membership DM message','template',DEFAULT_MEMBERSHIP_DM,{placeholders:['name','guild'],maxLength:1500}),
+ define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_DESTINATION_TYPE','Forward replies to','select','channel',{options:['channel','user']}),
+ define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_DESTINATION_ID','Reply destination user or channel ID','id',''),
+ define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_COMMUNITY_ROLE_ID','Optional community role ID','id',''),
  define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_ENABLED','Enable voice channel hotkey mute','boolean',false),
  define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS','Allowed requester roles (names or IDs, comma separated)','roles',''),
  define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS','Guild rank roles (names or IDs, lowest to highest)','roles',''),
@@ -209,6 +222,8 @@ export function createConfigurationService(db,{env=process.env,onApply=()=>{},ap
  const validate=record=>{
   for(const [key,value] of Object.entries(record.overrides)){const item=byKey.get(key);if(!item)throw Error('Unknown configuration setting: '+key);typed(item,value);}
   const get=k=>effective(byKey.get(k),record);
+  if(get('GUILDSYNC_MEMBERSHIP_DM_ENABLED')&&!get('GUILDSYNC_MEMBERSHIP_DM_DESTINATION_ID'))throw Error('Select a reply destination before enabling membership DMs.');
+  if(!Number.isInteger(Number(get('GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS'))))throw Error('Membership DM repeat interval must be whole days.');
   if(get('GUILDSYNC_ONBOARDING_ENABLED')&&(get('GUILDSYNC_ONBOARDING_REMINDER_ENABLED')||(get('GUILDSYNC_ONBOARDING_PROMOTION_ENABLED')&&get('GUILDSYNC_ONBOARDING_PROMOTION_NOTIFY_ENABLED')))&&!get('GUILDSYNC_ONBOARDING_CHANNEL_ID'))throw Error('Select an onboarding notification channel before enabling notifications.');
  };
  const apply=async()=>applyAtBoundary(()=>{for(const item of configurationCatalog.filter(i=>i.owner==='backend')){

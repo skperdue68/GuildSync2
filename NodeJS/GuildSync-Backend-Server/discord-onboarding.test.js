@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { createDiscordOnboarding } from './discord-onboarding.js';
 import { registerDiscordOnboardingSocket } from './discord-onboarding-socket.js';
 
-function fixture() {
+function fixture(options={}) {
  let now=1000;const states=new Map(),members=new Map(),jobs=new Map(),links=new Map(),gangsters=new Set();
  const key=(g,u)=>g+':'+u;
  const store={atomic:async(g,fn)=>fn(store),states:async()=>[...states.values()],state:async g=>states.get(g),putState:async s=>states.set(s.guildId,s),
   member:async(g,u)=>members.get(key(g,u)),putMember:async m=>members.set(key(m.guildId,m.userId),m),members:async g=>[...members.values()].filter(m=>m.guildId===g),
   confirmed:async u=>links.get(u),promotionCandidates:async()=>[...gangsters].filter(u=>links.has(u)),
   job:async id=>jobs.get(id),putJob:async j=>jobs.set(j.id,j),jobs:async g=>[...jobs.values()].filter(j=>j.guildId===g)};
- const service=createDiscordOnboarding(null,{store,now:()=>now});
+ const service=createDiscordOnboarding(null,{store,now:()=>now,...options});
  const config={enabled:true,promotionEnabled:true,promotionNotifyEnabled:true,reminderEnabled:true,reminderHours:24,mode:'private_thread',channelId:'123',gangsterRoleId:'',associateRoleId:''};
  return {service,config,members,jobs,links,gangsters,setNow:n=>now=n};
 }
@@ -27,6 +27,13 @@ test('new joins alone qualify and restarting or re-enabling preserves one-time h
  assert.equal(f.members.get('1:during-off').eligibleSince,null);
  await f.service.observeMember('1',{discord_id:'new',joined_at:100001});f.setNow(200000);
  assert.equal(await f.service.claim('1'),null);
+});
+test('membership DM management suppresses competing reminders while preserving linked promotions',async()=>{
+ const f=fixture({suppressReminder:async()=>true});
+ await f.service.configure('1',f.config);await f.service.observeMember('1',{discord_id:'new',joined_at:1001});f.setNow(100000);
+ assert.equal(await f.service.claim('1'),null);
+ f.links.set('old','ESO');f.gangsters.add('old');
+ assert.equal((await f.service.claim('1')).kind,'promotion');
 });
 test('link or departure cancels reminders, candidates do not count as linked',async()=>{
  const f=fixture();await f.service.configure('1',f.config);
