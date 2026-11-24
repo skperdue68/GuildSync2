@@ -102,18 +102,20 @@ nextMail = function()
     if subject == "" or body == "" or length(subject) > (MAIL_MAX_SUBJECT_CHARACTERS or 100) or length(body) > (MAIL_MAX_BODY_CHARACTERS or 700) then
         current = item; fail("failed", "Message is empty or exceeds ESO's subject/body limit. Edit the template."); return
     end
-    local attached = false
+    local leftover = GetQueuedMoneyAttachment() > 0 or GetQueuedCOD() > 0
     for slot = 1, MAIL_MAX_ATTACHED_ITEMS or 6 do
-        if GetMailQueuedAttachmentLink(slot) ~= nil then attached = true; break end
-    end
-    if attached or GetQueuedMoneyAttachment() > 0 or GetQueuedCOD() > 0 then
-        stop("Mail has attachments, gold, or COD queued. Clear the draft before /gsdr resume."); paused = true; return
+        if GetMailQueuedAttachmentLink(slot) ~= nil then leftover = true; break end
     end
     current = item
     -- Persist an uncertain marker before requesting the send. A reload while a
     -- response is in flight must not silently send this request a second time.
     acknowledgement(item, "uncertain", "Awaiting ESO mail confirmation.")
+    -- A reminder never carries items, gold, or COD. ClearQueuedMail resets the
+    -- whole compose draft, so a stale draft is cleared instead of pausing the
+    -- queue; SendMail only takes recipient, subject and body, and a real
+    -- rejection still arrives as EVENT_MAIL_SEND_FAILED.
     ClearQueuedMail()
+    if leftover then say("Cleared a stale mail draft before sending.") end
     local token = generation
     sendingNow = true
     SendMail(item.recipient, subject, body)
@@ -178,7 +180,7 @@ end
 local function settingsPanel()
     local lam = LibAddonMenu2
     if not lam then return end
-    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.1", registerForRefresh = true})
+    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.2", registerForRefresh = true})
     local options = {{type = "checkbox", name = "Automatically send queued reminders", getFunc = function() return sv.settings.enabled end,
         setFunc = function(value) sv.settings.enabled = value; if value then start() end end}}
     for _, entry in ipairs({{"subject", "Subject"}, {"body", "Message body"}, {"candidate", "Optional candidate paragraph"}}) do

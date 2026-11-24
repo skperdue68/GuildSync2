@@ -18,11 +18,13 @@ GetGuildId=function() return 123 end
 GetGuildMemberIndexFromDisplayName=function(_,name) if name=='@Member' or name=='@Other' then return 1 end end
 RequestOpenMailbox=function() fire(EVENT_MAIL_OPEN_MAILBOX) end
 CloseMailbox=function() end
-ClearQueuedMail=function() end
-GetQueuedMoneyAttachment=function() return 0 end
+local cleared=0
+ClearQueuedMail=function() cleared=cleared+1 end
+-- A stale draft (items, gold, COD) must never pause the queue.
+GetQueuedMoneyAttachment=function() return 250 end
 GetQueuedCOD=function() return 0 end
 MAIL_MAX_ATTACHED_ITEMS=6
-GetMailQueuedAttachmentLink=function() return nil end
+GetMailQueuedAttachmentLink=function() return '|H1:item:1:1:1:1:1:1:1:1:1:0:0:0:0:0|h|h' end
 SendMail=function(recipient,subject,body) sent[#sent+1]={recipient=recipient,subject=subject,body=body} end
 ZO_PostHook=function(name,hook) local original=_G[name];_G[name]=function(...) original(...);hook(...) end end
 local saved={settings={},mailQueue={},mailAck={},sentMailIds={}}
@@ -74,4 +76,6 @@ fire(EVENT_MAIL_CLOSE_MAILBOX)
 local closed=false
 for _,message in ipairs(messages) do if tostring(message):find('Mailbox closed') then closed=true end end
 assert(not closed,'a mailbox close event never stops the queue')
+assert(cleared>=3,'the draft is cleared before each send')
+for _,message in ipairs(messages) do assert(not tostring(message):find('Mail has attachments'),'a stale draft never pauses the queue') end
 print('GuildSyncDiscordReminder queue tests passed')
