@@ -109,14 +109,15 @@ assert(complete,'queue completes after skipping an invalid recipient')
 SLASH_COMMANDS['/gsdr']('resume');tick(3000);tick(2000)
 eq(sent[#sent].recipient,'@Other','resume retries the failed recipient')
 fire(EVENT_MAIL_SEND_SUCCESS,'@Other')
-local sendingLine,processedLine,prefixed=false,false,false
+local processedLine,prefixed,draftNotice=false,false,false
 for _,message in ipairs(messages) do
     local text=tostring(message)
-    if text:find('Sending reminder mail',1,true) then sendingLine=true end
     if text:find('Processed reminder mail',1,true) then processedLine=true end
     if text:find('[GSDiscord]',1,true) then prefixed=true end
+    if text:find('Cleared a stale mail draft',1,true) then draftNotice=true end
 end
-assert(sendingLine,'banking-style sending line is printed')
-assert(processedLine,'banking-style processed line is printed')
+assert(processedLine,'one banking-style result line is printed')
 assert(prefixed,'messages use the bracketed add-on prefix')
+assert(not draftNotice,'an empty draft never prints a clearing notice')
+assert(cleared>=3,'the draft is still cleared before every send')
 print('GuildSyncDiscordReminder queue tests passed')

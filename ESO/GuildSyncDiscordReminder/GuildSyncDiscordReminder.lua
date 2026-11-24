@@ -169,22 +169,16 @@ nextMail = function()
     if subject == "" or body == "" or length(subject) > (MAIL_MAX_SUBJECT_CHARACTERS or 100) or length(body) > (MAIL_MAX_BODY_CHARACTERS or 700) then
         current = item; fail("failed", "Message is empty or exceeds ESO's subject/body limit. Edit the template."); return
     end
-    local leftover = GetQueuedMoneyAttachment() > 0 or GetQueuedCOD() > 0
-    for slot = 1, MAIL_MAX_ATTACHED_ITEMS or 6 do
-        if GetMailQueuedAttachmentLink(slot) ~= nil then leftover = true; break end
-    end
     current = item
     -- Persist an uncertain marker before requesting the send. A reload while a
     -- response is in flight must not silently send this request a second time.
     acknowledgement(item, "uncertain", "Awaiting ESO mail confirmation.")
     -- A reminder never carries items, gold, or COD. ClearQueuedMail resets the
-    -- whole compose draft, so a stale draft is cleared instead of pausing the
-    -- queue; SendMail only takes recipient, subject and body, and a real
-    -- rejection still arrives as EVENT_MAIL_SEND_FAILED.
+    -- whole compose draft so nothing stale can ride along; a real rejection still
+    -- arrives as EVENT_MAIL_SEND_FAILED. ESO's queued-attachment queries report
+    -- leftovers on an empty draft too, so they are not used for chat noise.
     ClearQueuedMail()
-    if leftover then say("Cleared a stale mail draft before sending.") end
     if not sessionTotal then sessionTotal = dueCount() end
-    say("Sending reminder mail " .. tostring(item.requestId) .. " to " .. tostring(item.recipient) .. ": " .. subject)
     local token = generation
     sendingNow = true
     SendMail(item.recipient, subject, body)
@@ -250,7 +244,7 @@ end
 local function settingsPanel()
     local lam = LibAddonMenu2
     if not lam then return end
-    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.6", registerForRefresh = true})
+    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.7", registerForRefresh = true})
     local options = {{type = "checkbox", name = "Automatically send queued reminders", getFunc = function() return sv.settings.enabled end,
         setFunc = function(value) sv.settings.enabled = value; if value then start() end end}}
     for _, entry in ipairs({{"subject", "Subject"}, {"body", "Message body"}, {"candidate", "Optional candidate paragraph"}}) do
@@ -283,8 +277,8 @@ EVENT_MANAGER:RegisterForEvent(NAME, EVENT_ADD_ON_LOADED, function(_, addon)
         current = nil
         ownedSend = nil
         sessionSent = sessionSent + 1
-        say("Processed reminder mail " .. tostring(item.requestId) .. " to " .. tostring(item.recipient) ..
-            " (" .. tostring(sessionSent) .. " of " .. tostring(sessionTotal or sessionSent) .. ")")
+        say("Processed reminder mail " .. tostring(sessionSent) .. " of " .. tostring(sessionTotal or sessionSent) ..
+            " to " .. tostring(item.recipient))
         local token = generation
         zo_callLater(function() if token == generation then nextMail() end end, 3000)
     end)
