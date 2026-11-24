@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {renderMemberHistoryButton, createMemberHistoryActions} from './web/src/member-history-shortcuts.js';
+import {renderReminderRosterCell} from './web/src/discord-reminders.js';
 test('history shortcut safely includes the exact member identity and accessible label', () => {
  const markup=renderMemberHistoryButton({kind:'discord',id:'123',name:'A"<B'});
  assert.match(markup,/data-member-history-id="123"/);
@@ -29,11 +30,11 @@ for(const client of clients) {
   ctx.openRosterMemberHistory('@Alice');ctx.openDiscordMemberHistory('456','Same Name');
   assert.deepEqual(calls,[['roster','@Alice'],['discord','456','Same Name']]);assert.equal(ctx.rosterHistoryDialogOpen,true);assert.equal(ctx.discordHistoryDialogOpen,true);assert.equal(ctx.rosterHistoryMatches[0].account_name,'@Alice');assert.equal(ctx.discordHistoryMatches[0].discord_id,'456');assert.equal(ctx.discordHistoryActiveMatchIndex,0);
  });
- test(`${client}: both row renderers keep six columns with history before links`,()=>{
-  const context=vm.createContext({renderMemberHistoryButton,escapeHtml:String,escapeAttribute:String,getEsoRosterRankColor:()=>'',rosterSearchActiveIndex:-1,renderEsoRosterRank:String,formatRosterJoinedDate:String,renderRosterNotesButton:()=> 'Notes',renderMemberLinkStatusButton:()=> 'Linked',getDiscordMemberAvatarURL:()=>'',getMemberSortName:()=> 'Alice',discordRoles:[],getDiscordMemberColor:()=> '#fff',getInitials:()=> 'A'});
+ test(`${client}: roster adds reminder details while keeping history before links`,()=>{
+  const context=vm.createContext({renderReminderRosterCell,canEditGuildSyncData:()=>false,renderMemberHistoryButton,escapeHtml:String,escapeAttribute:String,getEsoRosterRankColor:()=>'',rosterSearchActiveIndex:-1,renderEsoRosterRank:String,formatRosterJoinedDate:String,renderRosterNotesButton:()=> 'Notes',renderMemberLinkStatusButton:()=> 'Linked',getDiscordMemberAvatarURL:()=>'',getMemberSortName:()=> 'Alice',discordRoles:[],getDiscordMemberColor:()=> '#fff',getInitials:()=> 'A'});
   vm.runInContext(sourceFunction(source,'renderEsoRosterRow')+'\n'+sourceFunction(source,'renderDiscordMemberRow'),context);
-  for(const html of [context.renderEsoRosterRow({account_name:'@Alice',rank:'Associate'}),context.renderDiscordMemberRow({discord_id:'123',username:'Alice'})]) {
-   assert.equal((html.match(/<td[ >]/g)||[]).length,6);assert.ok(html.indexOf('member-history-cell')<html.indexOf('member-link-action-cell'));
+  for(const [html,columns] of [[context.renderEsoRosterRow({account_name:'@Alice',rank:'Associate'}),7],[context.renderDiscordMemberRow({discord_id:'123',username:'Alice'}),6]]) {
+   assert.equal((html.match(/<td[ >]/g)||[]).length,columns);assert.ok(html.indexOf('member-history-cell')<html.indexOf('member-link-action-cell'));
   }
   assert.match(source,/function bindLiveDataActions\(root\) \{\s+memberHistoryActions.wire\(root\)/);
  });

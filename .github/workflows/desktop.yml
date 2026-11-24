@@ -43,6 +43,9 @@ jobs:
         run: node --test GO/GuildSync-Frontend-Client/frontend/src/*.test.mjs tools/wails-versions.test.mjs
       - name: Test Windows assembly metadata
         run: python tools/build-desktop.test.py
+      - name: Test ESO Discord reminder mail queue
+        if: runner.os == 'Linux'
+        run: python tools/test-eso-reminder.py
       - name: Build production desktop (universal on macOS)
         shell: bash
         working-directory: GO/GuildSync-Frontend-Client

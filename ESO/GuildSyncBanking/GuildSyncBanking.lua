@@ -243,7 +243,13 @@ local function GSB_ProcessMailQueue()
     return
   end
 
+  if GuildSyncMailSendInFlight or (GuildSyncMailQueueOwner and GuildSyncMailQueueOwner ~= ADDON_NAME) then
+    zo_callLater(GSB_ProcessMailQueue, MAIL_SEND_DELAY_MS)
+    return
+  end
+
   gsbMailQueueProcessing = true
+  GuildSyncMailQueueOwner = ADDON_NAME
 
   local queueKeys = {}
 
@@ -279,6 +285,7 @@ local function GSB_ProcessMailQueue()
     end
 
     gsbMailQueueProcessing = false
+    if GuildSyncMailQueueOwner == ADDON_NAME then GuildSyncMailQueueOwner = nil end
 
     GSB_Print(
       "Deposit mail queue: "
@@ -297,6 +304,10 @@ local function GSB_ProcessMailQueue()
   end
 
   local function processNextMail(index)
+    if GuildSyncMailSendInFlight then
+      zo_callLater(function() processNextMail(index) end, MAIL_SEND_DELAY_MS)
+      return
+    end
     local queueKey = queueKeys[index]
 
     if queueKey == nil then

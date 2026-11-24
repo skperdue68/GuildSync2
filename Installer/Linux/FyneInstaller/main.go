@@ -135,7 +135,7 @@ func installPayload(installDir, addonsDir string) error {
 		return err
 	}
 	esoDir := filepath.Join(tmpDir, "ESO")
-	for _, addon := range []string{"GuildSyncBanking", "GuildSyncRoster", "GuildSyncApplications", "GuildSyncTrader"} {
+	for _, addon := range []string{"GuildSyncBanking", "GuildSyncRoster", "GuildSyncApplications", "GuildSyncTrader", "GuildSyncDiscordReminder"} {
 		src := filepath.Join(esoDir, addon)
 		if stat, err := os.Stat(src); err == nil && stat.IsDir() {
 			if err := copyDir(src, filepath.Join(addonsDir, addon), nil); err != nil {
