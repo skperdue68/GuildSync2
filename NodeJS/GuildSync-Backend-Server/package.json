@@ -16,5 +16,5 @@
     "start": "node guildsync-backend-server.js"
   },
   "type": "module",
-  "version": "2.0.13-beta"
+  "version": "2.0.14-beta"
 }
