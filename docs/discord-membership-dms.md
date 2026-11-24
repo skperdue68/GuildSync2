@@ -26,8 +26,9 @@ The commands require Discord **Manage Server** permission and an approved GuildS
 | `/discord-reminders pause` | Stop new sends; a request already in flight may finish. |
 | `/discord-reminders resume` | Resume the saved alphabetical queue with a fresh scheduled delay. |
 | `/discord-reminders restart` | Build a fresh queue, retaining contact dates and preferences. Refuses to replace an active send. |
-| `/discord-reminders status` | Show state, last attempted name, last successfully sent name, remaining count, uncertain count and next attempt time. |
+| `/discord-reminders status` | Show state, last attempted name, last successfully sent name, remaining count, uncertain count, which members are uncertain and next attempt time. |
 | `/discord-reminders status user:@someone` | Also show that member’s last confirmed send date and community preference. |
+| `/discord-reminders resolve user:@someone outcome:delivered\|retry` | Record whether an uncertain DM arrived. `delivered` counts it as a confirmed send; `retry` clears the uncertainty and requeues the member in the current campaign, or makes them eligible for the next one. |
 | `/discord-reminders test user:@someone` | Immediately send a labelled test message to one server member. |
 
 Test messages use the same buttons, forms and forwarding path. Test responses do not establish links, change preferences or roles, or affect ordinary campaign cooldowns or pacing.
@@ -41,13 +42,13 @@ Test messages use the same buttons, forms and forwarding path. Test responses do
 
 Ordinary typed DM replies and attachment links are also forwarded. The destination receives the Discord identity, selected option, supplied text/account name, outcome, timestamp and unique response/delivery IDs. Long responses are attached as a text file so nothing is silently truncated. Mentions are disabled in forwarded content.
 
-Buttons remain valid after restarts and validate the intended recipient. Supplying a valid ESO account later clears a previous community preference and removes the optional community role. Existing onboarding promotion behavior handles the confirmed link; managed campaign recipients do not also receive the older onboarding reminder.
+Buttons remain valid after restarts and validate the intended recipient. Supplying a valid ESO account later clears a previous community preference and removes the optional community role. Existing onboarding promotion behavior handles the confirmed link. A member only counts as managed — and therefore skips the older onboarding reminder — after a confirmed or uncertain membership DM, or after recording a community preference; a failed or skipped send leaves the onboarding reminder available.
 
 ## Persistence and failures
 
 Campaign order, send dates, next attempt, preferences, delivery claims and reply forwarding state are stored in MariaDB’s `guildsync_membership_dm_state`, scoped by Discord guild. Restarting does not reset cooldowns or cause catch-up bursts. Confirmed send dates require a successful Discord message response; failed DMs are recorded without inventing a successful send.
 
-Closed DMs are recorded as failed and the campaign proceeds at the normal slow pace. Unknown send outcomes are retained as uncertain rather than automatically sent again. Check status and the bot log’s delivery/message IDs before deciding how to resolve uncertain deliveries. Platform or worker delays can make sends later than their scheduled time.
+Closed DMs are recorded as failed and the campaign proceeds at the normal slow pace. Failures before a message is sent — roster or member lookup, eligibility validation or message rendering — are always recorded as failed, never as uncertain. Unknown send outcomes are retained as uncertain rather than automatically sent again; `/discord-reminders status` names those members, and after checking the bot log’s delivery/message IDs an officer resolves each one with `/discord-reminders resolve user:@someone outcome:delivered` or `outcome:retry`. Platform or worker delays can make sends later than their scheduled time.
 
 Incoming replies are saved locally before submission to the backend. If the backend is unavailable, the bot acknowledges the saved response and replays it idempotently when connected again. Keep the bot’s `data/membership-dm-intake` directory across restarts, or configure an absolute persistent directory with `GUILDSYNC_MEMBERSHIP_DM_SPOOL_DIR` in the bot `.env`. That directory temporarily contains member reply text and is excluded from source control. This protects replies received by a running bot during backend outages; it cannot capture an interaction Discord never delivered to the bot.
 

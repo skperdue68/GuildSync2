@@ -66,7 +66,11 @@ export async function membershipDMManaged(db,guildId,userId) {
   const [rows]=await db.execute('SELECT state_json FROM guildsync_membership_dm_state WHERE guild_id=?',[guildId]);
   if(!rows[0])return false;
   const state=JSON.parse(rows[0].state_json);
-  return Boolean(state.preferences?.[userId]||state.history?.[userId]||state.campaign?.queue.some(job=>job.userId===userId&&['pending','sending','uncertain'].includes(job.status)));
+  const history=state.history?.[userId];
+  // Only a confirmed contact, an ambiguous delivery or a recorded preference
+  // replaces the older onboarding reminder. A failed or skipped attempt never
+  // reached the member, so onboarding must still be able to.
+  return Boolean(state.preferences?.[userId]||history?.sentAt||history?.uncertain);
 }
 
 export async function initializeMembershipDMs(db) {
@@ -125,7 +129,8 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         else if(action!=='status')throw Error('Unknown membership DM command.');
         const c=state.campaign;
         return {campaign:c?{id:c.id,status:c.status,lastAttempted:c.lastAttempted,lastSent:c.lastSent,nextAt:c.nextAt,
-          remaining:c.queue.filter(q=>q.status==='pending').length,uncertain:c.queue.filter(q=>q.status==='uncertain').length}:null,
+          remaining:c.queue.filter(q=>q.status==='pending').length,uncertain:c.queue.filter(q=>q.status==='uncertain').length,
+          uncertainMembers:c.queue.filter(q=>q.status==='uncertain').map(q=>({userId:q.userId,name:q.name})).slice(0,25)}:null,
           member:targetId?{userId:targetId,history:state.history[targetId]||null,preference:state.preferences[targetId]||null}:null};
       });
     },
@@ -137,6 +142,34 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
           destinationId:config.destinationId,destinationType:config.destinationType};
         state.deliveries[job.id]=job;state.testHistory??={};state.testHistory[userId]={deliveryId:job.id,at:now()};
         return {job,config};
+      });
+    },
+    async resolve(guildId,actorId,userId,outcome) {
+      if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
+      const key=String(userId??'').trim();
+      if(!/^\d+$/.test(key)||!['sent','retry'].includes(outcome))throw Error('Choose a Discord member and whether their uncertain DM arrived.');
+      return atomic(guildId,state=>{
+        const history=state.history?.[key]||{};
+        const deliveries=Object.values(state.deliveries||{}).filter(job=>job.userId===key&&!job.isTest)
+          .sort((a,b)=>(b.claimedAt||0)-(a.claimedAt||0));
+        const queued=state.campaign?.queue.find(job=>job.userId===key&&!job.isTest);
+        const uncertainJobs=deliveries.filter(job=>job.status==='uncertain'),queuedUncertain=queued?.status==='uncertain';
+        if(!(history.uncertain||uncertainJobs.length||queuedUncertain))throw Error('This member has no uncertain membership DM to resolve.');
+        if(outcome==='sent') {
+          for(const job of uncertainJobs){job.status='sent';job.detail='Officer confirmed the DM arrived.';}
+          if(queuedUncertain)queued.status='sent';
+          state.history[key]={...history,sentAt:now(),uncertain:false};
+          if(state.campaign&&queued)state.campaign.lastSent={userId:key,name:queued.name,at:now()};
+          return {message:'Recorded the membership DM as delivered. This member is not contacted again until the repeat interval passes.'};
+        }
+        for(const job of uncertainJobs){job.status='failed';job.detail='Officer confirmed the DM was not delivered.';}
+        state.history[key]={...history,uncertain:false};
+        if(queuedUncertain){
+          queued.status='pending';
+          if(state.campaign.status==='complete')state.campaign.status='running';
+          return {message:'Cleared the uncertain delivery and requeued this member for the current campaign.'};
+        }
+        return {message:'Cleared the uncertain delivery. This member is eligible for the next campaign.'};
       });
     },
     async claim(guildId){return atomic(guildId,async(state,connection,config)=>{
@@ -205,7 +238,7 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
 }
 
 export function registerMembershipDMSocket(socket,service,{guildId,onLinked=async()=>{}}={}) {
-  const actions={command:p=>service.command(guildId,p.actorId,p.command,p.targetId),test:p=>service.test(guildId,p.actorId,p.targetId),claim:()=>service.claim(guildId),
+  const actions={command:p=>service.command(guildId,p.actorId,p.command,p.targetId),test:p=>service.test(guildId,p.actorId,p.targetId),resolve:p=>service.resolve(guildId,p.actorId,p.userId,p.outcome),claim:()=>service.claim(guildId),
     validate:p=>service.validate(guildId,p.deliveryId,p.token),finish:p=>service.finish(guildId,p.deliveryId,p.token,p.result),
     response:async p=>{const result=await service.response(guildId,p);if(result.status==='linked')await onLinked();return result;},'claim-forward':()=>service.claimForward(guildId),
     'finish-forward':p=>service.finishForward(guildId,p.eventId,p.token,p.success,p.roleSuccess)};

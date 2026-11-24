@@ -36,6 +36,7 @@ export function formatMembershipStatus({campaign,member}={}) {
     `Next scheduled attempt: <t:${campaign.nextAt}:f>`
   ]:['No membership DM campaign has been started.'];
   if(member)lines.push(`User ${member.userId}: last confirmed DM ${member.history?.sentAt?`<t:${member.history.sentAt}:f>`:'Never'}; preference: ${member.preference||'None'}${member.history?.uncertain?'; delivery uncertain—review before retrying':''}`);
+  if(campaign?.uncertainMembers?.length)lines.push(`Uncertain deliveries: ${campaign.uncertainMembers.map(entry=>`${safeText(entry.name)} (${entry.userId})`).join(', ')}. Resolve each with /discord-reminders resolve.`);
   return lines.join('\n');
 }
 
@@ -43,7 +44,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
   let busy=false;
   async function deliver({job,config}) {
     const finish=result=>request('finish',{deliveryId:job.id,token:job.token,result});
-    let member;
+    let member,payload;
     try {
       const guild=await client.guilds.fetch(guildId);
       try{member=await guild.members.fetch(job.userId);}catch(error){
@@ -52,7 +53,16 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       if(member.user.bot){await finish({status:'skipped',detail:'Bot account.'});return false;}
       const validation=await request('validate',{deliveryId:job.id,token:job.token});
       if(!validation.valid){await finish({status:'skipped',detail:'No longer eligible or campaign paused.'});return false;}
-      const message=await member.send(membershipDMMessage(job,config,{name:member.displayName,guildName:guild.name}));
+      payload=membershipDMMessage(job,config,{name:member.displayName,guildName:guild.name});
+    }catch(error){
+      // Nothing has reached the member yet, so a lookup, validation or rendering
+      // failure is a definite failure and can never be an uncertain delivery.
+      try{await finish({status:'failed',detail:error.message});}catch(finishError){log('Membership DM result could not be saved: '+finishError.message);}
+      log(`Membership DM ${job.id} could not be prepared: ${error.message}`);
+      return {status:'failed',detail:error.message};
+    }
+    try {
+      const message=await member.send(payload);
       // A failed finish acknowledgement must never turn an already delivered DM
       // into a retryable failure. The backend will retain its uncertain claim.
       try{await finish({status:'sent',messageId:message.id});}

@@ -58,8 +58,9 @@ test('forwarding includes identity, outcome and full long response, disables men
  assert.equal(calls.at(-1)[1].success,true);assert.match(forwards[0].content,/123/);
 });
 test('status reports last attempted, last delivered and next scheduled time',()=>{
- const text=formatMembershipStatus({campaign:{status:'paused',remaining:2,nextAt:100,lastAttempted:{name:'A',at:50},lastSent:{name:'B',at:40},uncertain:1}});
+ const text=formatMembershipStatus({campaign:{status:'paused',remaining:2,nextAt:100,lastAttempted:{name:'A',at:50},lastSent:{name:'B',at:40},uncertain:1,uncertainMembers:[{userId:'10',name:'Member'}]}});
  assert.match(text,/Last attempted: A/);assert.match(text,/Last sent: B/);assert.match(text,/paused/);
+ assert.match(text,/Uncertain deliveries: Member \(10\)/);
 });
 test('typed replies survive a backend outage and replay once the connection returns',async()=>{
  let online=false,saved=0;const replies=[];
@@ -67,4 +68,17 @@ test('typed replies survive a backend outage and replay once the connection retu
  await worker.message({id:'123',author:{id:'10'},content:'My ESO name is @Member',reply:async value=>replies.push(value)});
  assert.match(replies[0]?.content||'',/saved.*reconnect/i);
  online=true;await worker.retryIntake();await worker.retryIntake();assert.equal(saved,1);
+});
+test('lookup, validation and rendering failures are recorded as failed, never uncertain',async()=>{
+ for(const failure of ['validate','render']) {
+  const outcomes=[];
+  const {worker,sends}=fixture(async (action,payload)=>{
+   if(action==='claim')return {job,config:failure==='render'?{...config,template:'X'.repeat(2000)}:config};
+   if(action==='validate'){if(failure==='validate')throw Error('Backend disconnected');return {valid:true};}
+   if(action==='finish')outcomes.push(payload.result.status);
+   return {};
+  });
+  await worker.sendNext();
+  assert.deepEqual(outcomes,['failed'],failure);assert.equal(sends.length,0,failure);
+ }
 });
