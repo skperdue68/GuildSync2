@@ -82,3 +82,23 @@ test('only confirmed, ambiguous or preferred contacts suppress onboarding remind
  assert.equal(await managed({history:{10:{uncertain:true}},preferences:{}}),true);
  assert.equal(await managed({history:{},preferences:{10:'community'}}),true);
 });
+
+test('membership DM pacing is configurable and a running campaign adopts a faster window',()=>{
+ assert.equal(dmConfig({}).minSeconds,600);assert.equal(dmConfig({}).maxSeconds,900);
+ assert.equal(dmConfig({GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS:'30',GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS:'30'}).minSeconds,30);
+ assert.throws(()=>dmConfig({GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS:'0'}),/between 10 and 86400/);
+ assert.throws(()=>dmConfig({GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS:'12.5'}),/whole number between 10 and 86400/);
+ assert.throws(()=>dmConfig({GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS:'60',GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS:'30'}),/at least the minimum/);
+ let pace={minSeconds:600,maxSeconds:900},time=1000;
+ const engine=createDMCampaignEngine({now:()=>time,random:()=>0,pace:()=>pace});
+ const state={history:{},preferences:{},events:[]},members=[{id:'1',name:'Alice'}];
+ engine.start(state,members,30);assert.equal(state.campaign.nextAt,1600);
+ pace={minSeconds:20,maxSeconds:20};time=1100;
+ assert.equal(engine.claim(state,members,30),null);
+ assert.equal(state.campaign.nextAt,1120,'a faster window shortens the pending wait');
+ time=1120;const job=engine.claim(state,members,30);assert.equal(job.userId,'1');
+ assert.equal(state.campaign.nextAt,1140);
+ pace={minSeconds:600,maxSeconds:900};
+ assert.equal(engine.claim(state,members,30),null);
+ assert.equal(state.campaign.nextAt,1140,'a slower window never extends an existing wait');
+});

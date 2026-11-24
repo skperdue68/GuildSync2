@@ -3,7 +3,9 @@ import {COMMUNITY_HIGHLIGHT_IDS} from './community-statistics.js';
 // Only these operational settings may be displayed or overridden. Never accept arbitrary env keys.
 const configurationHelp={
  "GUILDSYNC_MEMBERSHIP_DM_ENABLED": {section:"Sending",help:"Allows an officer to start or resume the alphabetical Discord membership DM campaign. Turning this on alone does not start a campaign. Pause it with /discord-reminders pause; one DM already in flight may finish."},
- "GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS": {section:"Sending",help:"Minimum whole days since a member’s last confirmed membership DM before another campaign may contact them. Defaults to 30 days. Recent contacts are skipped immediately; actual attempts remain 10–15 minutes apart."},
+ "GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS": {section:"Sending",help:"Minimum whole days since a member’s last confirmed membership DM before another campaign may contact them. Defaults to 30 days. Recent contacts are skipped immediately; actual attempts are spaced by the minimum and maximum wait settings below."},
+ "GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS": {section:"Sending",help:"Shortest random wait in seconds between membership DM attempts. Defaults to 600 (10 minutes). Saving a faster window also shortens a wait already in progress on the next bot poll. Very short waits risk Discord rate limits."},
+ "GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS": {section:"Sending",help:"Longest random wait in seconds between membership DM attempts. Defaults to 900 (15 minutes) and must be at least the minimum."},
  "GUILDSYNC_MEMBERSHIP_DM_MESSAGE": {section:"Message",help:"Text sent above the four response buttons. Use {name} for the member’s current display name and {guild} for the Discord server name. A fixed notice explains that replies are forwarded to guild officers."},
  "GUILDSYNC_MEMBERSHIP_DM_DESTINATION_TYPE": {section:"Reply forwarding",help:"Choose whether membership responses go to a Discord channel in this server or directly to a Discord user. Configure the corresponding numeric destination ID below."},
  "GUILDSYNC_MEMBERSHIP_DM_DESTINATION_ID": {section:"Reply forwarding",help:"Numeric Discord channel or user ID receiving the response, sender identity, submitted ESO account and linking outcome. The bot must be able to send there. Failed forwarding is retained for retry."},
@@ -155,6 +157,8 @@ const raffle=(key,label,type,value,extra)=>define('bot','Raffle announcements','
 export const configurationCatalog=[
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_ENABLED','Enable officer-initiated membership DMs','boolean',false),
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS','Minimum days between membership DMs','number',30,{min:1,max:365}),
+ define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS','Shortest wait between membership DMs (seconds)','number',600,{min:10,max:86400}),
+ define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS','Longest wait between membership DMs (seconds)','number',900,{min:10,max:86400}),
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_MESSAGE','Membership DM message','template',DEFAULT_MEMBERSHIP_DM,{placeholders:['name','guild'],maxLength:1500}),
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_DESTINATION_TYPE','Forward replies to','select','channel',{options:['channel','user']}),
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_DESTINATION_ID','Reply destination user or channel ID','id',''),
@@ -199,7 +203,8 @@ const byKey=new Map(configurationCatalog.map(item=>[item.key,item]));
 const recordKey='admin_configuration';
 function typed(item,value){
  if(item.type==='boolean'){if(value===true||typeof value==='string'&&value.trim().toLowerCase()==='true')return true;if(value===false||typeof value==='string'&&value.trim().toLowerCase()==='false')return false;throw Error(item.label+' must be true or false.');}
- if(item.type==='number'){const n=Number(value);if(String(value).trim()===''||!Number.isFinite(n)||n<item.min||n>item.max || (item.key.endsWith('DELAY_HOURS')&&!Number.isSafeInteger(n*3600)))throw Error(item.label+' is outside its allowed range.');if(item.key.endsWith('THRESHOLD')&&!Number.isSafeInteger(n))throw Error(item.label+' must be a whole number.');return n;}
+ if(item.type==='number'){const n=Number(value);if(String(value).trim()===''||!Number.isFinite(n)||n<item.min||n>item.max || (item.key.endsWith('DELAY_HOURS')&&!Number.isSafeInteger(n*3600)))throw Error(item.label+' is outside its allowed range.');if(item.key.endsWith('THRESHOLD')&&!Number.isSafeInteger(n))throw Error(item.label+' must be a whole number.');
+ if(item.key.endsWith('_SECONDS')&&!Number.isSafeInteger(n))throw Error(item.label+' must be whole seconds.');return n;}
  if(typeof value!=='string')throw Error(item.label+' must be text.');
  const text=item.type==='template'?value:value.trim();
  if(text.length>(item.maxLength || 2000))throw Error(item.label+' is too long.');
@@ -224,6 +229,7 @@ export function createConfigurationService(db,{env=process.env,onApply=()=>{},ap
   const get=k=>effective(byKey.get(k),record);
   if(get('GUILDSYNC_MEMBERSHIP_DM_ENABLED')&&!get('GUILDSYNC_MEMBERSHIP_DM_DESTINATION_ID'))throw Error('Select a reply destination before enabling membership DMs.');
   if(!Number.isInteger(Number(get('GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS'))))throw Error('Membership DM repeat interval must be whole days.');
+  if(Number(get('GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS'))<Number(get('GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS')))throw Error('Membership DM maximum wait must be at least the minimum.');
   if(get('GUILDSYNC_ONBOARDING_ENABLED')&&(get('GUILDSYNC_ONBOARDING_REMINDER_ENABLED')||(get('GUILDSYNC_ONBOARDING_PROMOTION_ENABLED')&&get('GUILDSYNC_ONBOARDING_PROMOTION_NOTIFY_ENABLED')))&&!get('GUILDSYNC_ONBOARDING_CHANNEL_ID'))throw Error('Select an onboarding notification channel before enabling notifications.');
  };
  const apply=async()=>applyAtBoundary(()=>{for(const item of configurationCatalog.filter(i=>i.owner==='backend')){

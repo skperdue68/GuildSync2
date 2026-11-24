@@ -125,3 +125,18 @@ test('community highlight settings are live backend settings with guarded values
  await assert.rejects(fresh.save({revision:0,changes:{GUILDSYNC_COMMUNITY_TRADER_TOP_LIMIT:26}}),/range/);
  await assert.rejects(fresh.save({revision:0,changes:{GUILDSYNC_COMMUNITY_TRADER_WINDOW:'weekly'}}),/Invalid/);
 });
+
+test('membership DM pacing is a live backend setting with a valid window',async()=>{
+ const env={};const service=createConfigurationService(memoryDB(),{env});await service.initialize();
+ const min=configurationCatalog.find(item=>item.key==='GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS');
+ const max=configurationCatalog.find(item=>item.key==='GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS');
+ assert.equal(min.defaultValue,600);assert.equal(max.defaultValue,900);
+ assert.equal(min.owner,'backend');assert.equal(max.owner,'backend');
+ assert.equal(min.group,'Discord membership DMs');
+ await service.save({revision:0,changes:{GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS:30,GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS:60}});
+ assert.equal(env.GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS,'30');
+ assert.equal(env.GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS,'60');
+ const other=createConfigurationService(memoryDB(),{env:{}});await other.initialize();
+ await assert.rejects(other.save({revision:0,changes:{GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS:30}}),/at least the minimum/);
+ await assert.rejects(other.save({revision:0,changes:{GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS:30.5}}),/whole seconds/);
+});

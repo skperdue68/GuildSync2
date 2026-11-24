@@ -5,6 +5,12 @@ export function dmConfig(env={}) {
   if(!['true','false'].includes(enabled))throw Error('Membership DM enabled must be true or false.');
   const repeatDays=Number(get('REPEAT_DAYS','30'));
   if(!Number.isInteger(repeatDays)||repeatDays<1||repeatDays>365)throw Error('Membership DM repeat interval must be 1–365 whole days.');
+  // Attempts are spaced by this random window. Changing it live shortens a wait
+  // already scheduled when the new window is faster.
+  const minSeconds=Number(get('MIN_SECONDS','600')),maxSeconds=Number(get('MAX_SECONDS','900'));
+  for(const [label,value] of [['minimum',minSeconds],['maximum',maxSeconds]])
+    if(!Number.isInteger(value)||value<10||value>86400)throw Error('Membership DM '+label+' seconds must be a whole number between 10 and 86400.');
+  if(maxSeconds<minSeconds)throw Error('Membership DM maximum seconds must be at least the minimum.');
   const destinationType=get('DESTINATION_TYPE','channel'),destinationId=get('DESTINATION_ID'),communityRoleId=get('COMMUNITY_ROLE_ID');
   if(!['channel','user'].includes(destinationType))throw Error('Choose a user or channel reply destination.');
   for(const id of [destinationId,communityRoleId])if(id&&!/^\d+$/.test(id))throw Error('Membership DM destinations and roles must use Discord IDs.');
@@ -12,5 +18,5 @@ export function dmConfig(env={}) {
   const template=get('MESSAGE')||DEFAULT_MEMBERSHIP_DM;
   if(template.length>1500)throw Error('Membership DM template must be at most 1500 characters.');
   for(const match of template.matchAll(/\{([^{}]+)\}/g))if(!['name','guild'].includes(match[1]))throw Error('Unknown membership DM placeholder: '+match[1]);
-  return {enabled:enabled==='true',repeatDays,destinationType,destinationId,communityRoleId,template};
+  return {enabled:enabled==='true',repeatDays,minSeconds,maxSeconds,destinationType,destinationId,communityRoleId,template};
 }

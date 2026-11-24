@@ -1,6 +1,6 @@
 # Discord membership DMs
 
-An officer starts an alphabetical campaign for current Discord members without a confirmed ESO account link. The bot waits a random 10–15 minutes before its first attempt and between subsequent attempts. It rechecks eligibility immediately before sending. Recent contacts, existing links, bots, departed members and community preferences are skipped without waiting another interval.
+An officer starts an alphabetical campaign for current Discord members without a confirmed ESO account link. The bot waits a random window — 10–15 minutes by default — before its first attempt and between subsequent attempts. The window is a live setting, so it can be shortened or lengthened while a campaign is running. It rechecks eligibility immediately before sending. Recent contacts, existing links, bots, departed members and community preferences are skipped without waiting another interval.
 
 ## Configure
 
@@ -8,6 +8,7 @@ In GuildSync, open **Reports & Admin → Administrator Configuration → Discord
 
 - Enable officer-initiated membership DMs. Enabling alone does not create a campaign.
 - Set the minimum days between confirmed membership DMs; the default is 30, configurable from 1 to 365.
+- Set the shortest and longest waits between attempts in seconds; defaults are 600 and 900 (10–15 minutes). Saving a faster window shortens a wait already in progress on the next bot poll, without pausing or restarting the campaign.
 - Edit the message using `{name}` and `{guild}`. The four buttons and the notice that replies go to guild officers are added automatically.
 - Select a reply destination type (**channel** or **user**) and its numeric Discord ID. A channel must be in this Discord server and writable by the bot; a user must accept the bot’s DMs.
 - Optionally choose a numeric community role ID. Blank records preferences without changing roles. A configured role requires the bot’s Manage Roles permission and a role position above it. These responses do not remove existing access or rank roles.

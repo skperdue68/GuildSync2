@@ -2,8 +2,27 @@ import {randomUUID} from 'node:crypto';
 import {withEsoIdentityLock,esoAccountKey} from './eso-account-identity.js';
 export {dmConfig} from './membership-dm-config.js';
 
-export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),random=Math.random}={}) {
-  const delay=()=>600+Math.floor(Math.max(0,Math.min(.999999999,random()))*301);
+export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),random=Math.random,pace=()=>null}={}) {
+  // The live membership DM settings decide this random window. Without a pace the
+  // defaults stay 10–15 minutes, which existing states and tests rely on.
+  const paceBounds=()=>{
+    const value=pace()||{},min=Number(value.minSeconds),max=Number(value.maxSeconds);
+    const low=Number.isFinite(min)&&min>0?min:600,high=Number.isFinite(max)&&max>=low?max:Math.max(low,900);
+    return [low,high];
+  };
+  const delay=()=>{const [min,max]=paceBounds();return min+Math.floor(Math.max(0,Math.min(.999999999,random()))*(max-min+1));};
+  const rememberPace=state=>{const [min,max]=paceBounds();if(state.campaign){state.campaign.paceMin=min;state.campaign.paceMax=max;}};
+  // A faster saved window shortens (never extends) the wait already scheduled, so
+  // the change reaches the campaign that is currently running.
+  function applyPace(state) {
+    const campaign=state.campaign;
+    if(!campaign)return;
+    const [min,max]=paceBounds();
+    if(campaign.paceMin===min&&campaign.paceMax===max)return;
+    const next=now()+delay();
+    campaign.paceMin=min;campaign.paceMax=max;
+    campaign.nextAt=Math.max(now(),Math.min(Number(campaign.nextAt)||next,next));
+  }
   const eligible=(state,member,days)=>!state.preferences[member.id]&&!state.history[member.id]?.uncertain&&
     (!state.history[member.id]?.sentAt||now()-state.history[member.id].sentAt>=days*86400);
   function expire(state) {
@@ -23,12 +42,14 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
         .sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id.localeCompare(b.id))
         .map(m=>({id:randomUUID(),userId:m.id,name:m.name,status:'pending'}));
       state.campaign={id:randomUUID(),status:queue.length?'running':'complete',queue,nextAt:now()+delay(),startedAt:now(),lastAttempted:null,lastSent:null};
+      rememberPace(state);
       for(const job of queue){job.campaignId=state.campaign.id;state.deliveries[job.id]=job;}
       return state.campaign;
     },
     pause(state){if(!state.campaign)throw Error('No campaign has been started.');state.campaign.status='paused';},
-    resume(state){if(!state.campaign)throw Error('No campaign has been started.');state.campaign.status='running';state.campaign.nextAt=Math.max(state.campaign.nextAt,now()+delay());},
+    resume(state){if(!state.campaign)throw Error('No campaign has been started.');applyPace(state);state.campaign.status='running';rememberPace(state);state.campaign.nextAt=Math.max(state.campaign.nextAt,now()+delay());},
     claim(state,members,days) {
+      applyPace(state);
       expire(state);
       const campaign=state.campaign;
       if(!campaign||campaign.status!=='running'||campaign.nextAt>now()||campaign.queue.some(q=>q.status==='sending'))return null;
@@ -49,7 +70,7 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
       job.status=result.status;job.detail=String(result.detail||'').slice(0,255);job.messageId=result.messageId||null;
       if(job.isTest)return job;
       const history=state.history[job.userId]??={};
-      if(result.status!=='skipped')state.campaign.nextAt=now()+delay();
+      if(result.status!=='skipped'){rememberPace(state);state.campaign.nextAt=now()+delay();}
       if(result.status==='sent'){
         if(!job.messageId)throw Error('A confirmed Discord message ID is required.');
         history.sentAt=now();history.uncertain=false;
@@ -107,7 +128,7 @@ export function pruneMembershipState(state,{maxEvents=200,maxDeliveries=1000}={}
 }
 
 export function createMembershipDMService(db,{configuration,upsertLink,authorizeOfficer,now=()=>Math.floor(Date.now()/1000),random=Math.random}={}) {
-  const engine=createDMCampaignEngine({now,random});
+  const engine=createDMCampaignEngine({now,random,pace:()=>configuration()});
   async function atomic(guildId,fn) {
     return withEsoIdentityLock(db,async connection=>{
       await connection.beginTransaction();
