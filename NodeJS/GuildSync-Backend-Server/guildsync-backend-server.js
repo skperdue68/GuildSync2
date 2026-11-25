@@ -29,7 +29,7 @@ import cors from 'cors';
 import http from 'node:http';
 import {createDesktopVersionPolicy} from './desktop-version-policy.js';
 import {ingestGuildChatMessages} from './guild-chat-ingest.js';
-import {createMafiaChatRouter, MAFIA_CHAT_UPDATED_EVENT} from './mafia-chat-api.js';
+import {createMafiaChatRouter, mapMafiaChatRow, MAFIA_CHAT_UPDATED_EVENT} from './mafia-chat-api.js';
 import {releaseExpiredDepositMailCheckouts} from './deposit-mail-lease.js';
 import {startDepositMailSweep} from './deposit-mail-sweep.js';
 import fs from 'node:fs';
@@ -227,12 +227,33 @@ const mafiaIo = new Server(mafiaServer, {
 // left the page on "Invalid namespace" until the next chat insert.
 const mafiaChatNamespace = mafiaIo.of('/mafia');
 
-// Only says that rows were stored; the page fetches when the reader asks it to.
-// It goes out on the mafia listener only, so the GuildSync socket server is
-// untouched and no namespace is opened on the 3001 port.
-function broadcastMafiaChatUpdate(detail = {}) {
+// Sends the stored records themselves, so the page can slot each one into its
+// sorted position without a reload. It goes out on the mafia listener only, so
+// the GuildSync socket server is untouched and no namespace is opened on 3001.
+async function broadcastMafiaChatUpdate(detail = {}) {
   try {
-    mafiaChatNamespace.emit(MAFIA_CHAT_UPDATED_EVENT, { ...detail, at: new Date().toISOString() });
+    const ids = (Array.isArray(detail.ids) ? detail.ids : [])
+      .map(id => Number(id))
+      .filter(id => Number.isInteger(id) && id > 0);
+    const {ids: _ids, ...notice} = detail;
+    let messages = [];
+
+    if (ids.length > 0) {
+      const placeholders = ids.map(() => '?').join(', ');
+      const [rows] = await applicationDB.execute(
+        `SELECT id, sender, message_text, message_timestamp, data_source, uploaded_by, received_at
+         FROM guildsync_guild_chat_messages
+         WHERE id IN (${placeholders})`,
+        ids
+      );
+      messages = (Array.isArray(rows) ? rows : []).map(mapMafiaChatRow);
+    }
+
+    mafiaChatNamespace.emit(MAFIA_CHAT_UPDATED_EVENT, {
+      ...notice,
+      messages,
+      at: new Date().toISOString()
+    });
   } catch (error) {
     Log('Mafia guild chat update broadcast failed:', error.message);
   }
@@ -1729,19 +1750,21 @@ function registerGuildSyncConnection(socket) {
         entries
       });
 
-      if (result.chat_messages_inserted > 0) {
-        broadcastMafiaChatUpdate({inserted: result.chat_messages_inserted});
+      const {inserted_ids: insertedIds = [], ...chatResult} = result;
+
+      if (insertedIds.length > 0) {
+        await broadcastMafiaChatUpdate({inserted: insertedIds.length, ids: insertedIds});
       }
 
       sendSocketResponse(socket, 'guildsync:chat-data-result', callback, {
         ok: true,
-        message: `Guild chat processed: ${result.chat_messages_inserted} new, ${result.chat_messages_duplicates} duplicate${result.chat_messages_duplicates === 1 ? '' : 's'} skipped${result.chat_messages_skipped ? `, ${result.chat_messages_skipped} invalid skipped` : ''}.`,
+        message: `Guild chat processed: ${chatResult.chat_messages_inserted} new, ${chatResult.chat_messages_duplicates} duplicate${chatResult.chat_messages_duplicates === 1 ? '' : 's'} skipped${chatResult.chat_messages_skipped ? `, ${chatResult.chat_messages_skipped} invalid skipped` : ''}.`,
         received: true,
         received_from: authenticatedUsername,
         file_name: fileName || null,
         data_source: dataSource,
         entries_count: entries.length,
-        ...result,
+        ...chatResult,
         at: new Date().toLocaleString()
       });
     } catch (error) {

@@ -409,7 +409,12 @@ th[aria-sort="descending"] .sort-indicator::after {
 }
 
 .chat-table tbody tr:hover td {
-  background: rgba(59, 130, 246, 0.18);
+  background: rgba(96, 165, 250, 0.22);
+}
+
+/* A bright edge marks the row the pointer is on, across every column. */
+.chat-table tbody tr:hover td:first-child {
+  box-shadow: inset 3px 0 0 #60a5fa;
 }
 
 .chat-table tbody tr:last-child td {
@@ -453,6 +458,18 @@ th[aria-sort="descending"] .sort-indicator::after {
   background: rgba(7, 12, 24, 0.45);
   font-size: 12px;
   color: #94a3b8;
+}
+
+.footer-status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.last-update {
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
 }
 
 .table-error {

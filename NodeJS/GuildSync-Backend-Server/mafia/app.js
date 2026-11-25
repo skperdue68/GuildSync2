@@ -15,12 +15,14 @@ const state = {
   search: '',
   start: null,
   end: null,
-  total: 0
+  total: 0,
+  ids: new Set()
 };
 
 const elements = {
   body: document.getElementById('chat-body'),
   summary: document.getElementById('table-summary'),
+  lastUpdate: document.getElementById('last-update'),
   error: document.getElementById('table-error'),
   tableScroll: document.getElementById('table-scroll'),
   search: document.getElementById('search-input'),
@@ -38,6 +40,7 @@ const elements = {
 };
 
 let searchTimer = null;
+let bannerTimer = null;
 let requestController = null;
 let requestSequence = 0;
 
@@ -91,13 +94,21 @@ function setError(message) {
   elements.error.hidden = !message;
 }
 
+function markUpdated() {
+  elements.lastUpdate.textContent = `Last update: ${formatLocalDate(new Date())}`;
+}
+
 function showUpdateBanner(message) {
   elements.bannerText.textContent = message;
   elements.banner.hidden = false;
   elements.refresh.classList.add('refresh-button-attention');
+
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(clearUpdateBanner, 6000);
 }
 
 function clearUpdateBanner() {
+  clearTimeout(bannerTimer);
   elements.banner.hidden = true;
   elements.refresh.classList.remove('refresh-button-attention');
 }
@@ -156,6 +167,7 @@ function renderEmpty(message) {
   cell.textContent = message;
   row.append(cell);
   elements.body.replaceChildren(row);
+  state.ids = new Set();
   elements.summary.textContent = 'No messages';
 }
 
@@ -166,28 +178,153 @@ function cell(className, text) {
   return element;
 }
 
+// One row, with everything the client needs to place and de-duplicate it kept
+// on the element itself.
+function buildRow(message) {
+  const row = document.createElement('tr');
+  row.className = 'chat-row';
+  row.dataset.id = String(message.id ?? '');
+  row.dataset.time = String(Number(message.message_timestamp) || 0);
+  row.dataset.sender = String(message.sender ?? '');
+  row.dataset.message = String(message.message_text ?? '');
+  row.dataset.receivedAt = message.received_at || '';
+  row.dataset.uploadedBy = message.uploaded_by || '';
+
+  row.append(cell('cell-time', formatLocalTimestamp(message.message_timestamp)));
+  row.append(cell('cell-sender', message.sender || 'unknown'));
+  row.append(cell('cell-message', message.message_text || ''));
+
+  return row;
+}
+
+function rowMessage(row) {
+  return {
+    id: row.dataset.id,
+    message_timestamp: Number(row.dataset.time) || 0,
+    sender: row.dataset.sender || '',
+    message_text: row.dataset.message || ''
+  };
+}
+
 function renderMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) {
     renderEmpty('No guild chat messages match these filters.');
     return;
   }
 
+  state.ids = new Set();
   const rows = messages.map(message => {
-    const row = document.createElement('tr');
-
-    row.append(cell('cell-time', formatLocalTimestamp(message.message_timestamp)));
-    row.append(cell('cell-sender', message.sender || 'unknown'));
-    row.append(cell('cell-message', message.message_text || ''));
-
-    // Source and uploader are not columns any more; the row tooltip carries them.
-    row.dataset.receivedAt = message.received_at || '';
-    row.dataset.uploadedBy = message.uploaded_by || '';
-
+    const row = buildRow(message);
+    state.ids.add(row.dataset.id);
     return row;
   });
 
   elements.body.replaceChildren(...rows);
   renderSummary(messages.length);
+}
+
+// The column the table is sorted by, compared the way the server orders it:
+// text is case-insensitive and ties fall back to the id, in the same direction.
+function compareText(a, b) {
+  return String(a ?? '').localeCompare(String(b ?? ''), undefined, {sensitivity: 'base'});
+}
+
+function compareMessage(a, b) {
+  const direction = state.dir === 'asc' ? 1 : -1;
+  let order;
+
+  if (state.sort === 'time') order = Number(a.message_timestamp) - Number(b.message_timestamp);
+  else if (state.sort === 'sender') order = compareText(a.sender, b.sender);
+  else order = compareText(a.message_text, b.message_text);
+
+  if (order === 0) order = Number(a.id) - Number(b.id);
+  return order * direction;
+}
+
+function visibleRows() {
+  return Array.from(elements.body.querySelectorAll('tr.chat-row'));
+}
+
+// A live row is only shown when it would survive the filters the reader set.
+function matchesFilters(message) {
+  const timestamp = Number(message.message_timestamp) || 0;
+  if (state.start != null && timestamp < state.start) return false;
+  if (state.end != null && timestamp > state.end) return false;
+
+  if (state.search) {
+    const needle = state.search.toLowerCase();
+    const haystack = [message.sender, message.message_text, message.uploaded_by, message.data_source]
+      .join('\n')
+      .toLowerCase();
+    if (!haystack.includes(needle)) return false;
+  }
+
+  return true;
+}
+
+function insertMessage(message) {
+  const id = String(message.id ?? '');
+  if (!id || state.ids.has(id) || !matchesFilters(message)) return false;
+
+  const row = buildRow(message);
+  const before = visibleRows().find(existing => compareMessage(rowMessage(existing), message) > 0);
+
+  elements.body.querySelector('tr.empty-row')?.remove();
+
+  if (before) elements.body.insertBefore(row, before);
+  else elements.body.append(row);
+
+  state.ids.add(id);
+  return true;
+}
+
+function trimRows() {
+  const rows = visibleRows();
+  for (let index = rows.length - 1; index >= PAGE_LIMIT; index -= 1) rows[index].remove();
+}
+
+// Scrolling stays where the reader left it: rows inserted above the viewport
+// would otherwise push everything down.
+function captureScrollAnchor() {
+  const viewport = elements.tableScroll.getBoundingClientRect();
+
+  for (const row of visibleRows()) {
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom > viewport.top + 1) {
+      return {row, offset: rect.top - viewport.top};
+    }
+  }
+
+  return null;
+}
+
+function restoreScrollAnchor(anchor) {
+  if (!anchor || !anchor.row.isConnected) return;
+
+  const viewport = elements.tableScroll.getBoundingClientRect();
+  const offset = anchor.row.getBoundingClientRect().top - viewport.top;
+  if (offset !== anchor.offset) elements.tableScroll.scrollTop += offset - anchor.offset;
+}
+
+// Applies the rows the socket delivered and reports how many became visible.
+function applyLiveMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
+
+  const anchor = captureScrollAnchor();
+  let inserted = 0;
+
+  for (const message of messages) {
+    if (insertMessage(message)) inserted += 1;
+  }
+
+  if (inserted > 0) {
+    trimRows();
+    restoreScrollAnchor(anchor);
+    state.total += inserted;
+    renderSummary(visibleRows().length);
+  }
+
+  return inserted;
 }
 
 function setLoading(loading) {
@@ -228,6 +365,7 @@ async function loadMessages() {
 
     state.total = Number(payload.total) || 0;
     renderMessages(payload.messages);
+    markUpdated();
   } catch (error) {
     if (error.name === 'AbortError' || sequence !== requestSequence) return;
     renderEmpty('Guild chat messages could not be loaded.');
@@ -325,7 +463,9 @@ function connectLiveFeed() {
   socket.on('connect', () => {
     setConnection('live', 'Live');
     if (connectedBefore) {
-      showUpdateBanner('Reconnected — messages saved while you were away need a refresh.');
+      // Rows saved while the socket was down were never delivered, so pull the
+      // page again; the refresh itself keeps the columns in the same order.
+      refreshMessages();
     }
     connectedBefore = true;
   });
@@ -334,14 +474,16 @@ function connectLiveFeed() {
 
   socket.on('connect_error', () => setConnection('offline', 'Live updates unavailable'));
 
-  // The backend only announces that rows were inserted. Reloading stays the
-  // reader's choice; automatic pulls can be added here later.
+  // The server sends the stored rows themselves. Each one is placed where the
+  // current sort puts it, and the reader's scroll position is preserved.
   socket.on('chat-updated', detail => {
-    const count = Number(detail?.inserted);
-    const suffix = Number.isFinite(count) && count > 0
-      ? ` (${count} new message${count === 1 ? '' : 's'})`
-      : '';
-    showUpdateBanner(`New guild chat messages were saved${suffix}. Refresh to show them.`);
+    const messages = Array.isArray(detail?.messages) ? detail.messages : [];
+    const inserted = applyLiveMessages(messages);
+
+    if (inserted > 0) {
+      markUpdated();
+      showUpdateBanner(`${inserted} new message${inserted === 1 ? '' : 's'} added.`);
+    }
   });
 }
 

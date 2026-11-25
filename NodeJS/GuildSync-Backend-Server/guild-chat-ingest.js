@@ -82,7 +82,10 @@ export async function ingestGuildChatMessages(db, payload = {}) {
     chat_messages_received: entries.length,
     chat_messages_inserted: 0,
     chat_messages_duplicates: 0,
-    chat_messages_skipped: 0
+    chat_messages_skipped: 0,
+    // Ids of the rows this report created, so the live site can be handed the
+    // exact records instead of re-reading the table.
+    inserted_ids: []
   };
 
   if (entries.length === 0) {
@@ -121,7 +124,7 @@ export async function ingestGuildChatMessages(db, payload = {}) {
         continue;
       }
 
-      await connection.execute(
+      const [insertResult] = await connection.execute(
         `INSERT INTO guildsync_guild_chat_messages (
           message_hash,
           guild,
@@ -137,6 +140,7 @@ export async function ingestGuildChatMessages(db, payload = {}) {
       );
 
       result.chat_messages_inserted += 1;
+      if (Number(insertResult?.insertId) > 0) result.inserted_ids.push(Number(insertResult.insertId));
     }
 
     await connection.commit();

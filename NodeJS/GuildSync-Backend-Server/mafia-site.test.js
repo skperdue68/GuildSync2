@@ -97,14 +97,34 @@ test('the search box and the 24-hour date range drive the query and update immed
   assert.match(client, /\napplyDefaultRange\(\);\nreadRange\(\);\nconnectLiveFeed\(\);\nloadMessages\(\);/);
 });
 
-test('live updates only raise a notice and wait for the refresh button', () => {
+test('live rows arrive over the socket and are inserted in sorted position', () => {
   assert.match(client, /window\.io\('\/mafia'/);
   const handler = client.match(/socket\.on\('chat-updated'[\s\S]*?\n  \}\);/);
   assert.ok(handler, 'the chat-updated listener was not found');
-  assert.match(handler[0], /showUpdateBanner/);
+  assert.match(handler[0], /applyLiveMessages\(messages\)/);
   assert.doesNotMatch(handler[0], /loadMessages\(/);
   assert.match(client, /elements\.refresh\.addEventListener\('click', refreshMessages\)/);
   assert.match(client, /elements\.bannerRefresh\.addEventListener\('click', refreshMessages\)/);
+
+  // The record is placed where the current sort puts it and is never doubled.
+  assert.match(client, /function compareMessage\(/);
+  assert.match(client, /compareMessage\(rowMessage\(existing\), message\) > 0/);
+  assert.match(client, /state\.ids\.has\(id\)/);
+  assert.match(client, /elements\.body\.insertBefore\(row, before\)/);
+});
+
+test('inserted rows hold the scroll position and stamp the last update', () => {
+  assert.match(client, /function captureScrollAnchor\(/);
+  assert.match(client, /elements\.tableScroll\.scrollTop \+= offset - anchor\.offset/);
+  assert.match(html, /id="last-update"/);
+  assert.match(client, /elements\.lastUpdate\.textContent = `Last update: \$\{formatLocalDate\(new Date\(\)\)\}`/);
+
+  // Opening the page and pressing Refresh both stamp it.
+  const loadBody = client.slice(
+    client.indexOf('async function loadMessages'),
+    client.indexOf('async function refreshMessages')
+  );
+  assert.match(loadBody, /markUpdated\(\)/);
 });
 
 test('the backend runs the site on its own listener at port 3018', () => {
@@ -123,9 +143,13 @@ test('the backend runs the site on its own listener at port 3018', () => {
 test('stored chat rows notify the mafia listener only, and only when rows were inserted', () => {
   const helperAt = server.indexOf('function broadcastMafiaChatUpdate');
   assert.ok(helperAt > 0, 'the mafia broadcast helper was not found');
-  const helper = server.slice(helperAt, helperAt + 600);
+  const helper = server.slice(helperAt, helperAt + 1400);
 
   assert.match(helper, /mafiaChatNamespace\.emit\(MAFIA_CHAT_UPDATED_EVENT/);
+
+  // The notice carries the stored records themselves, mapped for the page.
+  assert.match(helper, /mapMafiaChatRow/);
+  assert.match(helper, /WHERE id IN \(\$\{placeholders\}\)/);
 
   // The namespace has to exist before the first insert: a client that joins an
   // uncreated namespace is rejected with "Invalid namespace".
@@ -137,8 +161,8 @@ test('stored chat rows notify the mafia listener only, and only when rows were i
   assert.doesNotMatch(helper, /for \(const socketServer of \[io, mafiaIo\]\)/);
   assert.doesNotMatch(helper, /(^|[^a-zA-Z])io\.of\(/m);
 
-  const guardAt = server.indexOf('if (result.chat_messages_inserted > 0) {');
-  const callAt = server.indexOf('broadcastMafiaChatUpdate({inserted: result.chat_messages_inserted});');
+  const guardAt = server.indexOf('if (insertedIds.length > 0) {');
+  const callAt = server.indexOf('broadcastMafiaChatUpdate({inserted: insertedIds.length, ids: insertedIds});');
   assert.ok(guardAt > 0, 'the inserted-rows guard was not found');
   assert.ok(callAt > guardAt, 'the broadcast must sit behind the inserted-rows guard');
 });
