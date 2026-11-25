@@ -1,6 +1,6 @@
 ## Title: GuildSyncChat
 ## APIVersion: 101051
-## Version: 1.0.0
+## Version: 1.0.2
 ## Author: @evainefaye
 ## SavedVariables: GuildSyncChat
 

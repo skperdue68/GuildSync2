@@ -6,24 +6,22 @@ local ADDON_NAME = "GuildSyncChat"
 local SAVED_VARS_NAME = "GuildSyncChat"
 local SAVED_VARS_VERSION = 1
 
--- Guild chat channels follow guild slots, and slots differ per player, so the
--- stored guild identity is a fixed key rather than a channel or slot number.
-local GUILD_KEY = "alphabet_mafia"
 local MAX_GUILD_SLOTS = 5
 
 -- Older messages are dropped so SavedVariables stays bounded.
 local MAX_SAVED_MESSAGES = 1000
 
-local GUILD_CHAT_CHANNELS = {
-  [1] = CHAT_CHANNEL_GUILD_1,
-  [2] = CHAT_CHANNEL_GUILD_2,
-  [3] = CHAT_CHANNEL_GUILD_3,
-  [4] = CHAT_CHANNEL_GUILD_4,
-  [5] = CHAT_CHANNEL_GUILD_5,
+-- Guild chat arrives with the channel of the slot it was sent to, so the
+-- channel of a message identifies which guild spoke.
+local SLOT_BY_GUILD_CHANNEL = {
+  [CHAT_CHANNEL_GUILD_1] = 1,
+  [CHAT_CHANNEL_GUILD_2] = 2,
+  [CHAT_CHANNEL_GUILD_3] = 3,
+  [CHAT_CHANNEL_GUILD_4] = 4,
+  [CHAT_CHANNEL_GUILD_5] = 5,
 }
 
 local gscSavedVars = nil
-local gscTargetChannel = nil
 
 local function GSC_Print(message)
   CHAT_ROUTER:AddSystemMessage("|c88CCFF[GuildSyncChat]|r " .. tostring(message))
@@ -47,18 +45,20 @@ local function GSC_Trim(value)
   return value:match("^%s*(.-)%s*$") or ""
 end
 
+local function GSC_IsTargetGuildName(guildName)
+  return string.lower(GSC_Trim(guildName)) == string.lower(GSC_Trim(TARGET_GUILD_NAME))
+end
+
 -- Guild slots are sparse: one guild can sit in slot 3, so every slot is checked
 -- instead of stopping at GetNumGuilds().
 local function GSC_FindTargetGuild()
-  local wanted = string.lower(GSC_Trim(TARGET_GUILD_NAME))
-
   for slot = 1, MAX_GUILD_SLOTS do
     local guildId = GetGuildId(slot)
 
     if guildId and guildId ~= 0 then
       local guildName = GetGuildName(guildId)
 
-      if string.lower(GSC_Trim(guildName)) == wanted then
+      if GSC_IsTargetGuildName(guildName) then
         return guildId, slot, guildName
       end
     end
@@ -67,16 +67,40 @@ local function GSC_FindTargetGuild()
   return nil, nil, nil
 end
 
-local function GSC_ResolveTargetChannel()
-  local guildId, slot = GSC_FindTargetGuild()
-  gscTargetChannel = guildId and GUILD_CHAT_CHANNELS[slot] or nil
+-- The guild that owns a channel is looked up whenever a message arrives instead
+-- of being cached at login, so a guild that fills its slot late, or that moves
+-- slots between sessions, is still captured.
+local function GSC_GuildForChannel(channelType)
+  local slot = SLOT_BY_GUILD_CHANNEL[channelType]
+
+  if not slot then
+    return nil, nil
+  end
+
+  local guildId = GetGuildId(slot)
+
+  if not guildId or guildId == 0 then
+    return slot, nil
+  end
+
+  return slot, GetGuildName(guildId)
 end
 
--- A login, join or leave can land before the game has moved the guild in its
--- slots, so resolve again once the guild state has settled.
-local function GSC_OnGuildStateChanged()
-  GSC_ResolveTargetChannel()
-  zo_callLater(GSC_ResolveTargetChannel, 3000)
+local function GSC_PrintSlots()
+  local printed = false
+
+  for slot = 1, MAX_GUILD_SLOTS do
+    local guildId = GetGuildId(slot)
+
+    if guildId and guildId ~= 0 then
+      GSC_Print("Slot " .. tostring(slot) .. ": " .. tostring(GetGuildName(guildId)))
+      printed = true
+    end
+  end
+
+  if not printed then
+    GSC_Print("No guild slots have loaded yet.")
+  end
 end
 
 local function GSC_TrimSavedMessages()
@@ -88,7 +112,17 @@ local function GSC_TrimSavedMessages()
 end
 
 local function GSC_OnChatMessage(eventCode, channelType, fromName, text, isCustomerService, fromDisplayName)
-  if not gscSavedVars or not gscTargetChannel or channelType ~= gscTargetChannel then
+  if not gscSavedVars then
+    return
+  end
+
+  local slot, guildName = GSC_GuildForChannel(channelType)
+
+  if not slot or not GSC_IsTargetGuildName(guildName) then
+    if slot and gscSavedVars.debugChat then
+      GSC_Print("Ignored guild chat in slot " .. tostring(slot) .. " (" .. tostring(guildName) .. ").")
+    end
+
     return
   end
 
@@ -102,8 +136,9 @@ local function GSC_OnChatMessage(eventCode, channelType, fromName, text, isCusto
     return
   end
 
+  -- The add-on only captures TARGET_GUILD_NAME, so the guild does not need to be
+  -- repeated in every saved message.
   local message = {
-    guild = GUILD_KEY,
     sender = sender,
     timestamp = GetTimeStamp(),
     text = tostring(text or ""),
@@ -132,6 +167,7 @@ local function GSC_Status()
     GSC_Print("Saving " .. tostring(guildName) .. " guild chat from guild slot " .. tostring(slot) .. ".")
   else
     GSC_Print("Guild not found: " .. TARGET_GUILD_NAME .. ". Nothing is being captured.")
+    GSC_PrintSlots()
   end
 
   local messages = gscSavedVars.messages
@@ -194,14 +230,19 @@ local function OnAddonLoaded(eventCode, addonName)
 
   GSC_EnsureSavedVars()
 
-  EVENT_MANAGER:RegisterForEvent(ADDON_NAME, EVENT_PLAYER_ACTIVATED, GSC_OnGuildStateChanged)
-  EVENT_MANAGER:RegisterForEvent(ADDON_NAME, EVENT_GUILD_SELF_JOINED_GUILD, GSC_OnGuildStateChanged)
-  EVENT_MANAGER:RegisterForEvent(ADDON_NAME, EVENT_GUILD_SELF_LEFT_GUILD, GSC_OnGuildStateChanged)
   EVENT_MANAGER:RegisterForEvent(ADDON_NAME, EVENT_CHAT_MESSAGE_CHANNEL, GSC_OnChatMessage)
 
   SLASH_COMMANDS["/gsc"] = GSC_HandleCommand
 
-  GSC_Print("GuildSyncChat loaded. Saving " .. TARGET_GUILD_NAME .. " guild chat to SavedVariables.")
+  local guildId, slot, guildName = GSC_FindTargetGuild()
+
+  if guildId then
+    GSC_Print("GuildSyncChat loaded. Saving " .. tostring(guildName) .. " guild chat from guild slot " .. tostring(slot) .. ".")
+  else
+    GSC_Print("GuildSyncChat loaded, but " .. TARGET_GUILD_NAME .. " is not in a guild slot yet.")
+    GSC_PrintSlots()
+  end
+
   GSC_Print("Use /gsc status for the saved message count.")
 end
 

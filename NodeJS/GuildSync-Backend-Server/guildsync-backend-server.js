@@ -28,6 +28,7 @@ import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
 import {createDesktopVersionPolicy} from './desktop-version-policy.js';
+import {ingestGuildChatMessages} from './guild-chat-ingest.js';
 import {releaseExpiredDepositMailCheckouts} from './deposit-mail-lease.js';
 import {startDepositMailSweep} from './deposit-mail-sweep.js';
 import fs from 'node:fs';
@@ -1641,6 +1642,70 @@ function registerGuildSyncConnection(socket) {
       sendSocketResponse(socket, 'guildsync:trader-data-result', callback, {
         ok: false,
         message: error.code === 'ESO_GUILD_ORIGIN' ? error.message : 'Trader data processing failed.',
+        error: error.message,
+        at: new Date().toLocaleString()
+      });
+    }
+  });
+
+  socket.on('guildsync:sending-chat-data', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to send guild chat.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:chat-data-result', callback, response);
+      return;
+    }
+
+    try {
+      validateEsoGuildImport('chat', payload);
+
+      const authenticatedUsername = String(
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.guild_member_name ||
+        socket.guildSyncUser.username ||
+        socket.guildSyncUser.discord_user_id ||
+        ''
+      ).trim();
+
+      const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
+      const entries = Array.isArray(data?.entries) ? data.entries : [];
+      const fileName = String(payload.file_name || '').trim();
+      const dataSource = String(data?.table_name || payload.source || 'GuildSyncChat').trim();
+
+      Log(
+        `Guild chat data received from ${authenticatedUsername || 'unknown user'}${fileName ? ` for ${fileName}` : ''}. Messages: ${entries.length}.`
+      );
+
+      const applicationDB = await openAppDataDB();
+      const result = await ingestGuildChatMessages(applicationDB, {
+        guildId: data?.guildId || null,
+        guildName: data?.guildName || null,
+        uploadedBy: authenticatedUsername,
+        source: dataSource,
+        entries
+      });
+
+      sendSocketResponse(socket, 'guildsync:chat-data-result', callback, {
+        ok: true,
+        message: `Guild chat processed: ${result.chat_messages_inserted} new, ${result.chat_messages_duplicates} duplicate${result.chat_messages_duplicates === 1 ? '' : 's'} skipped${result.chat_messages_skipped ? `, ${result.chat_messages_skipped} invalid skipped` : ''}.`,
+        received: true,
+        received_from: authenticatedUsername,
+        file_name: fileName || null,
+        data_source: dataSource,
+        entries_count: entries.length,
+        ...result,
+        at: new Date().toLocaleString()
+      });
+    } catch (error) {
+      Log(`Guild chat processing failed: ${error.message}`);
+
+      sendSocketResponse(socket, 'guildsync:chat-data-result', callback, {
+        ok: false,
+        message: error.code === 'ESO_GUILD_ORIGIN' ? error.message : 'Guild chat processing failed.',
         error: error.message,
         at: new Date().toLocaleString()
       });

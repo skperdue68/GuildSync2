@@ -212,6 +212,11 @@ func getSavedVarsWatchFiles() []GuildSyncSavedVarsWatchFile {
 			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_TRADER_FILE_NAME", "GuildSyncTrader.lua"),
 		},
 		{
+			Key:      "chat",
+			Label:    "Guild Chat",
+			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_CHAT_FILE_NAME", "GuildSyncChat.lua"),
+		},
+		{
 			Key:      "discord_reminders",
 			Label:    "Discord Reminders",
 			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_DISCORD_REMINDER_FILE_NAME", "GuildSyncDiscordReminder.lua"),

@@ -12,6 +12,7 @@ test('an unknown detector state blocks pending writes and refreshes the displaye
   GetESORunningStatus:async()=>({running:false,error:'pgrep failed',message:'GuildSync could not determine whether ESO is running.'}),
   flushPendingDepositMailAckCleanup:async()=>{writes++;},processPendingDepositMailBatches:async()=>{writes++;},
   flushPendingDiscordReminderAckCleanup:async()=>{writes++;},
+  processPendingGuildSyncChatUpload:async()=>{},
   discordReminderControls:{sync:async()=>{reminderSyncs++;}},
   addSystemMessage:()=>{},updateBankingDataView:()=>{updates++;},formatError:String,TRANSIENT_MESSAGE_TTL_MS:0});
  vm.runInContext(source.slice(start,end),context);
@@ -26,6 +27,7 @@ for(const running of [true,false])test(`recovery from detection error to ${runni
   GetESORunningStatus:async()=>({running,message:running?'Running':'Stopped'}),
   flushPendingDepositMailAckCleanup:async()=>{writes++;},processPendingDepositMailBatches:async()=>{writes++;},
   flushPendingDiscordReminderAckCleanup:async()=>{writes++;},
+  processPendingGuildSyncChatUpload:async()=>{},
   discordReminderControls:{sync:async()=>{reminderSyncs++;}},
   addSystemMessage:()=>{},updateBankingDataView:()=>{updates++;},formatError:String,TRANSIENT_MESSAGE_TTL_MS:0});
  vm.runInContext(source.slice(start,end),context);await context.refreshESORunningStatus();
