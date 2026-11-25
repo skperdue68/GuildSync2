@@ -708,7 +708,7 @@ function registerGuildSyncConnection(socket) {
     const [roles]=await applicationDB.execute('SELECT role_id,role_name FROM discord_roles');
     const [held]=await applicationDB.execute('SELECT role_id FROM discord_member_roles WHERE discord_id = ?',[userId]);
     return hasOfficerRole(roles,held.map(row=>row.role_id));
-  }});
+  },onLinksChanged:()=>Promise.allSettled([broadcastMemberLinksUpdate(),broadcastRosterDataUpdate()])});
   registerRolePermissions(socket,loginDB,roleViews,{authorizeUserSwitch:async current=>{
     if(!current.guildSyncAuthenticated||current.guildSyncAuthType!=='GuildSync user')return false;
     return userSwitches.authorize(current.guildSyncActorId);
@@ -746,7 +746,7 @@ function registerGuildSyncConnection(socket) {
     authorize:async current=>{
       const [rows]=await loginDB.execute('SELECT role,allowed FROM guildsync_users WHERE discord_user_id=? LIMIT 1',[current.guildSyncUser.discord_user_id]);
       return Number(rows[0]?.allowed)===1?(roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role)||rows[0]?.role):false;
-    }});
+    },onChanged:()=>Promise.allSettled([broadcastMemberLinksUpdate(),broadcastRosterDataUpdate()])});
   registerVoiceForSocket(socket);
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
   registerArchiveSocket(socket, applicationDB);
@@ -2765,6 +2765,9 @@ function registerGuildSyncConnection(socket) {
       await manualLinkMember(applicationDB, payload || {});
       const links = await getMemberLinks(applicationDB);
       await broadcastMemberLinksUpdate(links);
+      // A manual link clears the member's roster "does not use Discord" answer, so the
+      // roster rows have to be re-decorated before the dialog shows them as connected.
+      await broadcastRosterDataUpdate();
       sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
         ok: true,
         message: 'Member link saved.',

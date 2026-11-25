@@ -171,3 +171,36 @@ test('acknowledgements report which saved results can be pruned',async()=>{
  request.status='sent';
  assert.deepEqual(await service.acknowledge('officer',[ack]),{processed:0,confirmed:['request']});
 });
+
+test('marking a roster member as not using Discord removes their ESO/Discord link and records who did it',async()=>{
+ const deleted=[],history=[];
+ const connection={beginTransaction:async()=>{},commit:async()=>{},rollback:async()=>{},release(){},
+  async execute(sql,args=[]) {
+   if(sql.includes('GET_LOCK'))return [[{acquired:1}]];
+   if(sql.includes('RELEASE_LOCK'))return [[{released:1}]];
+   if(sql.startsWith('SELECT value FROM guildsync_settings'))return [[{value:'30'}]];
+   if(sql.startsWith('SELECT account_name,rank_name FROM guildsync_roster_members'))return [[{account_name:'@Alice',rank_name:'Soldier'}]];
+   if(sql.startsWith('SELECT member_id FROM guildsync_eso_account_aliases'))return [[{member_id:'m1'}]];
+   if(sql.includes('INSERT INTO guildsync_discord_reminder_members'))return [{affectedRows:1}];
+   if(sql.startsWith('SELECT eso_account_name FROM guildsync_member_links'))return [[{eso_account_name:'@Officer'}]];
+   if(sql.startsWith('DELETE FROM guildsync_member_links')){deleted.push({sql,args});return [{affectedRows:1}];}
+   if(sql.includes('INSERT IGNORE INTO guildsync_roster_events')){history.push(args);return [{affectedRows:1}];}
+   throw Error('Unexpected query: '+sql);
+  }};
+ const db={getConnection:async()=>connection,execute:connection.execute};
+ const service=createDiscordReminders(db,{guildId:'123',now:()=>now});
+ assert.deepEqual(await service.optOut('@alice',true,{actorId:'1'}),{account_name:'@Alice',discord_opt_out:true,links_removed:1});
+ assert.equal(deleted.length,1);
+ assert.deepEqual(deleted[0].args,['alice'],'the pair is deleted by the stable account key');
+ assert.match(deleted[0].sql,/auto_link_blocked=0/);
+ assert.match(deleted[0].sql,/link_status NOT IN \('blocked','unlinked'\)/);
+ assert.match(deleted[0].sql,/<>'manual_unlink'/);
+ assert.equal(history.length,1,'the roster removal is visible in Guild Roster History');
+ assert.match(history[0][0],/^linkrm-[a-f0-9]{24}$/);
+ assert.deepEqual(history[0].slice(1,5),['Alice','Discord link removed','Soldier',String(Math.floor(now.getTime()/1000))]);
+ assert.equal(history[0][5],'Officer');
+ deleted.length=0;history.length=0;
+ assert.deepEqual(await service.optOut('@alice',false),{account_name:'@Alice',discord_opt_out:false,links_removed:0});
+ assert.deepEqual(deleted,[],'clearing the answer keeps whatever link the officer makes later');
+ assert.deepEqual(history,[],'nothing was removed, so no history note is invented');
+});

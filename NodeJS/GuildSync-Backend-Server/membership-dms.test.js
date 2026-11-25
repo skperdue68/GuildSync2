@@ -53,6 +53,28 @@ test('config rejects missing destination and invalid cooldown, renders supported
  assert.throws(()=>dmConfig({GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS:'0'}));
  assert.equal(dmConfig({}).repeatDays,30);
 });
+test('the default membership DM explains the status check, the no-removal promise and how to link',()=>{
+ const template=dmConfig({}).template;
+ assert.match(template,/Hello \{name\},/);
+ assert.match(template,/updating our membership records/);
+ assert.match(template,/Some areas may be reserved for current guild members/);
+ assert.match(template,/provide your ESO account name, including @/);
+ assert.match(template,/update your server nickname/);
+ assert.match(template,/Your responses will be forwarded to guild officers\./);
+ assert.match(template,/--\{guild\} Consigliere/);
+ assert.match(template,/\{suggested_link\}/);
+ assert.ok(template.length<=1500);
+ assert.equal(dmConfig({GUILDSYNC_MEMBERSHIP_DM_MESSAGE:'Hi {suggested_link}'}).template,'Hi {suggested_link}');
+ assert.throws(()=>dmConfig({GUILDSYNC_MEMBERSHIP_DM_MESSAGE:'Hi {secret}'}),/Unknown membership DM placeholder/);
+});
+test('a fuzzy candidate is offered with the DM and blank when there is none',()=>{
+ const {engine,state,advance}=fixture();
+ const members=[{id:'1',name:'Alice',suggestedEsoAccountName:'@Alice'},{id:'2',name:'Bob'}];
+ engine.start(state,members,30);advance(600);
+ const job=engine.claim(state,members,30);
+ assert.equal(job.suggestedEsoAccountName,'@Alice');
+ assert.equal(state.campaign.queue.find(entry=>entry.userId==='2').suggestedEsoAccountName,'');
+});
 test('next slot is paced from actual successful completion, not an earlier claim',()=>{
  const {engine,state,advance,members}=fixture();engine.start(state,members,30);advance(600);
  const job=engine.claim(state,members,30);advance(100);

@@ -30,12 +30,19 @@ function fixture({legacy}={}) {
    if(sql.includes('SELECT d.discord_id AS id'))return [members.filter(m=>!links.some(l=>l.discord_user_id===m.id&&l.link_status==='linked'))];
    if(sql.startsWith('SELECT account_name FROM guildsync_roster_members'))return [roster.filter(r=>r.account_name.toLowerCase()===args[0])];
    if(sql.startsWith('SELECT * FROM guildsync_member_links'))return [links.filter(l=>l.eso_account_name.toLowerCase()===args[0]||l.discord_user_id===args[1])];
+   if(sql.startsWith('DELETE FROM guildsync_member_links')){
+    const before=links.length;
+    links=links.filter(l=>String(l.discord_user_id)!==String(args[0])&&l.eso_account_name.toLowerCase()!==String(args[0]).toLowerCase());
+    return [{affectedRows:before-links.length}];
+   }
    if(sql.startsWith('SELECT * FROM discord_members'))return [[{discord_id:args[0],username:'Alice'}]];
    if(sql.startsWith('INSERT INTO guildsync_membership_dm_responses')){
     const [guild,user,displayName,eso,choice,text,at]=args,key=guild+':'+user,previous=responses.get(key);
     responses.set(key,{guild_id:guild,discord_user_id:user,display_name:displayName,eso_account_name:eso??previous?.eso_account_name??null,choice,response_text:text,responded_at:at});
     return [{affectedRows:1}];
    }
+   if(sql.startsWith('SELECT display_name,eso_account_name,choice,response_text,responded_at'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
+   if(sql.startsWith('SELECT link_status FROM guildsync_member_links'))return [links.filter(l=>String(l.discord_user_id)===String(args[0])&&l.eso_account_name.toLowerCase()===String(args[1]).toLowerCase())];
    if(sql.startsWith('SELECT choice,eso_account_name,responded_at FROM guildsync_membership_dm_responses'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
    if(sql.startsWith('SELECT username,global_name,server_nickname FROM discord_members'))return [[{username:'Alice',global_name:'Alice G',server_nickname:null}]];
    if(sql.startsWith('INSERT INTO discord_member_history')){memberHistory.push(args);return [{affectedRows:1}];}
@@ -60,7 +67,8 @@ function fixture({legacy}={}) {
  };
  return {db,service,worker:createMembershipDMWorker({client,guildId:'1',request,log:()=>{}}),request,sends,forwards,
   advance:seconds=>time+=seconds,state:()=>JSON.parse(json),restart:()=>createMembershipDMService(db,options),
-  block:()=>{links=[{eso_account_name:'ESOName',discord_user_id:'30',link_status:'linked'}];},upserts:()=>upserts,responses:()=>[...responses.values()],setRole:id=>roleId=id,
+  block:()=>{links=[{eso_account_name:'ESOName',discord_user_id:'30',link_status:'linked'}];},
+  link:()=>{links=[{eso_account_name:'ESOName',discord_user_id:'10',link_status:'linked'}];},upserts:()=>upserts,links:()=>links.map(l=>l.discord_user_id),responses:()=>[...responses.values()],setRole:id=>roleId=id,
   history:()=>memberHistory,results:()=>[...results.values()],result:userId=>results.get('1:'+userId)};
 }
 test('bot → authenticated backend → persisted send date → modal auto-link → durable forwarding',async()=>{
@@ -88,6 +96,25 @@ test('community choices persist across restart and prevent future campaigns cont
  f.advance(40*86400);await f.restart().command('1','officer','restart');
  assert.deepEqual(f.state().campaign.queue.map(q=>q.userId),['20']);
 });
+test('a removal request stops contact, removes the link and forwards the request without granting a role',async()=>{
+ const f=fixture({legacy:{preferences:{},events:[{eventId:'old',userId:'10',roleAction:'add',roleStatus:'pending',forwardStatus:'sent',retryAt:0}]}});
+ f.setRole('77');await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ f.link();
+ const result=await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'360',choice:'remove'});
+ assert.equal(result.status,'removal requested');
+ assert.match(result.message,/sent to the guild officers/);
+ assert.equal(f.state().preferences['10'],'opt_out','removal means do not contact');
+ assert.deepEqual(f.links(),[],'a member who asked to be removed is not left linked');
+ assert.equal(f.state().events.find(event=>event.eventId==='old').roleStatus,'superseded','an earlier role grant is retired');
+ const removal=f.state().events.at(-1);
+ assert.deepEqual([removal.choice,removal.roleId,removal.roleStatus],['remove','','sent']);
+ const note=f.history().filter(args=>args[4]==='membership_dm_response').at(-1);
+ assert.match(note[7],/^Asked to be removed from the Discord server — membership DMs stopped/);
+ await f.worker.forwardOne();
+ assert.match(f.forwards[0].content,/Asked to be removed from the Discord server/);
+ assert.match(f.forwards[0].content,/Outcome: Removal requested — an officer still needs to remove them/);
+});
+
 test('another recipient cannot submit a form; existing account ownership routes the answer to review',async()=>{
  const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
  const delivery=f.result('10').delivery_id;
@@ -126,6 +153,24 @@ test('the latest response per member stores the choice, ESO name and response ti
  const status=await f.service.command('1','officer','status','10');
  assert.deepEqual(status.member.lastResponse,{choice:'other',accountName:'ESOName',at:1800000630});
 });
+test('an officer can repost one member’s latest stored reply in the card format',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'370',choice:'eso',text:'@ESOName'});
+ const repost=await f.request('repost',{actorId:'officer',userId:'10'});
+ assert.equal(repost.response.choice,'eso');
+ assert.equal(repost.response.result.status,'linked');
+ assert.equal(repost.response.result.accountName,'ESOName');
+ assert.equal(repost.response.at,1800000600);
+ assert.deepEqual([repost.destinationType,repost.destinationId],['channel','99']);
+ await assert.rejects(()=>f.request('repost',{actorId:'stranger',userId:'10'}),/approved/i);
+ await assert.rejects(()=>f.request('repost',{actorId:'officer',userId:'99'}),/No stored membership reply/);
+ await f.worker.repost(repost,'Officer');
+ assert.equal(f.forwards.length,1);
+ assert.match(f.forwards[0].content,/Reposted by Officer/);
+ assert.match(f.forwards[0].content,/Linked ESO account @ESOName/);
+ assert.match(f.forwards[0].content,/<t:1800000600:F>/);
+});
+
 test('unapproved actors and unauthenticated or cross-guild callers cannot run campaigns',async()=>{
  const f=fixture();await assert.rejects(()=>f.service.command('1','stranger','start'),/approved/i);
  for(const state of [{},{guildSyncAuthenticated:true,guildSyncAuthType:'discord-bot',guildSyncBot:{guild_id:'2'}}]){
@@ -218,16 +263,6 @@ test('legacy JSON send dates migrate into the results table and leave the docume
  assert.equal(f.state().deliveries,undefined);
  assert.equal(f.state().testDeliveries.t1.isTest,true,'a saved test delivery still answers its own reply');
 });
-test('the test mode plan is read-only and lists unlinked members',async()=>{
- const f=fixture();
- const before=JSON.stringify(f.state());
- const plan=await f.request('test-plan',{actorId:'officer'});
- assert.deepEqual(plan.members.map(member=>member.name),['Alice','Zebra']);
- assert.equal(plan.config.enabled,true);
- assert.equal(JSON.stringify(f.state()),before,'plan never writes campaign state');
- await assert.rejects(()=>f.request('test-plan',{actorId:'stranger'}),/approved/i);
-});
-
 test('a claim with no result after two minutes becomes uncertain history',async()=>{
  const f=fixture();await f.service.command('1','officer','start');f.advance(600);
  const job=(await f.request('claim')).job;
@@ -288,4 +323,15 @@ test('the preference socket is approved-user only, guild scoped and read-only fo
  registerMembershipDMPreferenceSocket(stranger,f.service,{resolveGuildId:async()=>'',authorize:async()=>false});
  await strangerHandlers['guildsync:membership-dm-preferences']({action:'list'},r=>response=r);
  assert.equal(response.ok,false);
+});
+
+test('marking a Discord member unavailable removes their ESO/Discord link',async()=>{
+ const f=fixture();f.block();
+ assert.deepEqual(f.links(),['30']);
+ await f.service.setPreference('1','30','not_playing');
+ assert.deepEqual(f.links(),[],'an unavailable member is not connected');
+ assert.equal(f.state().preferences['30'],'not_playing');
+ assert.match(f.history().at(-1)[7],/existing ESO\/Discord link removed/);
+ await f.service.setPreference('1','30','');
+ assert.deepEqual(f.links(),[],'clearing the answer does not invent a link');
 });

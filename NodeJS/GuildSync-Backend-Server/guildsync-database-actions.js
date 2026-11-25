@@ -1,10 +1,11 @@
-import {afterEsoIdentityUnlock,getEsoIdentitySourceDB,initializeEsoAccountIdentity,resolveEsoAccountName, withEsoIdentityLock, getEsoAccountRenameHistory, searchEsoAccountNames} from './eso-account-identity.js';
+import {afterEsoIdentityUnlock,esoAccountKey,getEsoIdentitySourceDB,initializeEsoAccountIdentity,resolveEsoAccountName, withEsoIdentityLock, getEsoAccountRenameHistory, searchEsoAccountNames} from './eso-account-identity.js';
 import {initializeRosterNoteAccess} from './roster-note-access.js';
 import {biweeklySalesEndAtOrAfter, monthlySalesEndAtOrAfter, previousMonthlySalesEnd, shiftRaffleSalesEnd, normalizeScheduledSalesEnd} from './raffle-schedule.js';
 import {initializeCommunityStatisticsSchema} from './community-statistics.js';
 import {initializeUserSettingsSchema} from './user-settings.js';
 import {initializeSheetsExportQueue, enqueueSheetsExports, createSheetsExportStore} from './sheets-export-queue.js';
 import { notifyDiscordConfirmedLink } from './discord-onboarding.js';
+import { clearMembershipContactForConfirmedLink, isConfirmedMemberLink } from './membership-dms.js';
 import {validateEsoGuildImport} from './eso-guild-origin.js';
 import { normalizeRaffleDate } from './raffle-date.js';
 import { initializeDiscordOnboardingSchema } from './discord-onboarding-schema.js';
@@ -5357,6 +5358,38 @@ async function removeWeakerMemberAutoLinkCandidates(applicationDB, { esoAccountN
   `, [esoName, discordId, esoName, discordId, confidence, confidence]);
 }
 
+// Opt-outs live in two places: the roster "does not use Discord" flag (keyed by the
+// stable ESO identity) and the membership DM preference (keyed by Discord user). Both
+// mean the member is not connected, so auto-linking must leave them alone.
+async function loadMemberLinkOptOuts(db) {
+  const esoKeys = new Set();
+  const discordIds = new Set();
+  try {
+    const [rosterOptOuts] = await db.execute(`
+      SELECT DISTINCT alias.alias_key
+      FROM guildsync_discord_reminder_members state
+      JOIN guildsync_eso_account_aliases alias ON alias.member_id = state.member_id
+      WHERE state.discord_opt_out = 1
+    `);
+    for (const row of rosterOptOuts) {
+      const key = String(row.alias_key || '').trim().toLowerCase();
+      if (key) esoKeys.add(key);
+    }
+    const [settings] = await db.execute("SELECT value FROM guildsync_settings WHERE setting_key='discord_guild_id'");
+    const guildId = String(settings[0]?.value || '').trim();
+    if (guildId) {
+      const [stateRows] = await db.execute('SELECT state_json FROM guildsync_membership_dm_state WHERE guild_id=?', [guildId]);
+      if (stateRows[0]) {
+        const preferences = JSON.parse(stateRows[0].state_json)?.preferences || {};
+        for (const [userId, value] of Object.entries(preferences)) if (value) discordIds.add(String(userId).trim());
+      }
+    }
+  } catch {
+    // Auto-linking must still run when the preference storage is unavailable.
+  }
+  return { esoKeys, discordIds };
+}
+
 export async function runMemberAutoLinking(db, ...args) {
   return withEsoIdentityLock(db, connection => runMemberAutoLinkingUnlocked(connection, ...args));
 }
@@ -5364,12 +5397,14 @@ export async function runMemberAutoLinking(db, ...args) {
 async function runMemberAutoLinkingUnlocked(applicationDB) {
   const { rosterRows, discordRows, linkRows } = await loadMemberLinkInputs(applicationDB);
   const maps = buildExistingLinkMaps(linkRows);
+  const optOuts = await loadMemberLinkOptOuts(applicationDB);
+  const linkableDiscordRows = discordRows.filter((discord) => !optOuts.discordIds.has(String(discord.discord_id || '').trim()));
 
   let linked = 0;
   let candidates = 0;
   const exactDiscordByName = new Map();
 
-  for (const discord of discordRows) {
+  for (const discord of linkableDiscordRows) {
     if (!discord.discord_id) continue;
 
     for (const candidate of getDiscordNameCandidates(discord)) {
@@ -5388,6 +5423,7 @@ async function runMemberAutoLinkingUnlocked(applicationDB) {
     const normalizedEso = normalizeMemberLinkName(esoName);
 
     if (!esoName || !normalizedEso) continue;
+    if (optOuts.esoKeys.has(esoAccountKey(esoName))) continue;
 
     const exactMatches = exactDiscordByName.get(normalizedEso) || [];
     const usableExactMatches = exactMatches
@@ -5425,7 +5461,7 @@ async function runMemberAutoLinkingUnlocked(applicationDB) {
     }
 
     let best = null;
-    for (const discord of discordRows) {
+    for (const discord of linkableDiscordRows) {
       if (!discord.discord_id) continue;
       if (isMemberLinkPairBlocked(maps, esoName, discord.discord_id)) continue;
 
@@ -5478,6 +5514,22 @@ async function upsertMemberLinkUnlocked(applicationDB, link = {}) {
   if (!esoAccountName) throw new Error('ESO account name is required.');
   if (!discordUserId) throw new Error('Discord user id is required.');
 
+  const linkStatus = link.linkStatus || link.link_status || 'candidate';
+  const linkMethod = String(link.linkMethod || link.link_method || 'none').trim().toLowerCase();
+  const confirmedLink = isConfirmedMemberLink(linkStatus, linkMethod);
+  // Only the change into a confirmed link clears the member's "does not use Discord /
+  // does not play ESO" answers; re-running auto-linking must not undo an officer's
+  // later answer, and fuzzy candidates never clear anything.
+  let pairWasLinked = false;
+  if (confirmedLink) {
+    const [existingPair] = await applicationDB.execute(`
+      SELECT link_status FROM guildsync_member_links
+      WHERE LOWER(eso_account_name) = LOWER(?) AND discord_user_id = ?
+      LIMIT 1
+    `, [esoAccountName, discordUserId]);
+    pairWasLinked = String(existingPair?.[0]?.link_status || '').toLowerCase() === 'linked';
+  }
+
   await applicationDB.execute(`
     INSERT INTO guildsync_member_links (
       eso_account_name,
@@ -5517,6 +5569,7 @@ async function upsertMemberLinkUnlocked(applicationDB, link = {}) {
     Number(link.auto_link_blocked || 0) ? 1 : 0
   ]);
   if ((link.linkStatus || link.link_status) === 'linked') await notifyDiscordConfirmedLink(applicationDB, discordUserId);
+  if (confirmedLink && !pairWasLinked) await clearMembershipContactForConfirmedLink(applicationDB, { discordUserId, esoAccountName, method: linkMethod });
 }
 
 export async function getMemberLinks(applicationDB) {

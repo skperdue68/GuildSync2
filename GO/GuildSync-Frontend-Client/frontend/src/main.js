@@ -1444,13 +1444,25 @@ function renderRosterSortableHeader(column, label, extraClass = '') {
   `;
 }
 
+// Guild ranks lead the filter highest first: Kingpin through Gangster, then any
+// other rank the roster reports so an unexpected name stays selectable.
+function getRosterRankFilterOrder(rankName) {
+  const order = ['kingpin', 'consigliere', 'caporegime', 'capo', 'soldier', 'associate', 'gangster'];
+  const aliases = { caporegieme: 'caporegime', consiglieri: 'consigliere' };
+  const key = String(rankName || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const singular = aliases[key] || key.replace(/s$/, '');
+  const index = order.indexOf(aliases[singular] || singular);
+  return index === -1 ? order.length : index;
+}
+
 function getAllRosterRankNames() {
   return Array.from(new Set([
     'Gangster',
     ...rosterMembers
       .map((member) => String(member.rank || '').trim())
       .filter(Boolean)
-  ])).sort((left, right) => left.localeCompare(right));
+  ])).sort((left, right) => getRosterRankFilterOrder(left) - getRosterRankFilterOrder(right)
+    || left.localeCompare(right));
 }
 
 function renderRosterRankFilterChip(rankName) {
@@ -3628,9 +3640,10 @@ function membershipPreferenceLabel(value) {
 }
 
 function membershipResponseLabel(choice) {
-  if (choice === 'eso') return 'Provided an ESO account';
-  if (choice === 'community') return 'Not in the guild; staying on Discord';
+  if (choice === 'eso') return 'Provided an ESO login';
+  if (choice === 'community') return 'Still plays ESO, not in the guild; staying on Discord';
   if (choice === 'not_playing') return 'No longer plays ESO; staying on Discord';
+  if (choice === 'remove') return 'Asked to be removed from the server';
   return 'Other response';
 }
 

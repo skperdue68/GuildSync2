@@ -1,22 +1,23 @@
-import {ActionRowBuilder,ButtonBuilder,ButtonStyle,MessageFlags,ModalBuilder,TextInputBuilder,TextInputStyle,Events} from 'discord.js';
+import {ActionRowBuilder,ButtonBuilder,ButtonStyle,ModalBuilder,TextInputBuilder,TextInputStyle,Events} from 'discord.js';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {createFileDMIntake,createMemoryDMIntake} from './membership-dm-intake.js';
 
 const nonce=id=>createHash('sha256').update(String(id)).digest('hex').slice(0,24);
 const safeText=value=>String(value||'').replace(/([\\`*_~|<>])/g,'\\$1');
-const choices=[['eso','Provide my ESO account'],['community','Not in guild; keep Discord'],['not_playing','No longer play ESO; stay'],['other','Other response']];
-export function membershipDMMessage(job,config,{name,guildName,position,total}={}) {
-  const recipient=job.simulated?`${safeText(name)}${job.userId?` (${safeText(job.userId)})`:''}`:'';
-  const lead=job.simulated?`Test mode ${position||1}${total?` of ${total}`:''} — this is what ${recipient} would receive.\n\n`:'';
-  const footer=job.simulated?'\n\nSimulation only. No response, account link, preference or role is saved.'
-    :'\n\nYour answers are forwarded to guild officers.'+(job.isTest?' This is a test; replies will not change account links, preferences or roles.':'');
-  // Simulated messages render the member-facing body verbatim: no [TEST] prefix.
-  const content=lead+(job.isTest&&!job.simulated?'[TEST] ':'')+config.template.replace(/\{(name|guild)\}/g,(_,key)=>safeText(key==='name'?name:guildName))+footer;
+const choices=[['eso',"I'm in Alphabet Mafia — link my ESO login"],['community',"I still play ESO, but I'm not in Alphabet Mafia"],['not_playing','I no longer play ESO — keep me on Discord'],['remove','Request removal'],['other','Other response']];
+export function membershipDMMessage(job,config,{name,guildName}={}) {
+  const suggestion=String(job.suggestedEsoAccountName||'').trim().replace(/^@+/,'');
+  const suggestionLine=suggestion?`\n\nWe think your ESO account may be @${safeText(suggestion)}. If that’s yours, you can confirm it with the link button below; otherwise, send us the correct name.`:'';
+  const forwardNotice='Your responses will be forwarded to guild officers.';
+  const footer=(config.template.includes(forwardNotice)?'':'\n\n'+forwardNotice)
+    +(job.isTest?'\n\nThis is a test; replies will not change account links, preferences or roles.':'');
+  const content=(job.isTest?'[TEST] ':'')+config.template.replace('{suggested_link}',suggestionLine)
+    .replace(/\{(name|guild)\}/g,(_,key)=>safeText(key==='name'?name:guildName))+footer;
   if(content.length>2000)throw Error('Rendered membership DM exceeds Discord’s message limit.');
   return {content,allowedMentions:{parse:[]},nonce:nonce(job.id),enforceNonce:true,
     components:[new ActionRowBuilder().addComponents(choices.map(([choice,label])=>new ButtonBuilder()
-      .setCustomId(`${job.simulated?'gs-membership-sim':'gs-membership'}:${job.id}:${choice}`).setLabel(label).setStyle(choice==='eso'?ButtonStyle.Primary:ButtonStyle.Secondary)))]};
+      .setCustomId(`gs-membership:${job.id}:${choice}`).setLabel(label).setStyle(choice==='eso'?ButtonStyle.Primary:ButtonStyle.Secondary)))]};
 }
 
 export function membershipDMRequest(socket,guildId,action,payload={}) {
@@ -31,9 +32,10 @@ export function membershipDMRequest(socket,guildId,action,payload={}) {
 }
 
 export function membershipChoiceSummary(choice) {
-  if(choice==='eso')return 'provided an ESO account';
-  if(choice==='community')return 'not in the guild, staying on Discord';
-  if(choice==='not_playing')return 'no longer plays ESO, staying on Discord';
+  if(choice==='eso')return 'provided an ESO login';
+  if(choice==='community')return 'still plays ESO but is not in the guild; staying on Discord';
+  if(choice==='not_playing')return 'no longer plays ESO; staying on Discord';
+  if(choice==='remove')return 'asked to be removed from the Discord server';
   return 'other response';
 }
 
@@ -57,7 +59,7 @@ export function formatMembershipStatus({campaign,member,recentFailures=[]}={}) {
   ]:['No membership DM campaign has been started.'];
   if(member)lines.push(`User ${member.userId}: last confirmed DM ${member.history?.sentAt?`<t:${member.history.sentAt}:f>`:'Never'}; ${member.preference?`preference: ${membershipPreferenceLabel(member.preference)}`:'preference: None'}${member.history?.uncertain?'; delivery uncertain—review before retrying':''}${!member.history?.sentAt&&member.history?.status?`; last attempt ${member.history.status}${member.history.reason?`: ${safeText(member.history.reason)}`:''}`:''}`);
   if(member?.lastResponse)lines.push(`Last response: ${membershipChoiceSummary(member.lastResponse.choice)}${member.lastResponse.accountName?` — ESO @${safeText(member.lastResponse.accountName)}`:''}${member.lastResponse.at?` (<t:${member.lastResponse.at}:f>)`:''}`);
-  if(campaign?.uncertainMembers?.length)lines.push(`Uncertain deliveries: ${campaign.uncertainMembers.map(entry=>`${safeText(entry.name)} (${entry.userId})`).join(', ')}. Resolve each with /discord-reminders resolve.`);
+  if(campaign?.uncertainMembers?.length)lines.push(`Uncertain deliveries: ${campaign.uncertainMembers.map(entry=>`${safeText(entry.name)} (${entry.userId})`).join(', ')}. Resolve each with /membership-dm resolve.`);
   // Failed, uncertain and skipped attempts keep their reason and time, so an
   // officer can see which members never received a DM instead of only that the
   // last send did not match.
@@ -67,15 +69,43 @@ export function formatMembershipStatus({campaign,member,recentFailures=[]}={}) {
   return lines.join('\n');
 }
 
-export function formatMembershipReplyChoice(choice,text,guildName) {
-  const value=String(text||'').trim();
-  if(choice==='eso')return `I play ESO — my ESO account name is ${value?`@${value.replace(/^@+/,'')}`:'not supplied'}`;
-  if(choice==='community')return `I am no longer in ${guildName} but would like to stay on Discord`;
-  if(choice==='not_playing')return 'I do not play ESO but would like to stay on Discord';
-  if(!value)return 'Other response';
-  return value.length<=200?`Other response: ${value}`:'Other response (full text below)';
+const fenceText=value=>String(value||'').replace(/```/g,"'''");
+function replyFacts(event,guildName) {
+ const typed=String(event.text||'').trim();
+ if(event.choice==='eso'){
+  const account=String(event.result?.accountName||'').trim().replace(/^@+/,'')||typed.replace(/^@+/,'');
+  const login=account?`I'm in ${safeText(guildName)} — my ESO login is @${fenceText(account)}`:'';
+  return event.result?.status==='linked'
+    ?{summary:`Linked ESO account${account?` @${safeText(account)}`:''}`,outcome:`Linked to${account?` @${safeText(account)}`:' the ESO account'}`,box:login}
+    :{summary:'ESO account submitted for officer review',outcome:'ESO account submitted for officer review',box:login};
+ }
+ if(event.choice==='community')return {summary:`Still plays ESO, not in ${safeText(guildName)}`,outcome:'Preference saved — membership DMs stopped',box:''};
+ if(event.choice==='not_playing')return {summary:'No longer plays ESO — staying on Discord',outcome:'Preference saved — membership DMs stopped',box:''};
+ if(event.choice==='remove')return {summary:'Asked to be removed from the Discord server',outcome:'Removal requested — an officer still needs to remove them',box:''};
+ return {summary:'Sent another response',outcome:'Response forwarded',box:typed};
 }
-
+// The officer-facing card: a timestamp line, a bold answer summary, the member’s
+// own words in a fenced box when they typed any, then muted routing details. The
+// same renderer serves live forwarding and an on-demand repost of a stored reply.
+export function membershipReplyMessage(event,{guildName='Guild',repostedBy='',nonceKey}={}) {
+ const {summary,outcome,box:boxText}=replyFacts(event,guildName);
+ const name=safeText(event.name||`User ${event.userId}`);
+ const head=`${event.isTest?'[TEST] ':''}📨 <t:${event.at}:F>\n\n**${name}** answered the membership DM: **${summary}**.`;
+ const box=value=>'\n\n**Member response:**\n```text\n'+fenceText(value)+'\n```';
+ const meta=[`Server: ${safeText(guildName)}`,`Discord: ${name} (${event.userId})`,
+  `Outcome: ${event.isTest?'Test response — nothing changed':outcome}`];
+ if(event.roleNote)meta.push(String(event.roleNote).replace(/^\n+/,''));
+ if(repostedBy)meta.push(`Reposted by ${safeText(repostedBy)}`);
+ const tail=`\n\n${meta.join(' · ')}`;
+ const full=head+(boxText?box(boxText):'')+tail;
+ const value={allowedMentions:{parse:[]},nonce:nonce(nonceKey||('forward-'+event.eventId)),enforceNonce:true};
+ if(full.length<=1950)return {...value,content:full};
+ const note='\n\n[Full response attached]';
+ const room=Math.max(0,1950-(head.length+tail.length+note.length+'\n\n**Member response:**\n```text\n\n```'.length));
+ const clipped=boxText.length>room?boxText.slice(0,Math.max(0,room-1))+'…':boxText;
+ return {...value,content:head+(clipped?box(clipped):'')+tail+note,
+  files:[{attachment:Buffer.from(full,'utf8'),name:`membership-response-${event.eventId||'reply'}.txt`}]};
+}
 export function createMembershipDMWorker({client,guildId,request,log=console.log,intake=createMemoryDMIntake()}) {
   let busy=false;
   async function deliver({job,config}) {
@@ -145,14 +175,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       let displayName=event.name;
       try{displayName=(await guild?.members?.fetch?.(event.userId))?.displayName||displayName;}catch{}
       const guildName=guild?.name||String(guildId);
-      const choiceLine=formatMembershipReplyChoice(event.choice,event.text,guildName);
-      const header=`${event.isTest?'[TEST] ':''}GuildSync membership reply\nServer: ${safeText(guildName)}\nDiscord: ${safeText(displayName)} (${event.userId})\nChoice: ${safeText(choiceLine)}\nOutcome: ${event.result.status}${event.result.accountName?' — ESO @'+safeText(event.result.accountName):''}\nReceived: <t:${event.at}:f>${roleNote}`;
-      const replyText=String(event.text||'').trim();
-      const body=replyText&&!choiceLine.includes(replyText)?replyText:'';
-      const full=body?`${header}\n\n${body}`:header;
-      const content=full.length<=1950?full:header+(body?`\n\n${body.slice(0,Math.max(0,1750-header.length)).trimEnd()}`:'')+'\n[Full response attached]';
-      await destination.send({content,allowedMentions:{parse:[]},nonce:nonce('forward-'+event.eventId),enforceNonce:true,
-        ...(full.length>1950?{files:[{attachment:Buffer.from(full,'utf8'),name:`membership-response-${event.eventId}.txt`}]}:{})});
+      await destination.send(membershipReplyMessage({...event,name:displayName,roleNote},{guildName,nonceKey:'forward-'+event.eventId}));
       success=true;
     }catch(error){log('Membership reply forwarding will retry: '+error.message);}
     finally{await request('finish-forward',{eventId:event.eventId,token:event.token,success,roleSuccess});}
@@ -174,21 +197,23 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       catch(error){if(error.code==='NO_MEMBERSHIP_DM')await intake.remove(event.payload.eventId);else throw error;}
     }
   }
+  async function repost({response,destinationType,destinationId},officerName) {
+    const guild=await client.guilds.fetch(guildId);
+    const destination=destinationType==='user'?await client.users.fetch(destinationId):await client.channels.fetch(destinationId);
+    if(destinationType==='channel'&&destination?.guildId!==guildId)throw Error('Reply destination must be in the configured Discord server.');
+    if(typeof destination?.send!=='function')throw Error('Reply destination cannot receive messages.');
+    return destination.send(membershipReplyMessage(response,{guildName:guild?.name||String(guildId),repostedBy:officerName,
+      nonceKey:`repost-${response.userId}-${response.at}-${Date.now()}`}));
+  }
   async function interaction(interaction) {
-    // Test mode buttons are answered here so no backend delivery or response is created.
-    const simulated=/^gs-membership-sim:([0-9a-f-]{36}):(eso|community|not_playing|other)$/i.exec(interaction.customId||'');
-    if(simulated&&!interaction.inGuild?.()){
-      if(interaction.isButton?.()||interaction.isModalSubmit?.())await interaction.reply({content:'Test mode simulation only. Nothing was saved.',flags:[MessageFlags.Ephemeral]}).catch(()=>{});
-      return true;
-    }
-    const match=/^gs-membership:([0-9a-f-]{36}):(eso|community|not_playing|other)$/i.exec(interaction.customId||'');
+    const match=/^gs-membership:([0-9a-f-]{36}):(eso|community|not_playing|remove|other)$/i.exec(interaction.customId||'');
     if(!match||interaction.inGuild?.())return false;
     const [,deliveryId,choice]=match;
     try{
       if(interaction.isButton()&&(choice==='eso'||choice==='other')){
-        const input=new TextInputBuilder().setCustomId('response').setLabel(choice==='eso'?'Your ESO account name (include @)':'Your response')
+        const input=new TextInputBuilder().setCustomId('response').setLabel(choice==='eso'?'Your ESO login (include @)':'Your response')
           .setStyle(choice==='eso'?TextInputStyle.Short:TextInputStyle.Paragraph).setRequired(true).setMaxLength(choice==='eso'?64:4000);
-        await interaction.showModal(new ModalBuilder().setCustomId(interaction.customId).setTitle(choice==='eso'?'Link your ESO account':'Membership response')
+        await interaction.showModal(new ModalBuilder().setCustomId(interaction.customId).setTitle(choice==='eso'?'Link your Alphabet Mafia account':'Membership response')
           .addComponents(new ActionRowBuilder().addComponents(input)));
         return true;
       }
@@ -205,7 +230,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       return true;
     }
   }
-  return {sendNext,forwardOne,interaction,retryIntake,
+  return {sendNext,forwardOne,repost,interaction,retryIntake,
     async test(actorId,targetId){const work=await request('test',{actorId,targetId});return deliver(work);},
     async tick(){
       if(busy||!client.isReady()||!guildId)return;
