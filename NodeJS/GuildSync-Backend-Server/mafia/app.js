@@ -15,12 +15,14 @@ const state = {
   start: null,
   end: null,
   total: 0,
+  latest: 0,
   ids: new Set()
 };
 
 const elements = {
   body: document.getElementById('chat-body'),
   summary: document.getElementById('table-summary'),
+  latestData: document.getElementById('latest-data'),
   lastUpdate: document.getElementById('last-update'),
   error: document.getElementById('table-error'),
   tableScroll: document.getElementById('table-scroll'),
@@ -114,6 +116,15 @@ function setError(message) {
 
 function markUpdated() {
   elements.lastUpdate.textContent = `Last update: ${formatLocalDate(new Date())}`;
+}
+
+// The newest message stored in the archive, independent of the filters on screen.
+function markLatest(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value <= 0 || value <= state.latest) return;
+
+  state.latest = value;
+  elements.latestData.textContent = `Most recent data: ${formatLocalTimestamp(value)}`;
 }
 
 function showUpdateBanner(message) {
@@ -382,6 +393,7 @@ async function loadMessages() {
 
     state.total = Number(payload.total) || 0;
     renderMessages(payload.messages);
+    markLatest(payload.latest);
     markUpdated();
   } catch (error) {
     if (error.name === 'AbortError' || sequence !== requestSequence) return;
@@ -496,6 +508,10 @@ function connectLiveFeed() {
   socket.on('chat-updated', detail => {
     const messages = Array.isArray(detail?.messages) ? detail.messages : [];
     const inserted = applyLiveMessages(messages);
+
+    if (messages.length > 0) {
+      markLatest(Math.max(...messages.map(message => Number(message.message_timestamp) || 0)));
+    }
 
     if (inserted > 0) {
       markUpdated();

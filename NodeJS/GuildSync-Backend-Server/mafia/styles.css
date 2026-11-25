@@ -25,7 +25,7 @@ body {
 
 .page {
   width: 100%;
-  max-width: 1240px;
+  max-width: 1720px;
   margin: 0 auto;
   padding: 24px 24px 48px;
   display: flex;
@@ -448,6 +448,7 @@ th[aria-sort="descending"] .sort-indicator::after {
   color: #cbd5e1;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  text-align: right;
 }
 
 .cell-sender {
@@ -483,11 +484,18 @@ th[aria-sort="descending"] .sort-indicator::after {
   color: #94a3b8;
 }
 
-.footer-status {
+.footer-times {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
   flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.latest-data {
+  color: #cbd5e1;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .last-update {
@@ -538,4 +546,30 @@ th[aria-sort="descending"] .sort-indicator::after {
   .chat-table {
     min-width: 720px;
   }
+}
+
+/* Scrollbars anywhere on the page: navy track, blue thumb, matching the cards. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 165, 250, 0.5) rgba(7, 12, 24, 0.6);
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: rgba(7, 12, 24, 0.6);
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid rgba(7, 12, 24, 0.6);
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.5);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(147, 197, 253, 0.75);
 }

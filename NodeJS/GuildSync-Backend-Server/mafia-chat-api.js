@@ -135,6 +135,14 @@ export async function queryMafiaChatMessages(db, options) {
   );
   const total = Number(countRows?.[0]?.total ?? 0);
 
+  // Newest message stored overall, not just the filtered page, so the page can
+  // say how current the archive is even while a range is applied.
+  const [latestRows] = await db.execute(
+    'SELECT MAX(message_timestamp) AS latest FROM guildsync_guild_chat_messages'
+  );
+  const latestSeconds = Number(latestRows?.[0]?.latest ?? 0);
+  const latest = Number.isFinite(latestSeconds) && latestSeconds > 0 ? latestSeconds : null;
+
   const [rows] = await db.execute(
     `SELECT id, sender, message_text, message_timestamp, data_source, uploaded_by, received_at
      FROM guildsync_guild_chat_messages
@@ -144,7 +152,7 @@ export async function queryMafiaChatMessages(db, options) {
     [...params, options.limit, options.offset]
   );
 
-  return {total, messages: (Array.isArray(rows) ? rows : []).map(mapMafiaChatRow)};
+  return {total, latest, messages: (Array.isArray(rows) ? rows : []).map(mapMafiaChatRow)};
 }
 
 export function createMafiaChatRouter({getDb, log = () => {}} = {}) {
@@ -154,12 +162,13 @@ export function createMafiaChatRouter({getDb, log = () => {}} = {}) {
     try {
       const options = parseMafiaChatQuery(req.query || {});
       const db = await getDb();
-      const {total, messages} = await queryMafiaChatMessages(db, options);
+      const {total, latest, messages} = await queryMafiaChatMessages(db, options);
 
       res.set('Cache-Control', 'no-store');
       res.json({
         ok: true,
         total,
+        latest,
         limit: options.limit,
         offset: options.offset,
         sort: options.sort,

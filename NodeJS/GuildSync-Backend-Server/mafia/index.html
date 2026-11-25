@@ -63,7 +63,7 @@
         <table class="chat-table">
           <thead>
             <tr>
-              <th scope="col" data-sort="time" aria-sort="descending">
+              <th scope="col" data-sort="time" class="align-right" aria-sort="descending">
                 <button class="sort-button" type="button">Local time<span class="sort-indicator" aria-hidden="true"></span></button>
               </th>
               <th scope="col" data-sort="sender" class="align-right">
@@ -78,11 +78,12 @@
         </table>
       </div>
       <div class="table-footer">
-        <span class="footer-status">
-          <span id="table-summary">Loading…</span>
+        <span id="table-summary">Loading…</span>
+        <span id="table-error" class="table-error" role="alert" hidden></span>
+        <span class="footer-times">
+          <span id="latest-data" class="latest-data">Most recent data: —</span>
           <span id="last-update" class="last-update">Last update: —</span>
         </span>
-        <span id="table-error" class="table-error" role="alert" hidden></span>
       </div>
     </section>
   </div>

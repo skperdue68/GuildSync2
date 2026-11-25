@@ -10,12 +10,13 @@ import {
   queryMafiaChatMessages
 } from './mafia-chat-api.js';
 
-function fakeDb({rows = [], total = 0} = {}) {
+function fakeDb({rows = [], total = 0, latestTimestamp = 1795636999} = {}) {
   const calls = [];
   return {
     calls,
     async execute(sql, params = []) {
       calls.push({sql: sql.replace(/\s+/g, ' ').trim(), params});
+      if (/MAX\(message_timestamp\)/.test(sql)) return [[{latest: latestTimestamp}], []];
       if (/COUNT\(\*\)/.test(sql)) return [[{total}], []];
       return [rows, []];
     }
@@ -110,6 +111,10 @@ test('the query orders by the whitelisted column and keeps the filters as parame
     received_at: '2026-11-25T21:18:14.000Z'
   });
 
+  // The newest stored message is reported unfiltered, for the footer stamp.
+  assert.equal(db.calls[1].sql, 'SELECT MAX(message_timestamp) AS latest FROM guildsync_guild_chat_messages');
+  assert.deepEqual(db.calls[1].params, []);
+
   const select = db.calls.at(-1);
   assert.match(select.sql, /ORDER BY sender ASC, id ASC/);
   assert.match(select.sql, /LIMIT \? OFFSET \?/);
@@ -151,6 +156,7 @@ test('the messages route answers with the filtered page', async () => {
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(payload.ok, true);
     assert.equal(payload.total, 1);
+    assert.equal(payload.latest, 1795636999);
     assert.equal(payload.sort, 'sender');
     assert.equal(payload.dir, 'asc');
     assert.equal(payload.messages[0].sender, '@thelamb_sauce');

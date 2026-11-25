@@ -57,6 +57,10 @@ test('the sender column is right justified and every row carries the tooltip', (
   assert.match(html, /data-sort="sender" class="align-right"/);
   assert.match(ruleBody('.align-right .sort-button'), /justify-content:\s*flex-end/);
 
+  // Local time right-justifies with its header, close to the sender text.
+  assert.match(ruleBody('.cell-time'), /text-align:\s*right/);
+  assert.match(html, /data-sort="time" class="align-right"/);
+
   // Hovering anywhere on the row shows the receive time and the uploader.
   assert.match(client, /const row = event\.target\.closest\('tr'\)/);
   assert.match(client, /tooltipLine\('Received'/);
@@ -181,6 +185,30 @@ test('stored chat rows notify the mafia listener only, and only when rows were i
   const callAt = server.indexOf('broadcastMafiaChatUpdate({inserted: insertedIds.length, ids: insertedIds});');
   assert.ok(guardAt > 0, 'the inserted-rows guard was not found');
   assert.ok(callAt > guardAt, 'the broadcast must sit behind the inserted-rows guard');
+});
+
+test('the footer shows the newest data time first and the last update second', () => {
+  const footerStart = html.indexOf('<div class="table-footer">');
+  const footer = html.slice(footerStart, html.indexOf('</div>', footerStart));
+  const latestAt = footer.indexOf('id="latest-data"');
+  const updatedAt = footer.indexOf('id="last-update"');
+
+  assert.ok(latestAt > 0 && updatedAt > latestAt, 'most recent data must come first');
+  assert.match(html, /Most recent data: —/);
+  assert.match(ruleBody('.footer-times'), /margin-left:\s*auto/);
+  assert.match(ruleBody('.last-update'), /font-weight:\s*700/);
+
+  // The server reports the newest stored message; pushes bump it too.
+  assert.match(client, /function markLatest\(/);
+  assert.match(client, /markLatest\(payload\.latest\)/);
+  assert.match(client, /markLatest\(Math\.max\(\.\.\.messages/);
+});
+
+test('the page fills more of the screen and the scrollbars match the site', () => {
+  assert.match(ruleBody('.page'), /max-width:\s*1720px/);
+  assert.match(css, /scrollbar-color:\s*rgba/);
+  assert.match(css, /::-webkit-scrollbar-track/);
+  assert.match(css, /::-webkit-scrollbar-thumb/);
 });
 
 test('the site files are served as a plain static app', async () => {
