@@ -51,7 +51,7 @@ test('retry revalidates opt-outs and confirmed links and returns a cancellation 
 });
 test('foreign installation acknowledgements are skipped without disabling other accounts',async()=>{
  const {db}=batchDatabase();const service=createDiscordReminders(db,{guildId:'123',now:()=>now});
- assert.deepEqual(await service.acknowledge('other-officer',[{batchId:'foreign',status:'sent'}]),{processed:0});
+ assert.deepEqual(await service.acknowledge('other-officer',[{batchId:'foreign',status:'sent'}]),{processed:0,confirmed:[]});
 });
 test('confirmed send accepts ESO seconds and writes the send date, never on a failed outcome',async()=>{
  for(const status of ['sent','failed']){
@@ -143,4 +143,31 @@ test('reset is available to officers and reported over the socket',async()=>{
   {authorize:async()=>'admin',officerAccess:async()=>true});
  let response;await handlers['guildsync:discord-reminders']({action:'reset'},r=>response=r);
  assert.equal(response.ok,true);assert.equal(response.deletedRequests,3);assert.equal(response.deletedBatches,1);
+});
+
+test('a confirmed reminder mail records one roster history note with the sending officer',async()=>{
+ const {db,data,request}=batchDatabase();
+ request.record_json=JSON.stringify({...JSON.parse(request.record_json),rank:'Associate'});
+ await createDiscordReminders(db,{guildId:'123',now:()=>now}).acknowledge('officer',[{batchId:'batch',requestId:'request',status:'sent',guildId:'123',sendingAccount:'@Officer',worldName:'NA Megaserver',sentAt:now.getTime()/1000-10}]);
+ const rows=data.updates.filter(update=>update.sql.includes('INSERT IGNORE INTO guildsync_roster_events'));
+ assert.equal(rows.length,1);
+ assert.equal(rows[0].args[0],'reminder-request');
+ assert.deepEqual(rows[0].args.slice(1,4),['Member','Discord reminder sent','Associate']);
+ assert.equal(rows[0].args[5],'Officer');
+});
+test('failed and test acknowledgements leave no roster history note',async()=>{
+ for(const setup of [{status:'failed'},{status:'sent',isTest:true}]){
+  const {db,data,request}=batchDatabase();
+  request.record_json=JSON.stringify({...JSON.parse(request.record_json),isTest:Boolean(setup.isTest)});
+  await createDiscordReminders(db,{guildId:'123',now:()=>now}).acknowledge('officer',[{batchId:'batch',requestId:'request',status:setup.status,guildId:'123',sendingAccount:'@Officer',worldName:'NA Megaserver',sentAt:now.getTime()/1000-10}]);
+  assert.equal(data.updates.some(update=>update.sql.includes('guildsync_roster_events')),false);
+ }
+});
+test('acknowledgements report which saved results can be pruned',async()=>{
+ const {db,request}=batchDatabase();
+ const service=createDiscordReminders(db,{guildId:'123',now:()=>now});
+ const ack={batchId:'batch',requestId:'request',status:'sent',guildId:'123',sendingAccount:'@Officer',worldName:'NA Megaserver',sentAt:now.getTime()/1000-10};
+ assert.deepEqual(await service.acknowledge('officer',[ack]),{processed:1,confirmed:['request']});
+ request.status='sent';
+ assert.deepEqual(await service.acknowledge('officer',[ack]),{processed:0,confirmed:['request']});
 });

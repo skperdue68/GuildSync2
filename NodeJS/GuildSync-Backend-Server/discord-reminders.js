@@ -230,6 +230,7 @@ export function createDiscordReminders(db,{guildId='',guildName='',now=()=>new D
       if(!Array.isArray(acks)||acks.length>1000)throw Error('Invalid reminder acknowledgements.');
       return transaction(async c=>{
         let processed=0;
+        const confirmed=[];
         for(const ack of acks) {
           if(!['sent','failed','uncertain'].includes(ack.status))throw Error('Invalid mail status.');
           const [known]=await c.execute('SELECT guild_id FROM guildsync_discord_reminder_batches WHERE batch_id=?',[String(ack.batchId||'')]);
@@ -237,15 +238,29 @@ export function createDiscordReminders(db,{guildId='',guildName='',now=()=>new D
           const data=await batch(c,String(ack.batchId||''),null);
           const record=data.records.find(r=>r.requestId===ack.requestId);
           if(!record || record.guildId!==String(ack.guildId) || record.worldName!==ack.worldName || esoAccountKey(record.sendingAccount)!==esoAccountKey(ack.sendingAccount))throw Error('Acknowledgement does not match its reminder request.');
-          if(record.status==='sent'||(record.status==='cancelled'&&ack.status!=='sent'))continue;
+          // Already settled rows need no update, but their saved acknowledgement has
+          // been delivered and can be removed from the add-on file.
+          if(record.status==='sent'){confirmed.push(record.requestId);continue;}
+          if(record.status==='cancelled'&&ack.status!=='sent'){confirmed.push(record.requestId);continue;}
           const sent=ack.status==='sent'?new Date(typeof ack.sentAt==='number'?ack.sentAt*1000:ack.sentAt):null;
           if(sent && (!Number.isFinite(sent.getTime()) || sent>now() || sent<new Date(data.created_at)))throw Error('Invalid confirmed send timestamp.');
           await c.execute('UPDATE guildsync_discord_reminder_requests SET status=?,sent_at=?,detail=? WHERE request_id=?',[ack.status,sent,String(ack.detail||'').slice(0,255),ack.requestId]);
-          if(sent&&!record.isTest)await c.execute(`INSERT INTO guildsync_discord_reminder_members(member_id,reminder_sent_at) VALUES(?,?)
-            ON DUPLICATE KEY UPDATE reminder_sent_at=GREATEST(COALESCE(reminder_sent_at,VALUES(reminder_sent_at)),VALUES(reminder_sent_at))`,[record.memberId,sent]);
+          if(sent&&!record.isTest) {
+            await c.execute(`INSERT INTO guildsync_discord_reminder_members(member_id,reminder_sent_at) VALUES(?,?)
+              ON DUPLICATE KEY UPDATE reminder_sent_at=GREATEST(COALESCE(reminder_sent_at,VALUES(reminder_sent_at)),VALUES(reminder_sent_at))`,[record.memberId,sent]);
+            // Roster history answers "were they asked to set up Discord, and when?".
+            // The event id is derived from the request so repeated acknowledgements
+            // of the same reminder are ignored instead of duplicated.
+            await c.execute(`INSERT IGNORE INTO guildsync_roster_events(event_id,account_name,event_type,rank_name,event_timestamp,officer_account_name)
+              VALUES(?,?,?,?,?,?)`,[`reminder-${String(record.requestId).replace(/-/g,'').slice(0,23)}`,
+              String(record.recipient||'').trim().replace(/^@+/,''),'Discord reminder sent',
+              record.rank?String(record.rank).slice(0,20):null,String(Math.floor(sent.getTime()/1000)),
+              record.sendingAccount?String(record.sendingAccount).trim().replace(/^@+/,''):null]);
+          }
           processed++;
+          confirmed.push(ack.requestId);
         }
-        return {processed};
+        return {processed,confirmed};
       });
     }
   };

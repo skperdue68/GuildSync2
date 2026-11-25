@@ -95,16 +95,46 @@ export async function exportReminderBatch({request,bridge,batchId,account,world,
 
 export async function syncReminderAcks(bridge,request) {
   const data=checked(await bridge.CollectDiscordReminderSavedVars());
+  // Delivery results upload before any queue rewrite. ESO refuses a write while it
+  // is running (for example right after /reloadui), and that refusal must never
+  // leave confirmed mail stranded at 'exported'.
+  const acks=data.acks||[];
+  const confirmed=[];
+  for(let offset=0;offset<acks.length;offset+=250){
+    const response=checked(await request({action:'acknowledge',acks:acks.slice(offset,offset+250)}));
+    for(const id of response.confirmed||[])confirmed.push(String(id));
+  }
+  // The database now holds these results, so their saved copies are pruned from the
+  // add-on to keep GuildSyncDiscordReminder.lua small and each later sync short.
+  // ESO must be closed to rewrite the file; the native side stores the request and
+  // applies it once ESO exits.
+  let cleaned=0;
+  if(confirmed.length&&typeof bridge.CleanupDiscordReminderMailAcks==='function'){
+    const cleanup=await bridge.CleanupDiscordReminderMailAcks(confirmed);
+    if(cleanup&&!cleanup.ok)throw Error(cleanup.message||'Discord reminder acknowledgement cleanup failed.');
+    cleaned=Number(cleanup?.removedCount||0);
+  }
   const ids=(data.queued||[]).map(r=>r.requestId);
+  let deferred=0;
   for(let offset=0;offset<ids.length;offset+=250){
     const {records=[]}=checked(await request({action:'reconcile',requestIds:ids.slice(offset,offset+250)}));
     const groups=new Map();
     for(const record of records){const key=JSON.stringify([record.sendingAccount,record.worldName]);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(record);}
-    for(const [key,items] of groups){const [account,world]=JSON.parse(key);checked(await bridge.WriteDiscordReminderQueue(account,world,items));}
+    for(const [key,items] of groups){
+      const [account,world]=JSON.parse(key);
+      const result=await bridge.WriteDiscordReminderQueue(account,world,items);
+      if(result?.ok)continue;
+      if(!esoRunningMessage(result?.message))checked(result);
+      // Cancelled requests stay in the add-on queue until ESO closes. Keep them in
+      // the pending-write queue so the normal watcher removes them once ESO is gone.
+      const byBatch=new Map();
+      for(const record of items){const id=String(record.batchId||'');if(!id)continue;if(!byBatch.has(id))byBatch.set(id,[]);byBatch.get(id).push(record);}
+      for(const [batchId,records] of byBatch)queueReminderWrite({batchId,account,world,records});
+      deferred+=items.length;
+      startReminderWriteWatcher({bridge,request});
+    }
   }
-  const acks=data.acks||[];
-  for(let offset=0;offset<acks.length;offset+=250)checked(await request({action:'acknowledge',acks:acks.slice(offset,offset+250)}));
-  return data;
+  return {...data,deferred,cleaned};
 }
 
 export function createDiscordReminderControls({request,bridge,canEdit,changed}) {
@@ -197,7 +227,14 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
   if(desktop)startReminderWriteWatcher({bridge,request});
   return {open,canOpen,resetAccess(){officerAccess=false;},
     async refreshAccess(){officerAccess=false;if(!canEdit())return false;try{officerAccess=Boolean(checked(await request({action:'access'})).officer);}catch{officerAccess=false;}return officerAccess;},
-    async sync(){if(canOpen()&&desktop){await syncReminderAcks(bridge,request);await changed();}},
+    async sync(){
+      if(!canOpen()||!desktop)return null;
+      const data=await syncReminderAcks(bridge,request);await changed();
+      const acks=data?.acks||[];
+      return {acks:acks.length,sent:acks.filter(ack=>ack.status==='sent').length,
+        failed:acks.filter(ack=>ack.status==='failed').length,uncertain:acks.filter(ack=>ack.status==='uncertain').length,
+        deferred:Number(data?.deferred||0),cleaned:Number(data?.cleaned||0)};
+    },
     wire(root){
       const button=root?.querySelector('#openDiscordRemindersButton');
       if(button)button.onclick=open;
