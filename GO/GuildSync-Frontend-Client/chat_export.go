@@ -91,7 +91,7 @@ func (a *App) CollectGuildSyncChatData(event GuildSyncSavedVarsFileModifiedEvent
 	}
 
 	sections := guildSyncChatSections(parsedMap)
-	if len(sections.accounts) == 0 {
+	if sections.sections == 0 {
 		baseResult.Message = fmt.Sprintf("Could not find an ESO account section under %s.", extracted.tableName)
 		return baseResult
 	}
@@ -250,6 +250,7 @@ func getChatSavedVarsTableNames() []string {
 
 type guildSyncChatCollection struct {
 	accounts []string
+	sections int
 	entries  []interface{}
 }
 
@@ -285,6 +286,10 @@ func guildSyncChatSections(parsedMap map[string]interface{}) guildSyncChatCollec
 			if !ok {
 				continue
 			}
+
+			// The section is present even when its messages table is empty, which
+			// is the normal state right after a confirmed upload was cleared.
+			collection.sections++
 
 			entries := guildSyncChatAccountWideEntries(accountWide)
 			if len(entries) == 0 {

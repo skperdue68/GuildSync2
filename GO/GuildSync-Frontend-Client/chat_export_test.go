@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -142,6 +144,88 @@ func TestGuildSyncChatEntriesOrderNumericallyAndDropInvalidRows(t *testing.T) {
 		if _, ok := value["timestamp"].(int64); !ok {
 			t.Fatalf("entry %d timestamp is not an int64", index)
 		}
+	}
+}
+
+func writeChatSavedVarsFile(t *testing.T, text string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "GuildSyncChat.lua")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatalf("could not write test file: %v", err)
+	}
+
+	return path
+}
+
+func TestCollectGuildSyncChatDataTreatsEmptyMessagesAsBenign(t *testing.T) {
+	path := writeChatSavedVarsFile(t, `GuildSyncChat =
+{
+    ["Default"] =
+    {
+        ["@evainefaye"] =
+        {
+            ["$AccountWide"] =
+            {
+                ["NA Megaserver"] =
+                {
+                    ["version"] = 1,
+                    ["debugChat"] = false,
+                    ["messages"] =
+                    {
+                    },
+                },
+            },
+        },
+    },
+}
+`)
+
+	result := (&App{}).CollectGuildSyncChatData(GuildSyncSavedVarsFileModifiedEvent{
+		FileName: "GuildSyncChat.lua",
+		FilePath: path,
+	})
+
+	if result.OK {
+		t.Fatal("an empty messages table should not be reported as a successful upload")
+	}
+	if !result.Empty {
+		t.Fatalf("expected the benign empty state, got message %q", result.Message)
+	}
+	if strings.Contains(result.Message, "account section") {
+		t.Fatalf("empty messages should not report a missing account section: %q", result.Message)
+	}
+	if result.Data != nil {
+		t.Fatal("the empty state should not carry an upload payload")
+	}
+}
+
+func TestCollectGuildSyncChatDataStillReportsMissingAccountSection(t *testing.T) {
+	path := writeChatSavedVarsFile(t, `GuildSyncChat =
+{
+    ["Default"] =
+    {
+        ["NA Megaserver"] =
+        {
+            ["version"] = 1,
+        },
+    },
+}
+`)
+
+	result := (&App{}).CollectGuildSyncChatData(GuildSyncSavedVarsFileModifiedEvent{
+		FileName: "GuildSyncChat.lua",
+		FilePath: path,
+	})
+
+	if result.Empty {
+		t.Fatal("a file without an account section should not be treated as a benign empty state")
+	}
+	if result.OK {
+		t.Fatal("a file without an account section should not be reported as success")
+	}
+	if !strings.Contains(result.Message, "Could not find an ESO account section under GuildSyncChat.") {
+		t.Fatalf("unexpected message: %q", result.Message)
 	}
 }
 
