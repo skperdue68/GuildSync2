@@ -268,6 +268,7 @@ const MEMBER_LINK_STATUS_FILTERS = [
   { id: 'linked', label: 'Linked' },
   { id: 'fuzzy', label: 'Fuzzy / Candidate' },
   { id: 'manual', label: 'Manual' },
+  { id: 'unavailable', label: 'Link Unavailable' },
   { id: 'unlinked', label: 'Unlinked' },
 ];
 
@@ -1520,11 +1521,17 @@ function getMemberLinkRelationshipFilterStatus(linksOrLink) {
   return 'unlinked';
 }
 
+function memberLinkIsUnavailable(context) {
+  return Boolean(getMemberLinkMembershipPreference(context)) || getMemberLinkReminderOptOut(context);
+}
+
 function getDiscordMemberLinkFilterStatus(member) {
+  if (memberLinkIsUnavailable({ mode: 'discord-to-eso', discordUserId: member?.discord_id })) return 'unavailable';
   return getMemberLinkRelationshipFilterStatus(getMemberLinksByDiscordUserId(member?.discord_id));
 }
 
 function getRosterMemberLinkFilterStatus(member) {
+  if (memberLinkIsUnavailable({ mode: 'eso-to-discord', esoAccountName: member?.account_name })) return 'unavailable';
   return getMemberLinkRelationshipFilterStatus(getMemberLinksByEsoAccount(member?.account_name));
 }
 
@@ -3610,7 +3617,7 @@ function renderMemberLinkReminderSection() {
               <input type="checkbox" data-member-link-reminder-opt-out="${escapeAttribute(member.account_name || '')}"${member.discord_opt_out ? ' checked' : ''}${editable ? '' : ' disabled'}>
               Does not use Discord
             </label>
-            <p class="member-link-reminder-help">Marked members remain on Discord but are skipped by reminder exports, and their link dot turns purple in both the Guild Roster and the Discord member list.</p>
+            <p class="member-link-reminder-help">Member indicates they do not use discord, they will not be prompted for their discord again. Link dot changes to purple</p>
           </section>`;
 }
 

@@ -8,9 +8,16 @@ const functions=['getRosterMemberByAccount','getMemberLinkReminderOptOut','getMe
   'renderMemberLinkStatusButton','getMemberLinkDialogEsoAccount','formatReminderHistoryValue','renderMemberLinkReminderSection',
   'membershipPreferenceLabel','membershipResponseLabel','getMembershipDMUserIdForContext','getMemberLinkMembershipPreference',
   'formatMembershipDMTime','membershipAttemptText','membershipResponseText','renderMemberLinkMembershipSection'];
+const filterFunctions=['getMemberLinkRelationshipFilterStatus','memberLinkIsUnavailable','getDiscordMemberLinkFilterStatus',
+  'getRosterMemberLinkFilterStatus','getMemberLinkStatusFilterLabel','getMemberLinkMembershipPreference',
+  'getMembershipDMUserIdForContext','getMemberLinkReminderOptOut','getRosterMemberByAccount'];
 function sourceFunction(source,name) {
  const start=source.indexOf(`function ${name}(`);assert.notEqual(start,-1,name);
  const end=source.indexOf('\n}',start);return source.slice(start,end+2);
+}
+function sourceLinkStatusFilters(source) {
+ const start=source.indexOf('const MEMBER_LINK_STATUS_FILTERS = [');assert.notEqual(start,-1);
+ const end=source.indexOf('\n];',start);return source.slice(start,end+3);
 }
 const clean=value=>String(value||'').replace(/^@+/,'').trim().toLowerCase();
 for(const client of clients) {
@@ -45,6 +52,7 @@ for(const client of clients) {
   assert.match(section,/Sent: Never/);
   assert.match(section,/data-member-link-reminder-opt-out="@Alice"/);
   assert.match(section,/checked/);
+  assert.match(section,/Member indicates they do not use discord, they will not be prompted for their discord again\. Link dot changes to purple/);
   context.memberLinkDialogContext={mode:'discord-to-eso',discordUserId:'123'};
   assert.match(context.renderMemberLinkReminderSection(),/data-member-link-reminder-opt-out="@Alice"/);
   context.memberLinkDialogContext={mode:'eso-to-discord',esoAccountName:'@Nobody'};
@@ -79,5 +87,27 @@ for(const client of clients) {
 
   context.memberLinkDialogContext={mode:'eso-to-discord',esoAccountName:'@Nobody'};
   assert.equal(context.renderMemberLinkMembershipSection(),'','the section needs a Discord member');
+ });
+
+ test(`${client}: the Link Unavailable filter covers both opt-outs`,()=>{
+  const rosterMembers=[{account_name:'@Alice',discord_opt_out:true},
+   {account_name:'@Bob',discord_opt_out:false},
+   {account_name:'@Carol',discord_opt_out:false}];
+  const memberLinks=[{eso_account_name:'@Alice',discord_user_id:'123',link_status:'linked'},
+   {eso_account_name:'@Bob',discord_user_id:'456',link_status:'linked'}];
+  const context=vm.createContext({rosterMembers,memberLinks,membershipDMPreferences:{'456':'opt_out'},normalizeMemberLinkName:clean,
+   getMemberLinksByEsoAccount:name=>memberLinks.filter(link=>clean(link.eso_account_name)===clean(name)),
+   getMemberLinksByDiscordUserId:id=>memberLinks.filter(link=>link.discord_user_id===String(id||''))});
+  vm.runInContext(sourceLinkStatusFilters(source)+'\n'+filterFunctions.map(name=>sourceFunction(source,name)).join('\n'),context);
+
+  assert.equal(context.getMemberLinkStatusFilterLabel('unavailable'),'Link Unavailable');
+
+  // The roster checkbox and the Discord membership opt-out both make the link unavailable.
+  assert.equal(context.getRosterMemberLinkFilterStatus({account_name:'@Alice'}),'unavailable');
+  assert.equal(context.getRosterMemberLinkFilterStatus({account_name:'@Bob'}),'unavailable','linked Discord member marked do-not-contact');
+  assert.equal(context.getRosterMemberLinkFilterStatus({account_name:'@Carol'}),'unlinked');
+  assert.equal(context.getDiscordMemberLinkFilterStatus({discord_id:'456'}),'unavailable');
+  assert.equal(context.getDiscordMemberLinkFilterStatus({discord_id:'123'}),'unavailable','their linked roster row is marked does-not-use-Discord');
+  assert.equal(context.getDiscordMemberLinkFilterStatus({discord_id:'999'}),'unlinked');
  });
 }
