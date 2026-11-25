@@ -125,7 +125,14 @@ test('stored chat rows notify the mafia listener only, and only when rows were i
   assert.ok(helperAt > 0, 'the mafia broadcast helper was not found');
   const helper = server.slice(helperAt, helperAt + 600);
 
-  assert.match(helper, /mafiaIo\.of\('\/mafia'\)\.emit\(MAFIA_CHAT_UPDATED_EVENT/);
+  assert.match(helper, /mafiaChatNamespace\.emit\(MAFIA_CHAT_UPDATED_EVENT/);
+
+  // The namespace has to exist before the first insert: a client that joins an
+  // uncreated namespace is rejected with "Invalid namespace".
+  assert.match(server, /const mafiaChatNamespace = mafiaIo\.of\('\/mafia'\);/);
+  const namespaceAt = server.indexOf("const mafiaChatNamespace = mafiaIo.of('/mafia');");
+  const helperAtAgain = server.indexOf('function broadcastMafiaChatUpdate');
+  assert.ok(namespaceAt > 0 && namespaceAt < helperAtAgain, 'the namespace must be created at startup');
   // GuildSync's own Socket.IO server must not receive mafia traffic.
   assert.doesNotMatch(helper, /for \(const socketServer of \[io, mafiaIo\]\)/);
   assert.doesNotMatch(helper, /(^|[^a-zA-Z])io\.of\(/m);

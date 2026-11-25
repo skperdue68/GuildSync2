@@ -222,13 +222,17 @@ const mafiaIo = new Server(mafiaServer, {
     methods: ['GET']
   }
 });
+// Create the live-update namespace now. Socket.IO rejects a client that joins a
+// namespace nothing has created yet, so registering it lazily in the broadcast
+// left the page on "Invalid namespace" until the next chat insert.
+const mafiaChatNamespace = mafiaIo.of('/mafia');
 
 // Only says that rows were stored; the page fetches when the reader asks it to.
 // It goes out on the mafia listener only, so the GuildSync socket server is
 // untouched and no namespace is opened on the 3001 port.
 function broadcastMafiaChatUpdate(detail = {}) {
   try {
-    mafiaIo.of('/mafia').emit(MAFIA_CHAT_UPDATED_EVENT, { ...detail, at: new Date().toISOString() });
+    mafiaChatNamespace.emit(MAFIA_CHAT_UPDATED_EVENT, { ...detail, at: new Date().toISOString() });
   } catch (error) {
     Log('Mafia guild chat update broadcast failed:', error.message);
   }
