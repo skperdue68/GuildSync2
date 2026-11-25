@@ -286,7 +286,7 @@ func guildSyncChatSections(parsedMap map[string]interface{}) guildSyncChatCollec
 				continue
 			}
 
-			entries := guildSyncChatEntries(accountWide["messages"])
+			entries := guildSyncChatAccountWideEntries(accountWide)
 			if len(entries) == 0 {
 				continue
 			}
@@ -297,6 +297,31 @@ func guildSyncChatSections(parsedMap map[string]interface{}) guildSyncChatCollec
 	}
 
 	return collection
+}
+
+// guildSyncChatAccountWideEntries reads the messages ZO_SavedVars keeps under
+// $AccountWide. NewAccountWide stores one section per megaserver, so the
+// messages table usually sits under the world name instead of directly on
+// $AccountWide; files written that older, flatter way are still read.
+func guildSyncChatAccountWideEntries(accountWide map[string]interface{}) []interface{} {
+	entries := guildSyncChatEntries(accountWide["messages"])
+
+	keys := make([]string, 0, len(accountWide))
+	for key := range accountWide {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		section, ok := getLuaMap(accountWide[key])
+		if !ok {
+			continue
+		}
+
+		entries = append(entries, guildSyncChatEntries(section["messages"])...)
+	}
+
+	return entries
 }
 
 // orderedGuildSyncChatWorlds returns profile keys with the legacy "Default"

@@ -68,6 +68,53 @@ func TestGuildSyncChatSectionsCollectEveryAccount(t *testing.T) {
 	}
 }
 
+func TestGuildSyncChatSectionsReadWorldSectionUnderAccountWide(t *testing.T) {
+	parsed, err := parseEsoLuaTable(`{
+		["Default"] = {
+			["@evainefaye"] = {
+				["$AccountWide"] = {
+					["NA Megaserver"] = {
+						["version"] = 1,
+						["debugChat"] = false,
+						["messages"] = {
+							[1] = { ["sender"] = "@TheLamb_Sauce", ["guild"] = "alphabet_mafia", ["timestamp"] = 1795636949, ["text"] = "Howdy Mafia!" },
+							[2] = { ["guild"] = "alphabet_mafia", ["text"] = "Hi Lamb!!", ["sender"] = "@evainefaye", ["timestamp"] = 1795636954 }
+						}
+					}
+				}
+			}
+		}
+	}`)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	parsedMap, ok := parsed.(map[string]interface{})
+	if !ok {
+		t.Fatal("parsed table is not an object")
+	}
+
+	sections := guildSyncChatSections(parsedMap)
+	if len(sections.accounts) != 1 || sections.accounts[0] != "@evainefaye" {
+		t.Fatalf("expected the world-nested account section, got %v", sections.accounts)
+	}
+	if len(sections.entries) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(sections.entries))
+	}
+
+	texts := []string{}
+	for _, entry := range sections.entries {
+		value, ok := getLuaMap(entry)
+		if !ok {
+			t.Fatal("entry is not an object")
+		}
+		texts = append(texts, value["text"].(string))
+	}
+	if strings.Join(texts, "|") != "Howdy Mafia!|Hi Lamb!!" {
+		t.Fatalf("unexpected message order: %v", texts)
+	}
+}
+
 func TestGuildSyncChatEntriesOrderNumericallyAndDropInvalidRows(t *testing.T) {
 	messages := map[string]interface{}{
 		"10": map[string]interface{}{"sender": "@Ten", "timestamp": float64(1795636950), "text": "tenth"},
