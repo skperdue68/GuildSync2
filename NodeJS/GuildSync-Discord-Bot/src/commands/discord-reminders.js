@@ -2,15 +2,13 @@ import {SlashCommandBuilder,MessageFlags} from 'discord.js';
 import {membershipDMRequest,formatMembershipStatus} from '../membership-dms.js';
 import {syncDiscordRolesAndMembers} from '../discord-sync.js';
 
-const safeLine=value=>String(value??'').replace(/[\n\r]/g,' ').slice(0,120);
-
 // Campaign controls belong to guild officers: members holding the Consigliere or
 // Kingpin Discord role. The approved GuildSync User/Admin check below still applies.
 const officerRoles=new Set(['consigliere','consiglieri','consiglieres','kingpin','kingpins']);
 const roleKey=value=>String(value||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
 export const isReminderOfficer=member=>Boolean(member?.roles?.cache?.some?.(role=>officerRoles.has(roleKey(role.name))));
 
-export const data=new SlashCommandBuilder().setName('discord-reminders')
+export const data=new SlashCommandBuilder().setName('membership-dm')
   .setDescription('Manage the slow GuildSync membership DM campaign (Consigliere or Kingpin).')
   .addSubcommand(s=>s.setName('start').setDescription('Start an alphabetical campaign for eligible unlinked Discord members.'))
   .addSubcommand(s=>s.setName('pause').setDescription('Pause new campaign DMs.'))
@@ -21,9 +19,9 @@ export const data=new SlashCommandBuilder().setName('discord-reminders')
     .addUserOption(o=>o.setName('user').setDescription('Member whose membership DM delivery is uncertain.').setRequired(true))
     .addStringOption(o=>o.setName('outcome').setDescription('Whether the membership DM arrived.').setRequired(true)
       .addChoices({name:'Delivered',value:'sent'},{name:'Not delivered; allow retry',value:'retry'})))
-  .addSubcommand(s=>s.setName('test').setDescription('Send one labelled test DM immediately; do not change normal cooldowns.').addUserOption(o=>o.setName('user').setDescription('Discord server member to receive the test.').setRequired(true)))
-  .addSubcommand(s=>s.setName('test-mode').setDescription('DM yourself a simulated membership DM every 30 seconds; nothing is saved.'))
-  .addSubcommand(s=>s.setName('test-mode-stop').setDescription('Stop the membership DM simulation.'));
+  .addSubcommand(s=>s.setName('repost').setDescription('Repost a member’s latest stored membership reply in the current card format.')
+    .addUserOption(o=>o.setName('user').setDescription('Member whose stored reply to repost.').setRequired(true)))
+  .addSubcommand(s=>s.setName('test').setDescription('Send one labelled test DM immediately; do not change normal cooldowns.').addUserOption(o=>o.setName('user').setDescription('Discord server member to receive the test.').setRequired(true)));
 
 export async function execute(interaction,socket) {
   await interaction.deferReply({flags:[MessageFlags.Ephemeral]});
@@ -43,22 +41,11 @@ export async function execute(interaction,socket) {
       await interaction.editReply(outcome?.status==='sent'?`Test DM sent to ${target.username}. Its responses will be marked as tests.`:`Test DM outcome: ${outcome?.status||'skipped'}. ${outcome?.detail||'Check bot logs and the recipient’s DM settings.'}`);
       return;
     }
-    if(command==='test-mode-stop'){
-      const mode=interaction.client.membershipDMTestMode;
-      const stopped=Boolean(mode?.stop());
-      await interaction.editReply(stopped?'Membership DM test mode stopped. No data was changed.':'Membership DM test mode is not running.');
-      return;
-    }
-    if(command==='test-mode'){
-      const mode=interaction.client.membershipDMTestMode;
-      if(!mode)throw Error('Membership DM test mode is unavailable.');
-      const plan=await membershipDMRequest(socket,interaction.guildId,'test-plan',{actorId:interaction.user.id});
-      if(!plan.members?.length)throw Error('No unlinked members are available to simulate.');
-      mode.start(interaction.user.id,{members:plan.members.length});
-      let first;
-      try{first=await mode.deliverOne();}
-      catch(error){mode.stop();throw Error(`Test mode stopped: ${error.message}`);}
-      await interaction.editReply({content:`Test mode started. A simulated membership DM is sent to you every 30 seconds, cycling through ${plan.members.length} unlinked member(s). Each message is numbered and names the member it simulates, for example “Test mode 2 of 5 — this is what Alice (1234567890) would receive”. Nothing is saved. Stop with /discord-reminders test-mode-stop.`+(first.status==='sent'?` First simulation: ${first.member.name}.`:` First simulation: ${first.status}.`),allowedMentions:{parse:[]}});
+    if(command==='repost'){
+      if(!interaction.client.membershipDM)throw Error('Membership DM worker is unavailable.');
+      const result=await membershipDMRequest(socket,interaction.guildId,'repost',{actorId:interaction.user.id,userId:target.id});
+      await interaction.client.membershipDM.repost(result,interaction.member?.displayName||interaction.user.username);
+      await interaction.editReply({content:`Reposted ${target.username}'s latest stored membership reply to the configured reply destination.`,allowedMentions:{parse:[]}});
       return;
     }
     if(command==='start'||command==='restart'){
@@ -66,8 +53,6 @@ export async function execute(interaction,socket) {
       await syncDiscordRolesAndMembers(interaction.guild,socket);
     }
     const result=await membershipDMRequest(socket,interaction.guildId,'command',{actorId:interaction.user.id,command,targetId:target?.id});
-    const testMode=interaction.client.membershipDMTestMode?.status?.();
-    const testLine=testMode?.running?`\nTest mode: running — ${testMode.sent} simulated message(s) sent${testMode.lastMember?`; last simulated member: ${safeLine(testMode.lastMember)}`:''}. Stop with /discord-reminders test-mode-stop.`:'';
-    await interaction.editReply({content:formatMembershipStatus(result)+testLine,allowedMentions:{parse:[]}});
+    await interaction.editReply({content:formatMembershipStatus(result),allowedMentions:{parse:[]}});
   }catch(error){await interaction.editReply('Membership DMs: '+error.message);}
 }

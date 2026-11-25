@@ -8,8 +8,10 @@ for(const path of paths){
  test(`${path}: Gangster rank and unassigned synced Gangsters role are available in filters`,()=>{
   const source=fs.readFileSync(new URL(path,import.meta.url),'utf8').replace(/\r\n/g,'\n');
   const ctx=vm.createContext({rosterMembers:[],discordRoles:[{role_id:'1',role_name:'Gangsters',role_color:0xaabbcc}],discordMembers:[]});
-  vm.runInContext(['getAllRosterRankNames','getAllDiscordRoleNames','getEsoRosterRankColor','findRoleByRosterRankName','getDiscordRoleNamesForRosterRank','findRoleByName','normalizeDiscordRoleName','discordRoleColorToHex'].map(n=>extract(source,n)).join('\n'),ctx);
+  vm.runInContext(['getAllRosterRankNames','getRosterRankFilterOrder','getAllDiscordRoleNames','getEsoRosterRankColor','findRoleByRosterRankName','getDiscordRoleNamesForRosterRank','findRoleByName','normalizeDiscordRoleName','discordRoleColorToHex'].map(n=>extract(source,n)).join('\n'),ctx);
   assert.ok(ctx.getAllRosterRankNames().includes('Gangster'));
+  ctx.rosterMembers=[{rank:'Soldier'},{rank:'Kingpin'},{rank:'Associate'},{rank:'Capo'},{rank:'Caporegieme'},{rank:'Consigliere'},{rank:'Gangsters'}];
+  assert.deepEqual(Array.from(ctx.getAllRosterRankNames()),['Kingpin','Consigliere','Caporegieme','Capo','Soldier','Associate','Gangster','Gangsters']);
   assert.ok(ctx.getAllDiscordRoleNames().includes('Gangsters'));
   assert.equal(ctx.getEsoRosterRankColor('Gangster'),'#aabbcc');
   ctx.discordRoles[0].role_color=0x123456;

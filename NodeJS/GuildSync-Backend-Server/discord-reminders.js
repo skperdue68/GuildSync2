@@ -147,15 +147,34 @@ export function createDiscordReminders(db,{guildId='',guildName='',now=()=>new D
       return {intervalDays:days,recipients:selectReminderRecipients(await roster(),days,now()),batches,guildId,guildName};
     },
     async configure(days) {days=reminderInterval(days);await transaction(c=>c.execute('UPDATE guildsync_settings SET value=? WHERE setting_key=?',[String(days),'discord_reminder_interval_days']));return {intervalDays:days};},
-    async optOut(account,optOut) {
+    async optOut(account,optOut,{actorId='',actorName=''}={}) {
       if(typeof optOut!=='boolean'||!esoAccountKey(account))throw Error('An ESO account and a yes/no opt-out value are required.');
       return transaction(async c=>{
-        const [members]=await c.execute("SELECT account_name FROM guildsync_roster_members WHERE LOWER(TRIM(LEADING '@' FROM account_name))=? AND in_roster=1",[esoAccountKey(account)]);
+        const [members]=await c.execute("SELECT account_name,rank_name FROM guildsync_roster_members WHERE LOWER(TRIM(LEADING '@' FROM account_name))=? AND in_roster=1",[esoAccountKey(account)]);
         if(!members[0])throw Error('The account is not on the current roster.');
         const id=await identity(c,members[0].account_name);
         await c.execute(`INSERT INTO guildsync_discord_reminder_members(member_id,discord_opt_out) VALUES(?,?)
           ON DUPLICATE KEY UPDATE discord_opt_out=VALUES(discord_opt_out)`,[id,optOut?1:0]);
-        return {account_name:members[0].account_name,discord_opt_out:optOut};
+        // A member who does not use Discord cannot be connected to one, so a pair
+        // found for them is not a real link and is removed with the opt-out. A pair
+        // an officer deliberately blocked or unlinked is that officer's decision,
+        // not a match result, so it is kept and still shows as restricted.
+        const [links]=optOut
+          ?await c.execute("DELETE FROM guildsync_member_links WHERE LOWER(TRIM(LEADING '@' FROM eso_account_name))=? AND auto_link_blocked=0 AND COALESCE(link_method,'')<>'manual_unlink' AND link_status NOT IN ('blocked','unlinked')",[esoAccountKey(account)])
+          :[{affectedRows:0}];
+        const linksRemoved=Number(links?.affectedRows||0);
+        // Roster history answers "why is this member no longer linked?".
+        if(linksRemoved>0)try{
+          let officer=String(actorName||'').trim();
+          if(actorId)try{
+            const [officers]=await c.execute("SELECT eso_account_name FROM guildsync_member_links WHERE discord_user_id=? AND link_status='linked' ORDER BY updated_at DESC LIMIT 1",[String(actorId)]);
+            officer=String(officers[0]?.eso_account_name||officer).trim().replace(/^@+/,'')||officer;
+          }catch{}
+          await c.execute("INSERT IGNORE INTO guildsync_roster_events(event_id,account_name,event_type,rank_name,event_timestamp,officer_account_name) VALUES(?,?,?,?,?,?)",["linkrm-"+randomUUID().replace(/-/g,'').slice(0,24),
+            String(members[0].account_name||'').trim().replace(/^@+/,''),'Discord link removed',members[0].rank_name?String(members[0].rank_name).slice(0,20):null,
+            String(Math.floor(now().getTime()/1000)),officer?officer.slice(0,64):null]);
+        }catch{}
+        return {account_name:members[0].account_name,discord_opt_out:optOut,links_removed:linksRemoved};
       });
     },
     async prepare(officerId,{sendingAccount,worldName,batchId,testRecipient}) {
@@ -266,7 +285,7 @@ export function createDiscordReminders(db,{guildId='',guildName='',now=()=>new D
   };
 }
 
-export function registerDiscordReminderSocket(socket,service,{authorize,officerAccess}={}) {
+export function registerDiscordReminderSocket(socket,service,{authorize,officerAccess,onLinksChanged}={}) {
   socket.on('guildsync:discord-reminders',async(payload={},callback)=>{
     try {
       if(!socket.guildSyncAuthenticated || !socket.guildSyncUser?.discord_user_id || socket.guildSyncAuthType==='discord-bot')throw Error('User or Admin access is required.');
@@ -281,7 +300,12 @@ export function registerDiscordReminderSocket(socket,service,{authorize,officerA
       switch(payload.action){
         case 'preview':result=await service.overview(id);break;
         case 'configure':result=await service.configure(payload.intervalDays);break;
-        case 'opt-out':result=await service.optOut(payload.accountName,payload.optOut);break;
+        case 'opt-out':
+          result=await service.optOut(payload.accountName,payload.optOut,{actorId:id,
+            actorName:[socket.guildSyncUser.display_name,socket.guildSyncUser.global_name,socket.guildSyncUser.username].find(value=>String(value||'').trim())||''});
+          // The removal changes both member lists, so approved clients refresh them now.
+          if(result.links_removed)await onLinksChanged?.();
+          break;
         case 'prepare':result=await service.prepare(id,payload);break;
         case 'batch':result=await service.getBatch(id,payload.batchId);break;
         case 'exported':result=await service.exported(id,payload.batchId);break;

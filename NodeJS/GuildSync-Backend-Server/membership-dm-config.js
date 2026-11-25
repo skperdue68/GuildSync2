@@ -1,4 +1,18 @@
-export const DEFAULT_MEMBERSHIP_DM='Hello {name}! We could not find an ESO account linked to your Discord account for {guild}. Please choose an option below.';
+export const DEFAULT_MEMBERSHIP_DM=[
+ 'Hello {name},',
+ '',
+ 'We’re updating our membership records for the {guild} Discord.',
+ '',
+ 'You’re welcome to remain here even if you aren’t an {guild} guild member, no longer play ESO, or aren’t active on this server. Some areas may be reserved for current guild members in the future.',
+ '',
+ 'If you currently belong to {guild} in ESO, please provide your ESO account name, including @, or update your server nickname to match it so we can link your accounts.{suggested_link}',
+ '',
+ 'Otherwise, choose the option below that best describes your situation, and we’ll stop sending membership reminders. If you’d prefer to leave this Discord, select “Request removal” and an officer will handle your request.',
+ '',
+ 'Your responses will be forwarded to guild officers.',
+ '',
+ '--{guild} Consigliere'
+].join('\n');
 export function dmConfig(env={}) {
   const get=(key,fallback='')=>String(env['GUILDSYNC_MEMBERSHIP_DM_'+key]??fallback).trim();
   const enabled=get('ENABLED','false');
@@ -17,6 +31,6 @@ export function dmConfig(env={}) {
   if(enabled==='true'&&!destinationId)throw Error('Configure a reply destination before enabling membership DMs.');
   const template=get('MESSAGE')||DEFAULT_MEMBERSHIP_DM;
   if(template.length>1500)throw Error('Membership DM template must be at most 1500 characters.');
-  for(const match of template.matchAll(/\{([^{}]+)\}/g))if(!['name','guild'].includes(match[1]))throw Error('Unknown membership DM placeholder: '+match[1]);
+  for(const match of template.matchAll(/\{([^{}]+)\}/g))if(!['name','guild','suggested_link'].includes(match[1]))throw Error('Unknown membership DM placeholder: '+match[1]);
   return {enabled:enabled==='true',repeatDays,minSeconds,maxSeconds,destinationType,destinationId,communityRoleId,template};
 }

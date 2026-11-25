@@ -2,7 +2,7 @@ import {DEFAULT_MEMBERSHIP_DM} from './membership-dm-config.js';
 import {COMMUNITY_HIGHLIGHT_IDS} from './community-statistics.js';
 // Only these operational settings may be displayed or overridden. Never accept arbitrary env keys.
 const configurationHelp={
- "GUILDSYNC_MEMBERSHIP_DM_ENABLED": {section:"Sending",help:"Allows an officer to start or resume the alphabetical Discord membership DM campaign. Turning this on alone does not start a campaign. Pause it with /discord-reminders pause; one DM already in flight may finish."},
+ "GUILDSYNC_MEMBERSHIP_DM_ENABLED": {section:"Sending",help:"Allows an officer to start or resume the alphabetical Discord membership DM campaign. Turning this on alone does not start a campaign. Pause it with /membership-dm pause; one DM already in flight may finish."},
  "GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS": {section:"Sending",help:"Minimum whole days since a member’s last confirmed membership DM before another campaign may contact them. Defaults to 30 days. Recent contacts are skipped immediately; actual attempts are spaced by the minimum and maximum wait settings below."},
  "GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS": {section:"Sending",help:"Shortest random wait in seconds between membership DM attempts. Defaults to 600 (10 minutes). Saving a faster window also shortens a wait already in progress on the next bot poll. Very short waits risk Discord rate limits."},
  "GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS": {section:"Sending",help:"Longest random wait in seconds between membership DM attempts. Defaults to 900 (15 minutes) and must be at least the minimum."},
@@ -159,7 +159,7 @@ export const configurationCatalog=[
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_REPEAT_DAYS','Minimum days between membership DMs','number',30,{min:1,max:365}),
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_MIN_SECONDS','Shortest wait between membership DMs (seconds)','number',600,{min:10,max:86400}),
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_MAX_SECONDS','Longest wait between membership DMs (seconds)','number',900,{min:10,max:86400}),
- define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_MESSAGE','Membership DM message','template',DEFAULT_MEMBERSHIP_DM,{placeholders:['name','guild'],maxLength:1500}),
+ define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_MESSAGE','Membership DM message','template',DEFAULT_MEMBERSHIP_DM,{placeholders:['name','guild','suggested_link'],maxLength:1500}),
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_DESTINATION_TYPE','Forward replies to','select','channel',{options:['channel','user']}),
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_DESTINATION_ID','Reply destination user or channel ID','id',''),
  define('backend','Discord membership DMs','GUILDSYNC_MEMBERSHIP_DM_COMMUNITY_ROLE_ID','Optional community role ID','id',''),
