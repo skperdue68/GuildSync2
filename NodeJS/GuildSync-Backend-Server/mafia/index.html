@@ -33,15 +33,17 @@
         <input id="search-input" type="search" placeholder="Sender, message, uploaded by…" autocomplete="off" spellcheck="false">
       </label>
       <div class="range-field">
-        <span class="field-label">Date range</span>
+        <span class="field-label">Date range <span class="field-hint">24-hour hh:mm:ss</span></span>
         <div class="range-inputs">
           <label class="range-input">
             <span>From</span>
-            <input id="range-start" type="datetime-local" step="60">
+            <input id="range-start" type="date">
+            <input id="range-start-time" class="time-input" type="text" inputmode="numeric" maxlength="8" value="00:00:00" aria-label="From time, 24-hour hh:mm:ss">
           </label>
           <label class="range-input">
             <span>To</span>
-            <input id="range-end" type="datetime-local" step="60">
+            <input id="range-end" type="date">
+            <input id="range-end-time" class="time-input" type="text" inputmode="numeric" maxlength="8" value="00:00:00" aria-label="To time, 24-hour hh:mm:ss">
           </label>
           <button id="range-clear" class="ghost-button" type="button">Clear</button>
         </div>
@@ -61,12 +63,6 @@
               </th>
               <th scope="col" data-sort="message">
                 <button class="sort-button" type="button">Message<span class="sort-indicator" aria-hidden="true"></span></button>
-              </th>
-              <th scope="col" data-sort="source">
-                <button class="sort-button" type="button">Source<span class="sort-indicator" aria-hidden="true"></span></button>
-              </th>
-              <th scope="col" data-sort="uploaded_by">
-                <button class="sort-button" type="button">Uploaded by<span class="sort-indicator" aria-hidden="true"></span></button>
               </th>
             </tr>
           </thead>

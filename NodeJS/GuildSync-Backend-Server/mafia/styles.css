@@ -284,6 +284,20 @@ input:focus-visible {
   font-family: inherit;
   font-size: 13px;
   color-scheme: dark;
+  font-variant-numeric: tabular-nums;
+}
+
+.range-input .time-input {
+  width: 86px;
+  text-align: center;
+}
+
+.field-hint {
+  margin-left: 6px;
+  font-weight: 400;
+  letter-spacing: 0.2px;
+  text-transform: none;
+  color: #64748b;
 }
 
 /* Table */
@@ -330,14 +344,6 @@ input:focus-visible {
 
 .chat-table thead th:nth-child(2) {
   width: 170px;
-}
-
-.chat-table thead th:nth-child(4) {
-  width: 150px;
-}
-
-.chat-table thead th:nth-child(5) {
-  width: 160px;
 }
 
 .sort-button {
@@ -392,8 +398,18 @@ th[aria-sort="descending"] .sort-indicator::after {
   overflow-wrap: anywhere;
 }
 
+/* Zebra stripes: a faint blue wash on every other row so the eye can follow a
+   message across the full width. Kept below the hover rule so hover wins. */
+.chat-table tbody tr:nth-child(even) td {
+  background: rgba(59, 130, 246, 0.065);
+}
+
+.chat-table tbody tr {
+  cursor: help;
+}
+
 .chat-table tbody tr:hover td {
-  background: rgba(59, 130, 246, 0.1);
+  background: rgba(59, 130, 246, 0.18);
 }
 
 .chat-table tbody tr:last-child td {
@@ -418,14 +434,6 @@ th[aria-sort="descending"] .sort-indicator::after {
 .cell-message {
   color: #e5e7eb;
   white-space: pre-wrap;
-  cursor: help;
-}
-
-.cell-meta {
-  color: #a6b4cd;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .chat-table .empty-row td {
@@ -451,7 +459,7 @@ th[aria-sort="descending"] .sort-indicator::after {
   color: #fecaca;
 }
 
-/* Tooltip for the received/downloaded provenance of a message */
+/* Tooltip for the received/downloaded provenance of any row */
 
 .row-tooltip {
   position: fixed;

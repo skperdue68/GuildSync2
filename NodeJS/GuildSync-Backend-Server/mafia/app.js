@@ -3,11 +3,11 @@
 const SORT_LABELS = {
   time: 'Local time',
   sender: 'Sender',
-  message: 'Message',
-  source: 'Source',
-  uploaded_by: 'Uploaded by'
+  message: 'Message'
 };
 const PAGE_LIMIT = 500;
+const DEFAULT_TIME = '00:00:00';
+const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
 
 const state = {
   sort: 'time',
@@ -25,7 +25,9 @@ const elements = {
   tableScroll: document.getElementById('table-scroll'),
   search: document.getElementById('search-input'),
   rangeStart: document.getElementById('range-start'),
+  rangeStartTime: document.getElementById('range-start-time'),
   rangeEnd: document.getElementById('range-end'),
+  rangeEndTime: document.getElementById('range-end-time'),
   rangeClear: document.getElementById('range-clear'),
   refresh: document.getElementById('refresh-button'),
   banner: document.getElementById('update-banner'),
@@ -39,7 +41,7 @@ let searchTimer = null;
 let requestController = null;
 let requestSequence = 0;
 
-// mm/dd/yyyy hh:ii:ss in the reader's own time zone.
+// mm/dd/yyyy hh:ii:ss, always 24-hour, in the reader's own time zone.
 function pad(value) {
   return String(value).padStart(2, '0');
 }
@@ -63,6 +65,22 @@ function formatLocalIso(isoString) {
   return formatLocalDate(new Date(isoString)) || '—';
 }
 
+// yyyy-mm-dd, the value a date input expects.
+function dateInputValue(date) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+// The page opens on today's messages: from today 00:00:00 to tomorrow 00:00:00.
+function applyDefaultRange() {
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+
+  elements.rangeStart.value = dateInputValue(today);
+  elements.rangeEnd.value = dateInputValue(tomorrow);
+  elements.rangeStartTime.value = DEFAULT_TIME;
+  elements.rangeEndTime.value = DEFAULT_TIME;
+}
+
 function setConnection(stateName, label) {
   elements.connection.dataset.state = stateName;
   elements.connection.textContent = label;
@@ -84,26 +102,37 @@ function clearUpdateBanner() {
   elements.refresh.classList.remove('refresh-button-attention');
 }
 
-function rangeSeconds(input, {endOfMinute = false} = {}) {
-  if (!input.value) return null;
-  const parsed = new Date(input.value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const seconds = Math.floor(parsed.getTime() / 1000);
-  // The picker has minute precision, so an end at 21:05 covers 21:05:59.
-  return endOfMinute ? seconds + 59 : seconds;
+// A date plus a 24-hour hh:mm:ss time, read in the reader's own time zone.
+function parseBoundary(dateInput, timeInput) {
+  const dateValue = dateInput.value.trim();
+  if (!dateValue) return {seconds: null};
+
+  const time = TIME_PATTERN.exec(timeInput.value.trim() || DEFAULT_TIME);
+  if (!time) return {error: 'Times must use the 24-hour hh:mm:ss format.'};
+
+  const [year, month, day] = dateValue.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day, Number(time[1]), Number(time[2]), Number(time[3]));
+  if (Number.isNaN(parsed.getTime())) return {error: 'The date range is not a valid date.'};
+
+  return {seconds: Math.floor(parsed.getTime() / 1000)};
 }
 
 function readRange() {
-  const start = rangeSeconds(elements.rangeStart);
-  const end = rangeSeconds(elements.rangeEnd, {endOfMinute: true});
+  const start = parseBoundary(elements.rangeStart, elements.rangeStartTime);
+  const end = parseBoundary(elements.rangeEnd, elements.rangeEndTime);
 
-  if (start != null && end != null && start > end) {
+  if (start.error || end.error) {
+    setError(start.error || end.error);
+    return false;
+  }
+
+  if (start.seconds != null && end.seconds != null && start.seconds > end.seconds) {
     setError('The start of the range must be before the end.');
     return false;
   }
 
-  state.start = start;
-  state.end = end;
+  state.start = start.seconds;
+  state.end = end.seconds;
   return true;
 }
 
@@ -123,7 +152,7 @@ function renderEmpty(message) {
   const row = document.createElement('tr');
   row.className = 'empty-row';
   const cell = document.createElement('td');
-  cell.colSpan = 5;
+  cell.colSpan = 3;
   cell.textContent = message;
   row.append(cell);
   elements.body.replaceChildren(row);
@@ -149,13 +178,10 @@ function renderMessages(messages) {
     row.append(cell('cell-time', formatLocalTimestamp(message.message_timestamp)));
     row.append(cell('cell-sender', message.sender || 'unknown'));
     row.append(cell('cell-message', message.message_text || ''));
-    row.append(cell('cell-meta', message.data_source || '—'));
-    row.append(cell('cell-meta', message.uploaded_by || '—'));
 
-    // Tooltip source: when the backend stored the row and who uploaded it.
+    // Source and uploader are not columns any more; the row tooltip carries them.
     row.dataset.receivedAt = message.received_at || '';
     row.dataset.uploadedBy = message.uploaded_by || '';
-    row.dataset.dataSource = message.data_source || '';
 
     return row;
   });
@@ -250,18 +276,25 @@ function hideTooltip() {
   elements.tooltip.hidden = true;
 }
 
-function showTooltip(row, x, y) {
-  const received = formatLocalIso(row.dataset.receivedAt);
-  const uploadedBy = row.dataset.uploadedBy || 'unknown';
-  const source = row.dataset.dataSource || '—';
+function tooltipLine(label, value) {
+  const line = document.createElement('div');
+  line.className = 'tooltip-line';
 
+  const name = document.createElement('strong');
+  name.textContent = `${label}: `;
+
+  line.append(name, document.createTextNode(value));
+  return line;
+}
+
+function fillTooltip(row) {
   elements.tooltip.replaceChildren(
-    tooltipLine('Received', received),
-    tooltipLine('Uploaded by', uploadedBy),
-    tooltipLine('Data source', source)
+    tooltipLine('Received', formatLocalIso(row.dataset.receivedAt)),
+    tooltipLine('Uploaded by', row.dataset.uploadedBy || 'unknown')
   );
-  elements.tooltip.hidden = false;
+}
 
+function placeTooltip(x, y) {
   const margin = 14;
   const rect = elements.tooltip.getBoundingClientRect();
   let left = x + margin;
@@ -274,15 +307,10 @@ function showTooltip(row, x, y) {
   elements.tooltip.style.top = `${Math.max(8, top)}px`;
 }
 
-function tooltipLine(label, value) {
-  const line = document.createElement('div');
-  line.className = 'tooltip-line';
-
-  const name = document.createElement('strong');
-  name.textContent = `${label}: `;
-
-  line.append(name, document.createTextNode(value));
-  return line;
+function showTooltip(row, x, y) {
+  fillTooltip(row);
+  elements.tooltip.hidden = false;
+  placeTooltip(x, y);
 }
 
 function connectLiveFeed() {
@@ -325,17 +353,17 @@ elements.search.addEventListener('input', () => {
   }, 150);
 });
 
-elements.rangeStart.addEventListener('change', () => {
-  if (readRange()) loadMessages();
-});
-
-elements.rangeEnd.addEventListener('change', () => {
-  if (readRange()) loadMessages();
-});
+for (const input of [elements.rangeStart, elements.rangeStartTime, elements.rangeEnd, elements.rangeEndTime]) {
+  input.addEventListener('change', () => {
+    if (readRange()) loadMessages();
+  });
+}
 
 elements.rangeClear.addEventListener('click', () => {
   elements.rangeStart.value = '';
   elements.rangeEnd.value = '';
+  elements.rangeStartTime.value = DEFAULT_TIME;
+  elements.rangeEndTime.value = DEFAULT_TIME;
   state.start = null;
   state.end = null;
   setError('');
@@ -349,11 +377,10 @@ document.querySelectorAll('.chat-table thead th[data-sort]').forEach(header => {
   header.addEventListener('click', () => applySort(header.dataset.sort));
 });
 
-// The message cell carries the provenance tooltip; the rest of the row does not.
+// Hovering anywhere on a row shows when it was stored and who uploaded it.
 elements.body.addEventListener('mouseover', event => {
-  const cellElement = event.target.closest('td.cell-message');
-  const row = cellElement?.closest('tr');
-  if (!row) {
+  const row = event.target.closest('tr');
+  if (!row || row.classList.contains('empty-row')) {
     hideTooltip();
     return;
   }
@@ -362,18 +389,14 @@ elements.body.addEventListener('mouseover', event => {
 
 elements.body.addEventListener('mousemove', event => {
   if (elements.tooltip.hidden) return;
-  const rect = elements.tooltip.getBoundingClientRect();
-  let left = event.clientX + 14;
-  let top = event.clientY + 14;
-  if (left + rect.width > window.innerWidth - 8) left = window.innerWidth - rect.width - 8;
-  if (top + rect.height > window.innerHeight - 8) top = event.clientY - rect.height - 14;
-  elements.tooltip.style.left = `${Math.max(8, left)}px`;
-  elements.tooltip.style.top = `${Math.max(8, top)}px`;
+  placeTooltip(event.clientX, event.clientY);
 });
 
 elements.body.addEventListener('mouseleave', hideTooltip);
 elements.tableScroll.addEventListener('scroll', hideTooltip, {passive: true});
 
 updateSortHeaders();
+applyDefaultRange();
+readRange();
 connectLiveFeed();
 loadMessages();

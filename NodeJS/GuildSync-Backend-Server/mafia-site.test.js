@@ -19,10 +19,15 @@ function ruleBody(selector) {
 }
 
 test('every visible value has a sortable column header', () => {
-  for (const key of ['time', 'sender', 'message', 'source', 'uploaded_by']) {
+  for (const key of ['time', 'sender', 'message']) {
     assert.match(html, new RegExp(`data-sort="${key}"`), `${key} has no sort header`);
   }
-  assert.equal((html.match(/data-sort="/g) || []).length, 5);
+  assert.equal((html.match(/data-sort="/g) || []).length, 3);
+
+  // Source and uploader are tooltip data now, not columns.
+  assert.doesNotMatch(html, /data-sort="source"/);
+  assert.doesNotMatch(html, /data-sort="uploaded_by"/);
+  assert.doesNotMatch(html, /Uploaded by</);
 
   // Clicking a header re-queries and keeps the newest-first default.
   assert.match(client, /header\.addEventListener\('click', \(\) => applySort\(header\.dataset\.sort\)\)/);
@@ -47,25 +52,49 @@ test('times render as mm/dd/yyyy hh:ii:ss in the reader time zone', () => {
   assert.doesNotMatch(client, /toLocaleDateString\(|toLocaleTimeString\(/);
 });
 
-test('the sender column is right justified and the message carries the tooltip', () => {
+test('the sender column is right justified and every row carries the tooltip', () => {
   assert.match(ruleBody('.cell-sender'), /text-align:\s*right/);
   assert.match(html, /data-sort="sender" class="align-right"/);
   assert.match(ruleBody('.align-right .sort-button'), /justify-content:\s*flex-end/);
-  assert.match(client, /closest\('td\.cell-message'\)/);
+
+  // Hovering anywhere on the row shows the receive time and the uploader.
+  assert.match(client, /const row = event\.target\.closest\('tr'\)/);
   assert.match(client, /tooltipLine\('Received'/);
   assert.match(client, /tooltipLine\('Uploaded by'/);
+  assert.doesNotMatch(client, /tooltipLine\('Data source'/);
+  assert.match(ruleBody('.chat-table tbody tr'), /cursor:\s*help/);
 });
 
-test('the search box and the calendar range drive the query and update immediately', () => {
+test('rows are striped so a message is easy to follow across', () => {
+  assert.match(ruleBody('.chat-table tbody tr:nth-child(even) td'), /background:\s*rgba\(/);
+
+  // The stripe is painted first, so hover still highlights the whole row.
+  const stripeAt = css.indexOf('.chat-table tbody tr:nth-child(even) td');
+  const hoverAt = css.indexOf('.chat-table tbody tr:hover td');
+  assert.ok(stripeAt > 0 && hoverAt > stripeAt, 'the hover rule must follow the zebra stripe');
+});
+
+test('the search box and the 24-hour date range drive the query and update immediately', () => {
   assert.match(html, /id="search-input"/);
-  assert.equal((html.match(/type="datetime-local"/g) || []).length, 2);
+  assert.equal((html.match(/type="date"/g) || []).length, 2);
+  assert.equal((html.match(/value="00:00:00"/g) || []).length, 2);
+  assert.doesNotMatch(html, /datetime-local/);
   assert.match(html, /id="range-start"/);
+  assert.match(html, /id="range-start-time"/);
   assert.match(html, /id="range-end"/);
+  assert.match(html, /id="range-end-time"/);
   assert.match(client, /setTimeout\(\(\) => \{[\s\S]*?state\.search = elements\.search\.value\.trim\(\);/);
   assert.match(client, /params\.set\('q', state\.search\)/);
   assert.match(client, /params\.set\('start', String\(state\.start\)\)/);
   assert.match(client, /params\.set\('end', String\(state\.end\)\)/);
   assert.match(client, /elements\.rangeClear\.addEventListener\('click'/);
+
+  // hh:mm:ss times, never AM/PM; today through tomorrow at midnight by default.
+  assert.ok(client.includes('/^([01]\\d|2[0-3]):([0-5]\\d):([0-5]\\d)$/'), 'missing the 24-hour time pattern');
+  assert.match(client, /getDate\(\) \+ 1/);
+  assert.match(client, /elements\.rangeStart\.value = dateInputValue\(today\);/);
+  assert.match(client, /elements\.rangeEnd\.value = dateInputValue\(tomorrow\);/);
+  assert.match(client, /\napplyDefaultRange\(\);\nreadRange\(\);\nconnectLiveFeed\(\);\nloadMessages\(\);/);
 });
 
 test('live updates only raise a notice and wait for the refresh button', () => {
