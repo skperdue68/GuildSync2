@@ -71,10 +71,12 @@ test('a search is matched literally instead of as a LIKE pattern', () => {
 
   assert.equal(where.params[0], 10);
   assert.equal(where.params[1], 20);
-  assert.deepEqual(where.params.slice(2), [expectedPattern, expectedPattern, expectedPattern, expectedPattern]);
+  assert.deepEqual(where.params.slice(2), [expectedPattern]);
   assert.match(where.clause, /ESCAPE '\\\\'/);
-  assert.match(where.clause, /sender LIKE \?/);
-  assert.match(where.clause, /uploaded_by LIKE \?/);
+  assert.match(where.clause, /message_text LIKE \?/);
+  // Only the message body is searched; sender and uploader are not.
+  assert.doesNotMatch(where.clause, /sender LIKE \?/);
+  assert.doesNotMatch(where.clause, /uploaded_by LIKE \?/);
 });
 
 test('the query orders by the whitelisted column and keeps the filters as parameters', async () => {

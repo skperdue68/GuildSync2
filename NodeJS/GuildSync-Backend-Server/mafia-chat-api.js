@@ -12,8 +12,8 @@ export const MAFIA_CHAT_SORT_COLUMNS = Object.freeze({
   received: 'received_at'
 });
 
-// The live update event the mafia page listens for. It only says that new rows
-// exist; the page fetches on its own when the reader asks it to.
+// The live update event the mafia page listens for. It carries the stored rows
+// themselves so the page can place each one without reloading.
 export const MAFIA_CHAT_UPDATED_EVENT = 'chat-updated';
 
 const DEFAULT_LIMIT = 500;
@@ -80,7 +80,9 @@ export function parseMafiaChatQuery(query = {}) {
 }
 
 // A literal search: '%' and '_' typed by the reader must match themselves, so
-// they are escaped and the query names the escape character explicitly.
+// they are escaped and the query names the escape character explicitly. Only
+// the message body is searched, so a sender or uploader name does not bury the
+// lines the reader is looking for.
 export function buildMafiaChatWhere(options = {}) {
   const clauses = [];
   const params = [];
@@ -97,11 +99,8 @@ export function buildMafiaChatWhere(options = {}) {
 
   if (options.search) {
     const pattern = `%${String(options.search).replace(LIKE_ESCAPE_PATTERN, '\\$1')}%`;
-    clauses.push(
-      "(sender LIKE ? ESCAPE '\\\\' OR message_text LIKE ? ESCAPE '\\\\'" +
-        " OR uploaded_by LIKE ? ESCAPE '\\\\' OR data_source LIKE ? ESCAPE '\\\\')"
-    );
-    params.push(pattern, pattern, pattern, pattern);
+    clauses.push("(message_text LIKE ? ESCAPE '\\\\')");
+    params.push(pattern);
   }
 
   return {clause: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params};

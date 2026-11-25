@@ -30,22 +30,30 @@
     <section class="toolbar" aria-label="Chat filters">
       <label class="search-field">
         <span class="field-label">Search</span>
-        <input id="search-input" type="search" placeholder="Sender, message, uploaded by…" autocomplete="off" spellcheck="false">
+                  <input id="search-input" type="search" placeholder="Message text…" autocomplete="off" spellcheck="false">
       </label>
       <div class="range-field">
-        <span class="field-label">Date range <span class="field-hint">24-hour hh:mm:ss</span></span>
+        <span class="field-label">Date range <span class="field-hint">24-hour</span></span>
         <div class="range-inputs">
           <label class="range-input">
             <span>From</span>
             <input id="range-start" type="date">
-            <input id="range-start-time" class="time-input" type="text" inputmode="numeric" maxlength="8" value="00:00:00" aria-label="From time, 24-hour hh:mm:ss">
+            <span class="time-selects">
+              <select id="range-start-hour" class="time-select" aria-label="From hour, 24-hour"></select>
+              <span class="time-separator" aria-hidden="true">:</span>
+              <select id="range-start-minute" class="time-select" aria-label="From minutes"></select>
+            </span>
           </label>
           <label class="range-input">
             <span>To</span>
             <input id="range-end" type="date">
-            <input id="range-end-time" class="time-input" type="text" inputmode="numeric" maxlength="8" value="00:00:00" aria-label="To time, 24-hour hh:mm:ss">
+            <span class="time-selects">
+              <select id="range-end-hour" class="time-select" aria-label="To hour, 24-hour"></select>
+              <span class="time-separator" aria-hidden="true">:</span>
+              <select id="range-end-minute" class="time-select" aria-label="To minutes"></select>
+            </span>
           </label>
-          <button id="range-clear" class="ghost-button" type="button">Clear</button>
+          <button id="range-clear" class="clear-button" type="button">Clear</button>
         </div>
       </div>
     </section>

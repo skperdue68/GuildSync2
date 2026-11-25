@@ -155,9 +155,10 @@ body {
 }
 
 .refresh-button:focus-visible,
-.ghost-button:focus-visible,
+.clear-button:focus-visible,
 .sort-button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 2px solid #93c5fd;
   outline-offset: 2px;
 }
@@ -176,20 +177,23 @@ input:focus-visible {
   font-size: 12px;
 }
 
-.ghost-button {
-  border: 1px solid rgba(148, 163, 184, 0.35);
+/* Clear removes the filters, so it carries the same red as other destructive
+   actions rather than the neutral ghost style. */
+.clear-button {
+  border: 1px solid rgba(248, 113, 113, 0.5);
   border-radius: 8px;
   padding: 7px 14px;
-  background: rgba(15, 23, 42, 0.5);
-  color: #cbd5e1;
+  background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
+  color: #fef2f2;
   font-family: inherit;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
+  transition: filter 120ms ease;
 }
 
-.ghost-button:hover {
-  border-color: rgba(147, 197, 253, 0.55);
-  color: #f8fafc;
+.clear-button:hover {
+  filter: brightness(1.1);
 }
 
 /* Update notice: the socket only says new rows exist, the reader refreshes. */
@@ -287,9 +291,28 @@ input:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.range-input .time-input {
-  width: 86px;
-  text-align: center;
+.time-selects {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.time-select {
+  padding: 7px 4px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  background: rgba(7, 12, 24, 0.65);
+  color: #e5e7eb;
+  font-family: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+  cursor: pointer;
+}
+
+.time-separator {
+  color: #94a3b8;
+  font-weight: 600;
 }
 
 .field-hint {
@@ -468,7 +491,8 @@ th[aria-sort="descending"] .sort-indicator::after {
 }
 
 .last-update {
-  color: #64748b;
+  color: #e0f2fe;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 

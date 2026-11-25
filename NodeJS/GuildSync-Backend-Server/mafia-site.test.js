@@ -76,25 +76,41 @@ test('rows are striped so a message is easy to follow across', () => {
 
 test('the search box and the 24-hour date range drive the query and update immediately', () => {
   assert.match(html, /id="search-input"/);
+  assert.match(html, /placeholder="Message text…"/);
   assert.equal((html.match(/type="date"/g) || []).length, 2);
-  assert.equal((html.match(/value="00:00:00"/g) || []).length, 2);
-  assert.doesNotMatch(html, /datetime-local/);
+  assert.doesNotMatch(html, /datetime-local|type="time"|type="text"/);
   assert.match(html, /id="range-start"/);
-  assert.match(html, /id="range-start-time"/);
+  assert.match(html, /id="range-start-hour"/);
+  assert.match(html, /id="range-start-minute"/);
   assert.match(html, /id="range-end"/);
-  assert.match(html, /id="range-end-time"/);
+  assert.match(html, /id="range-end-hour"/);
+  assert.match(html, /id="range-end-minute"/);
   assert.match(client, /setTimeout\(\(\) => \{[\s\S]*?state\.search = elements\.search\.value\.trim\(\);/);
   assert.match(client, /params\.set\('q', state\.search\)/);
   assert.match(client, /params\.set\('start', String\(state\.start\)\)/);
   assert.match(client, /params\.set\('end', String\(state\.end\)\)/);
   assert.match(client, /elements\.rangeClear\.addEventListener\('click'/);
 
-  // hh:mm:ss times, never AM/PM; today through tomorrow at midnight by default.
-  assert.ok(client.includes('/^([01]\\d|2[0-3]):([0-5]\\d):([0-5]\\d)$/'), 'missing the 24-hour time pattern');
+  // Free text looks at the message body only.
+  assert.match(client, /String\(message\.message_text \?\? ''\)\.toLowerCase\(\)\.includes\(needle\)/);
+
+  // The clock is a picker with 00-23 and 00-59, so nothing can be typed or
+  // shown as AM/PM, and today through tomorrow 00:00 is applied by default.
+  assert.match(client, /function fillTimeOptions\(/);
+  assert.match(client, /Array\.from\(\{length: 24\}/);
+  assert.match(client, /Array\.from\(\{length: 60\}/);
   assert.match(client, /getDate\(\) \+ 1/);
   assert.match(client, /elements\.rangeStart\.value = dateInputValue\(today\);/);
   assert.match(client, /elements\.rangeEnd\.value = dateInputValue\(tomorrow\);/);
-  assert.match(client, /\napplyDefaultRange\(\);\nreadRange\(\);\nconnectLiveFeed\(\);\nloadMessages\(\);/);
+  assert.match(client, /\nfillTimeOptions\(\);\napplyDefaultRange\(\);\nreadRange\(\);\nconnectLiveFeed\(\);\nloadMessages\(\);/);
+});
+
+test('the last update stands out and Clear reads as destructive', () => {
+  assert.match(ruleBody('.last-update'), /color:\s*#e0f2fe/i);
+  assert.match(ruleBody('.last-update'), /font-weight:\s*700/);
+  assert.match(ruleBody('.clear-button'), /linear-gradient/);
+  assert.match(ruleBody('.clear-button'), /#dc2626/i);
+  assert.doesNotMatch(html, /ghost-button/);
 });
 
 test('live rows arrive over the socket and are inserted in sorted position', () => {
@@ -155,8 +171,8 @@ test('stored chat rows notify the mafia listener only, and only when rows were i
   // uncreated namespace is rejected with "Invalid namespace".
   assert.match(server, /const mafiaChatNamespace = mafiaIo\.of\('\/mafia'\);/);
   const namespaceAt = server.indexOf("const mafiaChatNamespace = mafiaIo.of('/mafia');");
-  const helperAtAgain = server.indexOf('function broadcastMafiaChatUpdate');
-  assert.ok(namespaceAt > 0 && namespaceAt < helperAtAgain, 'the namespace must be created at startup');
+  assert.ok(namespaceAt > 0 && namespaceAt < helperAt, 'the namespace must be created at startup');
+
   // GuildSync's own Socket.IO server must not receive mafia traffic.
   assert.doesNotMatch(helper, /for \(const socketServer of \[io, mafiaIo\]\)/);
   assert.doesNotMatch(helper, /(^|[^a-zA-Z])io\.of\(/m);

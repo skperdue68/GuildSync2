@@ -6,8 +6,7 @@ const SORT_LABELS = {
   message: 'Message'
 };
 const PAGE_LIMIT = 500;
-const DEFAULT_TIME = '00:00:00';
-const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
+const DEFAULT_CLOCK = '00';
 
 const state = {
   sort: 'time',
@@ -27,9 +26,11 @@ const elements = {
   tableScroll: document.getElementById('table-scroll'),
   search: document.getElementById('search-input'),
   rangeStart: document.getElementById('range-start'),
-  rangeStartTime: document.getElementById('range-start-time'),
+  rangeStartHour: document.getElementById('range-start-hour'),
+  rangeStartMinute: document.getElementById('range-start-minute'),
   rangeEnd: document.getElementById('range-end'),
-  rangeEndTime: document.getElementById('range-end-time'),
+  rangeEndHour: document.getElementById('range-end-hour'),
+  rangeEndMinute: document.getElementById('range-end-minute'),
   rangeClear: document.getElementById('range-clear'),
   refresh: document.getElementById('refresh-button'),
   banner: document.getElementById('update-banner'),
@@ -73,15 +74,32 @@ function dateInputValue(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-// The page opens on today's messages: from today 00:00:00 to tomorrow 00:00:00.
+// The clock is a picker, not a typed field: 00-23 hours and 00-59 minutes, so it
+// can never fall back to the reader's locale AM/PM rendering.
+function fillTimeOptions() {
+  const hours = Array.from({length: 24}, (_value, index) => pad(index));
+  const minutes = Array.from({length: 60}, (_value, index) => pad(index));
+
+  for (const select of [elements.rangeStartHour, elements.rangeEndHour]) {
+    select.replaceChildren(...hours.map(value => new Option(value, value)));
+  }
+
+  for (const select of [elements.rangeStartMinute, elements.rangeEndMinute]) {
+    select.replaceChildren(...minutes.map(value => new Option(value, value)));
+  }
+}
+
+// The page opens on today's messages: from today 00:00 to tomorrow 00:00.
 function applyDefaultRange() {
   const today = new Date();
   const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
 
   elements.rangeStart.value = dateInputValue(today);
   elements.rangeEnd.value = dateInputValue(tomorrow);
-  elements.rangeStartTime.value = DEFAULT_TIME;
-  elements.rangeEndTime.value = DEFAULT_TIME;
+  elements.rangeStartHour.value = DEFAULT_CLOCK;
+  elements.rangeStartMinute.value = DEFAULT_CLOCK;
+  elements.rangeEndHour.value = DEFAULT_CLOCK;
+  elements.rangeEndMinute.value = DEFAULT_CLOCK;
 }
 
 function setConnection(stateName, label) {
@@ -113,24 +131,25 @@ function clearUpdateBanner() {
   elements.refresh.classList.remove('refresh-button-attention');
 }
 
-// A date plus a 24-hour hh:mm:ss time, read in the reader's own time zone.
-function parseBoundary(dateInput, timeInput) {
+// A date plus an hour and a minute picked from the 24-hour clock, read in the
+// reader's own time zone.
+function parseBoundary(dateInput, hourSelect, minuteSelect) {
   const dateValue = dateInput.value.trim();
   if (!dateValue) return {seconds: null};
 
-  const time = TIME_PATTERN.exec(timeInput.value.trim() || DEFAULT_TIME);
-  if (!time) return {error: 'Times must use the 24-hour hh:mm:ss format.'};
-
   const [year, month, day] = dateValue.split('-').map(Number);
-  const parsed = new Date(year, month - 1, day, Number(time[1]), Number(time[2]), Number(time[3]));
+  const hour = Number(hourSelect.value || DEFAULT_CLOCK);
+  const minute = Number(minuteSelect.value || DEFAULT_CLOCK);
+  const parsed = new Date(year, month - 1, day, hour, minute, 0);
+
   if (Number.isNaN(parsed.getTime())) return {error: 'The date range is not a valid date.'};
 
   return {seconds: Math.floor(parsed.getTime() / 1000)};
 }
 
 function readRange() {
-  const start = parseBoundary(elements.rangeStart, elements.rangeStartTime);
-  const end = parseBoundary(elements.rangeEnd, elements.rangeEndTime);
+  const start = parseBoundary(elements.rangeStart, elements.rangeStartHour, elements.rangeStartMinute);
+  const end = parseBoundary(elements.rangeEnd, elements.rangeEndHour, elements.rangeEndMinute);
 
   if (start.error || end.error) {
     setError(start.error || end.error);
@@ -246,6 +265,7 @@ function visibleRows() {
 }
 
 // A live row is only shown when it would survive the filters the reader set.
+// Free text looks at the message body only.
 function matchesFilters(message) {
   const timestamp = Number(message.message_timestamp) || 0;
   if (state.start != null && timestamp < state.start) return false;
@@ -253,10 +273,7 @@ function matchesFilters(message) {
 
   if (state.search) {
     const needle = state.search.toLowerCase();
-    const haystack = [message.sender, message.message_text, message.uploaded_by, message.data_source]
-      .join('\n')
-      .toLowerCase();
-    if (!haystack.includes(needle)) return false;
+    if (!String(message.message_text ?? '').toLowerCase().includes(needle)) return false;
   }
 
   return true;
@@ -495,7 +512,14 @@ elements.search.addEventListener('input', () => {
   }, 150);
 });
 
-for (const input of [elements.rangeStart, elements.rangeStartTime, elements.rangeEnd, elements.rangeEndTime]) {
+for (const input of [
+  elements.rangeStart,
+  elements.rangeStartHour,
+  elements.rangeStartMinute,
+  elements.rangeEnd,
+  elements.rangeEndHour,
+  elements.rangeEndMinute
+]) {
   input.addEventListener('change', () => {
     if (readRange()) loadMessages();
   });
@@ -504,8 +528,10 @@ for (const input of [elements.rangeStart, elements.rangeStartTime, elements.rang
 elements.rangeClear.addEventListener('click', () => {
   elements.rangeStart.value = '';
   elements.rangeEnd.value = '';
-  elements.rangeStartTime.value = DEFAULT_TIME;
-  elements.rangeEndTime.value = DEFAULT_TIME;
+  elements.rangeStartHour.value = DEFAULT_CLOCK;
+  elements.rangeStartMinute.value = DEFAULT_CLOCK;
+  elements.rangeEndHour.value = DEFAULT_CLOCK;
+  elements.rangeEndMinute.value = DEFAULT_CLOCK;
   state.start = null;
   state.end = null;
   setError('');
@@ -538,6 +564,7 @@ elements.body.addEventListener('mouseleave', hideTooltip);
 elements.tableScroll.addEventListener('scroll', hideTooltip, {passive: true});
 
 updateSortHeaders();
+fillTimeOptions();
 applyDefaultRange();
 readRange();
 connectLiveFeed();
