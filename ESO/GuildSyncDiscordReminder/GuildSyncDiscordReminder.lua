@@ -1,25 +1,67 @@
 GuildSyncDiscordReminder = GuildSyncDiscordReminder or {}
 local NAME = "GuildSyncDiscordReminder"
+local MAILBOX_OPEN_DELAY_MS = 2000
+-- ESO reports EVENT_MAIL_SEND_FAILED with a MAIL_SEND_RESULT_* code. Name the
+-- common ones so /gsdr status explains a rejection instead of only its number.
+local MAIL_REASONS = {
+    [1] = "the mail server reported an error",
+    [2] = "the recipient name is invalid",
+    [3] = "your ESO mailbox is full",
+    [4] = "the recipient may be ignoring you",
+    [5] = "there is not enough gold for the requested COD",
+    [6] = "an attached item is invalid",
+    [7] = "the mail is blank",
+    [8] = "cash on delivery cannot be sent that way",
+    [10] = "another mail send is already in progress",
+    [11] = "ESO does not allow mailing the sending account",
+    [12] = "mail is currently disabled",
+    [13] = "the mailbox is not open",
+    [16] = "the send was canceled",
+}
+-- These rejections belong to one recipient and retrying cannot fix them, so the
+-- request is marked failed and the rest of the campaign continues.
+local MAIL_SKIP_REASONS = {[2] = true, [4] = true, [11] = true}
+local function mailReason(code)
+    local number = tonumber(code)
+    if number == nil then return "ESO reported an unknown mail result" end
+    return tostring(MAIL_REASONS[number] or "ESO reported an unrecognized mail result") .. " (reason " .. tostring(number) .. ")"
+end
 local defaults = {
     settings = {
         enabled = true,
         subject = "{guild}: your Discord account",
-        body = "Hello {account},\n\nWe are updating the Discord links for {guild}. Your ESO guild rank is {rank}. Please reply with your Discord username so we can match your accounts.\n{candidate}\nIf you do not use Discord and do not plan to, please let us know so we can stop these reminders. Thank you!",
+        body = "Hello {account},\n\nThe Alphabet Mafia has a new system that links ESO and Discord accounts so officers know who’s who and guild tools work correctly. You’re getting this note because we haven’t confirmed your Discord account.\n{candidate}\nDiscord is optional for membership, but required for promotion, and where we coordinate many guild activities. To automatically link your accounts, type /nick <@esoname> on our Discord server or reply with your Discord username. If you don’t plan to use Discord, just let us know and we’ll stop the reminders. Thank you!\n\n--Alphabet Mafia Consigliere",
         candidate = "\nWe found a possible match: {candidateName}. Is that your Discord account?\n",
     },
     mailQueue = {}, mailAck = {}, sentMailIds = {},
 }
+-- GuildSync rewrote this default after the first live reminders. Updating the
+-- add-on replaces only a body still holding the old wording; custom edits stay.
+local PREVIOUS_DEFAULT_BODY = "Hello {account},\n\nWe are updating the Discord links for {guild}. Your ESO guild rank is {rank}. Please reply with your Discord username so we can match your accounts.\n{candidate}\nIf you do not use Discord and do not plan to, please let us know so we can stop these reminders. Thank you!"
 local sv, active, current, mailboxReady, opening, paused = nil, false, nil, false, false, false
 local generation = 0
 local sendingNow, ownedSend = false, nil
+local skippedRequests = {}
+local sessionSent, sessionTotal = 0, nil
 local start, nextMail
-local function say(text) CHAT_ROUTER:AddSystemMessage("GuildSyncDiscordReminder: " .. text) end
+local function say(text) CHAT_ROUTER:AddSystemMessage("|c88CCFF[GSDiscord]|r " .. text) end
 local function key(value) return string.lower(tostring(value or "")):gsub("^@+", "") end
 local function fill(template, values)
     return (tostring(template or ""):gsub("{([%w]+)}", function(token) return tostring(values[token] or "") end))
 end
+-- The backend can only name the guild from its environment, and the game always
+-- knows it. Replace a blank or placeholder name with the live guild name so a
+-- reminder (or test mail) never reads "Your guild".
+local function guildName(item)
+    local saved = tostring(item.guildName or "")
+    if saved ~= "" and saved ~= "Your guild" then return saved end
+    local id = tonumber(item.guildId)
+    local live = id and GetGuildName(id)
+    if type(live) == "string" and live ~= "" then return live end
+    return saved ~= "" and saved or "your guild"
+end
 local function message(item)
-    local values = {account = item.recipient, guild = item.guildName, rank = item.rank, candidateName = item.candidateDiscordName}
+    local values = {account = item.recipient, guild = guildName(item), rank = item.rank, candidateName = item.candidateDiscordName}
     values.candidate = item.candidateDiscordName and item.candidateDiscordName ~= "" and fill(sv.settings.candidate, values) or ""
     return fill(sv.settings.subject, values), fill(sv.settings.body, values)
 end
@@ -31,6 +73,7 @@ local function acknowledgement(item, status, detail)
 end
 local function stop(reason)
     active, opening = false, false
+    sessionSent, sessionTotal = 0, nil
     generation = generation + 1
     if GuildSyncMailQueueOwner == NAME then
         GuildSyncMailQueueOwner = nil
@@ -39,22 +82,46 @@ local function stop(reason)
     mailboxReady = false
     if reason then say(reason) end
 end
-local function fail(status, detail)
+local function fail(status, detail, skipRecipient)
+    local failedId = current and current.requestId
     if current then acknowledgement(current, status, detail); current = nil end
     ownedSend = nil
     if GuildSyncMailSendInFlight and GuildSyncMailSendInFlight.owner == NAME then GuildSyncMailSendInFlight = nil end
+    if skipRecipient then
+        -- Keep the failed request for review and a later retry, but do not loop
+        -- on it during this run.
+        if failedId then skippedRequests[failedId] = true end
+        say(detail .. " Skipping this recipient; /gsdr status lists the failure.")
+        local token = generation
+        zo_callLater(function() if token == generation then nextMail() end end, 3000)
+        return
+    end
     paused = true
     stop(detail .. " Queue paused. Use /gsdr status; /gsdr resume retries failed requests, but never uncertain ones.")
 end
 -- Observe every SendMail call, including manual mail and other add-ons. The
 -- cooperative batch lock alone cannot identify those shared result events.
-SecurePostHook("SendMail", function(recipient)
+-- ZO_PostHook's string form hooks the named global on _G.
+ZO_PostHook("SendMail", function(recipient)
     GuildSyncMailSendInFlight = {recipient = recipient, owner = sendingNow and NAME or (GuildSyncMailQueueOwner ~= NAME and GuildSyncMailQueueOwner or "external")}
     if sendingNow and current then ownedSend = current.requestId
     elseif current then ownedSend = nil; fail("uncertain", "Another mail send interrupted the reminder.") end
 end)
 EVENT_MANAGER:RegisterForEvent(NAME .. "MailMonitor", EVENT_MAIL_SEND_SUCCESS, function() GuildSyncMailSendInFlight = nil end)
 EVENT_MANAGER:RegisterForEvent(NAME .. "MailMonitor", EVENT_MAIL_SEND_FAILED, function() GuildSyncMailSendInFlight = nil end)
+-- Mirrors the "n of N" progress line GuildSyncBanking prints for its deposit mail.
+local function dueCount()
+    local total = 0
+    for id, queued in pairs(sv.mailQueue) do
+        local ack = sv.mailAck[id]
+        if type(queued) == "table" and not sv.sentMailIds[id] and not skippedRequests[id]
+            and queued.worldName == GetWorldName() and key(queued.sendingAccount) == key(GetDisplayName())
+            and (not ack or ack.status ~= "uncertain") then
+            total = total + 1
+        end
+    end
+    return total
+end
 local function inGuild(item)
     for index = 1, GetNumGuilds() do
         local guild = GetGuildId(index)
@@ -65,6 +132,24 @@ local function inGuild(item)
     end
     return false
 end
+local function nextEligible()
+    local ids = {}
+    for id in pairs(sv.mailQueue) do ids[#ids + 1] = id end
+    table.sort(ids)
+    for _, id in ipairs(ids) do
+        local queued = sv.mailQueue[id]
+        if type(queued) == "table" then
+            if sv.sentMailIds[id] then
+                sv.mailQueue[id] = nil
+            elseif skippedRequests[id] then
+                -- Rejected by ESO for this recipient in this run; resume retries it.
+            elseif queued.worldName == GetWorldName() and key(queued.sendingAccount) == key(GetDisplayName()) then
+                local ack = sv.mailAck[id]
+                if not ack or ack.status ~= "uncertain" then return queued end
+            end
+        end
+    end
+end
 nextMail = function()
     if not active or current then return end
     if paused or not sv.settings.enabled then stop("Sending paused."); return end
@@ -73,21 +158,7 @@ nextMail = function()
         zo_callLater(function() if token == generation then nextMail() end end, 3000)
         return
     end
-    local ids = {}
-    for id in pairs(sv.mailQueue) do ids[#ids + 1] = id end
-    table.sort(ids)
-    local item
-    for _, id in ipairs(ids) do
-        local queued = sv.mailQueue[id]
-        if type(queued) == "table" then
-            if sv.sentMailIds[id] then
-                sv.mailQueue[id] = nil
-            elseif queued.worldName == GetWorldName() and key(queued.sendingAccount) == key(GetDisplayName()) then
-                local ack = sv.mailAck[id]
-                if not ack or ack.status ~= "uncertain" then item = queued; break end
-            end
-        end
-    end
+    local item = nextEligible()
     if not item then stop("Queue complete. Exit ESO or /reloadui to save delivery results for GuildSync."); return end
     if not item.requestId or not item.batchId or not item.recipient or item.recipient:sub(1, 1) ~= "@" or (not item.isTest and not inGuild(item)) then
         current = item; fail("failed", "Recipient is invalid or is no longer in the specified guild."); return
@@ -98,14 +169,16 @@ nextMail = function()
     if subject == "" or body == "" or length(subject) > (MAIL_MAX_SUBJECT_CHARACTERS or 100) or length(body) > (MAIL_MAX_BODY_CHARACTERS or 700) then
         current = item; fail("failed", "Message is empty or exceeds ESO's subject/body limit. Edit the template."); return
     end
-    if IsAnyItemAttached() or GetQueuedMoneyAttachment() > 0 or GetQueuedCOD() > 0 then
-        stop("Mail has attachments, gold, or COD queued. Clear the draft before /gsdr resume."); paused = true; return
-    end
     current = item
     -- Persist an uncertain marker before requesting the send. A reload while a
     -- response is in flight must not silently send this request a second time.
     acknowledgement(item, "uncertain", "Awaiting ESO mail confirmation.")
+    -- A reminder never carries items, gold, or COD. ClearQueuedMail resets the
+    -- whole compose draft so nothing stale can ride along; a real rejection still
+    -- arrives as EVENT_MAIL_SEND_FAILED. ESO's queued-attachment queries report
+    -- leftovers on an empty draft too, so they are not used for chat noise.
     ClearQueuedMail()
+    if not sessionTotal then sessionTotal = dueCount() end
     local token = generation
     sendingNow = true
     SendMail(item.recipient, subject, body)
@@ -118,13 +191,21 @@ start = function()
     if not sv or active or paused or not sv.settings.enabled or not next(sv.mailQueue) then return end
     if GuildSyncMailSendInFlight or (GuildSyncMailQueueOwner and GuildSyncMailQueueOwner ~= NAME) then zo_callLater(start, 3000); return end
     GuildSyncMailQueueOwner = NAME
+    sessionSent, sessionTotal = 0, nil
     active, opening = true, true
     generation = generation + 1
     local token = generation
     RequestOpenMailbox()
+    -- GuildSyncBanking opens the mailbox and sends on a timer instead of reacting to
+    -- EVENT_MAIL_OPEN_MAILBOX, which ESO can deliver late or followed by an immediate
+    -- close during login. Do the same so a spurious close cannot stop the queue.
     zo_callLater(function()
-        if active and opening and token == generation then stop("Mailbox did not open. Use /gsdr resume to try again.") end
-    end, 15000)
+        if active and opening and token == generation then
+            opening = false
+            mailboxReady = true
+            nextMail()
+        end
+    end, MAILBOX_OPEN_DELAY_MS)
 end
 local function status()
     local queued, sent, uncertain = 0, 0, 0
@@ -140,13 +221,13 @@ local function command(text)
     if verb == "pause" then
         paused = true
         if current then say("Pausing after ESO responds to the current mail.") else stop("Paused.") end
-    elseif verb == "resume" then paused = false; start()
+    elseif verb == "resume" then paused = false; skippedRequests = {}; start()
     elseif verb == "retry" then
         if current then say("Wait for the current send to finish."); return end
         local ack = sv.mailAck[value]
         if not ack or ack.status ~= "uncertain" or not sv.mailQueue[value] then say("Provide an uncertain request ID from /gsdr status."); return end
         ack.status = "failed"; ack.detail = "Officer explicitly requested a retry after reviewing delivery."
-        paused = false; start()
+        skippedRequests[value] = nil; paused = false; start()
     elseif verb == "subject" or verb == "body" or verb == "candidate" then
         if value == "" then say("Provide the template text. Use \\n for a new line.")
         else sv.settings[verb] = value:gsub("\\n", "\n"); say(verb .. " template updated.") end
@@ -163,7 +244,7 @@ end
 local function settingsPanel()
     local lam = LibAddonMenu2
     if not lam then return end
-    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.0", registerForRefresh = true})
+    lam:RegisterAddonPanel(NAME .. "Settings", {type = "panel", name = NAME, displayName = NAME, author = "@evainefaye", version = "1.0.7", registerForRefresh = true})
     local options = {{type = "checkbox", name = "Automatically send queued reminders", getFunc = function() return sv.settings.enabled end,
         setFunc = function(value) sv.settings.enabled = value; if value then start() end end}}
     for _, entry in ipairs({{"subject", "Subject"}, {"body", "Message body"}, {"candidate", "Optional candidate paragraph"}}) do
@@ -179,16 +260,12 @@ EVENT_MANAGER:RegisterForEvent(NAME, EVENT_ADD_ON_LOADED, function(_, addon)
     EVENT_MANAGER:UnregisterForEvent(NAME, EVENT_ADD_ON_LOADED)
     sv = ZO_SavedVars:NewAccountWide(NAME, 1, nil, defaults)
     for setting, value in pairs(defaults.settings) do if sv.settings[setting] == nil then sv.settings[setting] = value end end
+    if sv.settings.body == PREVIOUS_DEFAULT_BODY then sv.settings.body = defaults.settings.body end
     SLASH_COMMANDS["/gsdr"] = command
     settingsPanel()
     EVENT_MANAGER:RegisterForEvent(NAME, EVENT_PLAYER_ACTIVATED, function()
         EVENT_MANAGER:UnregisterForEvent(NAME, EVENT_PLAYER_ACTIVATED)
         zo_callLater(start, 3000)
-    end)
-    EVENT_MANAGER:RegisterForEvent(NAME, EVENT_MAIL_OPEN_MAILBOX, function()
-        if not active or not opening then return end
-        mailboxReady, opening = true, false
-        nextMail()
     end)
     EVENT_MANAGER:RegisterForEvent(NAME, EVENT_MAIL_SEND_SUCCESS, function(_, playerName)
         if not active or not current or GuildSyncMailQueueOwner ~= NAME then return end
@@ -199,16 +276,17 @@ EVENT_MANAGER:RegisterForEvent(NAME, EVENT_ADD_ON_LOADED, function(_, addon)
         sv.mailQueue[item.requestId] = nil
         current = nil
         ownedSend = nil
-        say("Mail confirmed sent to " .. item.recipient)
+        sessionSent = sessionSent + 1
+        say("Processed reminder mail " .. tostring(sessionSent) .. " of " .. tostring(sessionTotal or sessionSent) ..
+            " to " .. tostring(item.recipient))
         local token = generation
         zo_callLater(function() if token == generation then nextMail() end end, 3000)
     end)
     EVENT_MANAGER:RegisterForEvent(NAME, EVENT_MAIL_SEND_FAILED, function(_, reason)
-        if active and current and GuildSyncMailQueueOwner == NAME then fail("failed", "ESO rejected mail (reason " .. tostring(reason) .. ").") end
-    end)
-    EVENT_MANAGER:RegisterForEvent(NAME, EVENT_MAIL_CLOSE_MAILBOX, function()
-        if active then
-            if current then fail("uncertain", "Mailbox closed before confirmation.") else stop("Mailbox closed; use /gsdr resume.") end
+        if active and current and GuildSyncMailQueueOwner == NAME then
+            local code = tonumber(reason)
+            fail("failed", "ESO rejected the mail to " .. tostring(current.recipient) .. ": " .. mailReason(code) .. ".",
+                code ~= nil and MAIL_SKIP_REASONS[code] == true)
         end
     end)
     say("Loaded. Queued reminders will send automatically after login. /gsdr for controls.")

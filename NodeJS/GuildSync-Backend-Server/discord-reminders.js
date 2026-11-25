@@ -1,6 +1,16 @@
 import {randomUUID} from 'node:crypto';
 import {esoAccountKey, withEsoIdentityLock} from './eso-account-identity.js';
 
+// Reminder management is an officer tool: the caller must hold the Consigliere or
+// Kingpin Discord role, matching the guild ranks the bot already recognizes.
+const officerRoleNames=['consigliere','consiglieri','consiglieres','kingpin','kingpins'];
+const officerRoleKey=value=>String(value||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+export const isOfficerRoleName=name=>officerRoleNames.includes(officerRoleKey(name));
+export function hasOfficerRole(roles,memberRoleIds) {
+  const held=new Set((memberRoleIds||[]).map(id=>String(id)));
+  return (roles||[]).some(role=>held.has(String(role.role_id))&&isOfficerRoleName(role.role_name));
+}
+
 export function reminderInterval(value) {
   if (value === null || value === '' || !Number.isInteger(Number(value)) || Number(value)<1 || Number(value)>365) {
     throw Error('Reminder interval must be a whole number from 1 to 365 days.');
@@ -31,6 +41,13 @@ export function selectReminderRecipients(rows, intervalDays, now=new Date()) {
   return result.sort((a,b)=>a.recipient.localeCompare(b.recipient));
 }
 
+// A test mail must read like the real one, so it uses the tester's own roster
+// rank instead of a placeholder. Fall back to the sending account, then blank.
+export function testRecipientRank(rows, recipient, sendingAccount) {
+  const ranks=new Map(rows.map(row=>[esoAccountKey(row.account_name),String(row.rank_name??row.rank??'').trim()]));
+  return ranks.get(esoAccountKey(recipient))||ranks.get(esoAccountKey(sendingAccount))||'';
+}
+
 export async function initializeDiscordReminders(db) {
   await db.query(`CREATE TABLE IF NOT EXISTS guildsync_discord_reminder_members (
     member_id CHAR(36) NOT NULL PRIMARY KEY, discord_opt_out TINYINT(1) NOT NULL DEFAULT 0,
@@ -54,7 +71,7 @@ export async function initializeDiscordReminders(db) {
 
 // The installation owns one ESO guild. Stable member IDs retain opt-outs/history
 // even when a roster snapshot deletes departed members or an account is renamed.
-export function createDiscordReminders(db,{guildId='',guildName='Your guild',now=()=>new Date()}={}) {
+export function createDiscordReminders(db,{guildId='',guildName='',now=()=>new Date()}={}) {
   async function interval(connection=db) {
     const [rows]=await connection.execute('SELECT value FROM guildsync_settings WHERE setting_key=?',['discord_reminder_interval_days']);
     return reminderInterval(rows[0]?.value??30);
@@ -149,8 +166,12 @@ export function createDiscordReminders(db,{guildId='',guildName='Your guild',now
         const [existing]=await c.execute('SELECT batch_id FROM guildsync_discord_reminder_batches WHERE batch_id=?',[batchId]);
         if(existing.length)return validatedBatch(c,batchId,officerId);
         if(testRecipient&&!/^@[^\s@]{2,63}$/.test(testRecipient))throw Error('Provide a valid ESO test recipient, starting with @.');
-        const recipients=testRecipient?[{recipient:testRecipient,rank:'Test',memberId:'',candidateDiscordId:'',candidateDiscordName:'',isTest:true}]
-          :selectReminderRecipients(await roster(c),await interval(c),now());
+        let recipients;
+        if(testRecipient){
+          const [ranks]=await c.execute(`SELECT account_name,rank_name FROM guildsync_roster_members
+            WHERE in_roster=1 AND LOWER(TRIM(LEADING '@' FROM account_name)) IN (?,?)`,[esoAccountKey(testRecipient),esoAccountKey(sendingAccount)]);
+          recipients=[{recipient:testRecipient,rank:testRecipientRank(ranks,testRecipient,sendingAccount),memberId:'',candidateDiscordId:'',candidateDiscordName:'',isTest:true}];
+        } else recipients=selectReminderRecipients(await roster(c),await interval(c),now());
         if(!recipients.length)throw Error('No roster members currently qualify for a reminder.');
         const created=now();
         await c.execute(`INSERT INTO guildsync_discord_reminder_batches(batch_id,officer_id,created_at,sending_account,world_name,guild_id,guild_name)
@@ -194,10 +215,22 @@ export function createDiscordReminders(db,{guildId='',guildName='Your guild',now
         return {exportedAt:at};
       });
     },
+    // Clears only the ESO reminder-mail records. Roster links, other saved
+    // variables and the Discord membership DM campaign are untouched.
+    async reset() {
+      return transaction(async c=>{
+        const [requests]=await c.execute('DELETE FROM guildsync_discord_reminder_requests');
+        const [batches]=await c.execute('DELETE FROM guildsync_discord_reminder_batches');
+        const [members]=await c.execute('DELETE FROM guildsync_discord_reminder_members');
+        return {deletedRequests:Number(requests?.affectedRows||0),deletedBatches:Number(batches?.affectedRows||0),
+          deletedMembers:Number(members?.affectedRows||0)};
+      });
+    },
     async acknowledge(officerId,acks) {
       if(!Array.isArray(acks)||acks.length>1000)throw Error('Invalid reminder acknowledgements.');
       return transaction(async c=>{
         let processed=0;
+        const confirmed=[];
         for(const ack of acks) {
           if(!['sent','failed','uncertain'].includes(ack.status))throw Error('Invalid mail status.');
           const [known]=await c.execute('SELECT guild_id FROM guildsync_discord_reminder_batches WHERE batch_id=?',[String(ack.batchId||'')]);
@@ -205,26 +238,44 @@ export function createDiscordReminders(db,{guildId='',guildName='Your guild',now
           const data=await batch(c,String(ack.batchId||''),null);
           const record=data.records.find(r=>r.requestId===ack.requestId);
           if(!record || record.guildId!==String(ack.guildId) || record.worldName!==ack.worldName || esoAccountKey(record.sendingAccount)!==esoAccountKey(ack.sendingAccount))throw Error('Acknowledgement does not match its reminder request.');
-          if(record.status==='sent'||(record.status==='cancelled'&&ack.status!=='sent'))continue;
+          // Already settled rows need no update, but their saved acknowledgement has
+          // been delivered and can be removed from the add-on file.
+          if(record.status==='sent'){confirmed.push(record.requestId);continue;}
+          if(record.status==='cancelled'&&ack.status!=='sent'){confirmed.push(record.requestId);continue;}
           const sent=ack.status==='sent'?new Date(typeof ack.sentAt==='number'?ack.sentAt*1000:ack.sentAt):null;
           if(sent && (!Number.isFinite(sent.getTime()) || sent>now() || sent<new Date(data.created_at)))throw Error('Invalid confirmed send timestamp.');
           await c.execute('UPDATE guildsync_discord_reminder_requests SET status=?,sent_at=?,detail=? WHERE request_id=?',[ack.status,sent,String(ack.detail||'').slice(0,255),ack.requestId]);
-          if(sent&&!record.isTest)await c.execute(`INSERT INTO guildsync_discord_reminder_members(member_id,reminder_sent_at) VALUES(?,?)
-            ON DUPLICATE KEY UPDATE reminder_sent_at=GREATEST(COALESCE(reminder_sent_at,VALUES(reminder_sent_at)),VALUES(reminder_sent_at))`,[record.memberId,sent]);
+          if(sent&&!record.isTest) {
+            await c.execute(`INSERT INTO guildsync_discord_reminder_members(member_id,reminder_sent_at) VALUES(?,?)
+              ON DUPLICATE KEY UPDATE reminder_sent_at=GREATEST(COALESCE(reminder_sent_at,VALUES(reminder_sent_at)),VALUES(reminder_sent_at))`,[record.memberId,sent]);
+            // Roster history answers "were they asked to set up Discord, and when?".
+            // The event id is derived from the request so repeated acknowledgements
+            // of the same reminder are ignored instead of duplicated.
+            await c.execute(`INSERT IGNORE INTO guildsync_roster_events(event_id,account_name,event_type,rank_name,event_timestamp,officer_account_name)
+              VALUES(?,?,?,?,?,?)`,[`reminder-${String(record.requestId).replace(/-/g,'').slice(0,23)}`,
+              String(record.recipient||'').trim().replace(/^@+/,''),'Discord reminder sent',
+              record.rank?String(record.rank).slice(0,20):null,String(Math.floor(sent.getTime()/1000)),
+              record.sendingAccount?String(record.sendingAccount).trim().replace(/^@+/,''):null]);
+          }
           processed++;
+          confirmed.push(ack.requestId);
         }
-        return {processed};
+        return {processed,confirmed};
       });
     }
   };
 }
 
-export function registerDiscordReminderSocket(socket,service,{authorize}={}) {
+export function registerDiscordReminderSocket(socket,service,{authorize,officerAccess}={}) {
   socket.on('guildsync:discord-reminders',async(payload={},callback)=>{
     try {
       if(!socket.guildSyncAuthenticated || !socket.guildSyncUser?.discord_user_id || socket.guildSyncAuthType==='discord-bot')throw Error('User or Admin access is required.');
       const role=await authorize(socket);
       if(!['user','admin'].includes(role))throw Error('User or Admin access is required.');
+      const officer=Boolean(await officerAccess?.(socket));
+      if(payload.action==='access'){callback?.({ok:true,officer});return;}
+      // Community opt-outs stay available to any approved User; campaign data is officer-only.
+      if(payload.action!=='opt-out'&&!officer)throw Error('Only members with the Consigliere or Kingpin role can manage Discord reminders.');
       const id=socket.guildSyncUser.discord_user_id;
       let result;
       switch(payload.action){
@@ -236,6 +287,7 @@ export function registerDiscordReminderSocket(socket,service,{authorize}={}) {
         case 'exported':result=await service.exported(id,payload.batchId);break;
         case 'acknowledge':result=await service.acknowledge(id,payload.acks);break;
         case 'reconcile':result=await service.reconcile(payload.requestIds);break;
+        case 'reset':result=await service.reset();break;
         default:throw Error('Unknown Discord reminder action.');
       }
       callback?.({ok:true,...result});

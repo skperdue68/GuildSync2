@@ -53,6 +53,7 @@ import {
   CollectDepositMailAckFromGuildSyncBanking,
   CleanupDepositMailAckFromGuildSyncBanking,
   FlushPendingDepositMailAckCleanup,
+  FlushPendingDiscordReminderAckCleanup,
   CollectGuildSyncRosterData,
   CommitGuildSyncRosterData,
   CollectGuildSyncApplicationsData,
@@ -117,6 +118,7 @@ let depositMailCheckoutRunning = false;
 let depositMailPendingWriteRunning = false;
 let depositMailPendingWriteAutoTimer = null;
 let depositMailAckCleanupFlushRunning = false;
+let discordReminderAckCleanupFlushRunning = false;
 
 let systemMessages = new Map();
 let systemMessageTimers = new Map();
@@ -1050,7 +1052,7 @@ function renderEsoRosterPanel() {
         </div>
         <div class="discord-history-header-action" style="flex: 1; display: flex; justify-content: center; align-items: center;">
           <button id="openRosterHistoryButton" class="refresh-discord-button" type="button">Lookup Roster History</button>
-          ${canEditGuildSyncData()?'<button id="openDiscordRemindersButton" class="refresh-discord-button" type="button" style="margin-left:12px">Discord Reminders</button>':''}
+          ${discordReminderControls.canOpen()?'<button id="openDiscordRemindersButton" class="refresh-discord-button" type="button" style="margin-left:12px">Discord Reminders</button>':''}
         </div>
         <div class="discord-data-actions">
           <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatRosterRefreshDate(rosterLastRefreshValue))}</span>
@@ -1649,8 +1651,18 @@ function getDiscordHistoryDisplayName(match = {}) {
   return String(match.server_nickname || match.global_name || match.username || match.discord_id || '').trim();
 }
 
+const DISCORD_HISTORY_EVENT_LABELS = {
+  membership_dm_sent: 'Membership DM sent',
+  membership_dm_response: 'Membership DM response'
+};
+
 function formatDiscordHistoryEventType(value) {
-  return String(value || '')
+  const key = String(value || '');
+  if (DISCORD_HISTORY_EVENT_LABELS[key]) {
+    return DISCORD_HISTORY_EVENT_LABELS[key];
+  }
+
+  return key
     .replaceAll('_', ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -7746,6 +7758,28 @@ async function processPendingDepositMailBatches() {
   }
 }
 
+// Reminders refused a mailAck cleanup while ESO ran; apply the stored IDs now that
+// it has exited, the same way deposit mail acknowledgement cleanup is flushed.
+async function flushPendingDiscordReminderAckCleanup() {
+  if (discordReminderAckCleanupFlushRunning || !isAuthenticatedSession() || !canEditGuildSyncData()) {
+    return;
+  }
+
+  discordReminderAckCleanupFlushRunning = true;
+  try {
+    const result = await FlushPendingDiscordReminderAckCleanup();
+    if (result?.ok && Number(result.removedCount || 0) > 0) {
+      addSystemMessage('discord-reminder-ack-cleanup-flushed', result.message || 'Removed saved reminder acknowledgements.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+    }
+  } catch (error) {
+    logGuildSyncFileWatcher(`Pending reminder acknowledgement cleanup failed: ${formatError(error)}`);
+  } finally {
+    discordReminderAckCleanupFlushRunning = false;
+  }
+}
+
 async function refreshESORunningStatus(options = {}) {
   try {
     const previousRunning = Boolean(esoRunningStatus.running);
@@ -7757,6 +7791,7 @@ async function refreshESORunningStatus(options = {}) {
 
     if (!esoRunningStatus.running) {
       await flushPendingDepositMailAckCleanup();
+      await flushPendingDiscordReminderAckCleanup();
     }
 
     if (previousRunning && !esoRunningStatus.running) {
@@ -8808,7 +8843,7 @@ function handleCurrentAccountProfile(user) {
     if(canEditGuildSyncRole(user.role))startDepositMailAvailabilityPolling();
     else stopDepositMailAvailabilityPolling();
   }
-  renderDiscordArea();userAdministrationPanel.start();
+  renderDiscordArea();userAdministrationPanel.start();void refreshDiscordReminderAccess();
 }
 
 function renderDiscordArea() {
@@ -9031,6 +9066,7 @@ function applyUserSwitchProfile(user) {
  pendingTabDataRefreshes.clear(); userSwitchOptions=[];
 
   voiceHotkey.stop();
+  discordReminderControls.resetAccess();
   void StopGuildSyncFileWatcher();
   discordHistoryLoadGeneration++;
   rosterHistorySearchGeneration++;
@@ -9468,7 +9504,7 @@ async function startDiscordLogin() {
 }
 
 async function logoutGuildSync() {
-  voiceHotkey.stop();
+  voiceHotkey.stop();discordReminderControls.resetAccess();
   try {
     guildSyncSession = await LogoutGuildSync();
 
@@ -9596,6 +9632,7 @@ function connectSocket() {
 
   onCurrentSocket('guildsync:discord-member-data-updated', (payload) => {
     void voiceHotkey.refreshAccess();
+    void refreshDiscordReminderAccess();
     handleDiscordMemberDataUpdated(payload);
   });
 
@@ -10259,10 +10296,6 @@ function handleGuildSyncSavedVarsFileModified(payload = {}) {
 
   const key = String(payload.key || payload.fileName || 'saved-vars-file').trim() || 'saved-vars-file';
   const normalizedKey = key.toLowerCase();
-  if(normalizedKey==='discord-reminders'){
-    discordReminderControls.sync().catch(error=>addSystemMessage('discord-reminder-sync',error.message,{ttlMs:TRANSIENT_MESSAGE_TTL_MS}));
-    return;
-  }
   const label = String(payload.label || '').trim();
   const fileName = String(payload.fileName || 'SavedVariables file').trim() || 'SavedVariables file';
   const filePath = String(payload.filePath || '').trim();
@@ -10293,6 +10326,11 @@ function handleGuildSyncSavedVarsFileModified(payload = {}) {
     logGuildSyncFileWatcher(`Processing trader SavedVariables update from ${fileName}.`);
     handleGuildSyncTraderSavedVarsModified(payload);
   }
+
+  if (normalizedKey === 'discord_reminders') {
+    logGuildSyncFileWatcher(`Processing Discord reminder SavedVariables update from ${fileName}.`);
+    void handleDiscordReminderSavedVarsModified(payload);
+  }
 }
 
 async function handleGuildSyncBankingSavedVarsModified(payload = {}) {
@@ -10306,6 +10344,32 @@ async function handleGuildSyncRosterSavedVarsModified(payload = {}) {
 
 async function handleGuildSyncTraderSavedVarsModified(payload = {}) {
   await collectAndSendGuildSyncTraderData(payload);
+}
+
+// ESO writes the add-on's delivery results (mailAck) only when it saves
+// SavedVariables: on /reloadui or a normal logout. Reading them here means the
+// database reflects sent/failed mail without opening the Discord Reminders dialog.
+async function handleDiscordReminderSavedVarsModified() {
+  if (!isAuthenticatedSession() || !canEditGuildSyncData()) {
+    return;
+  }
+
+  try {
+    const result = await discordReminderControls.sync();
+    if (!result || !result.acks) {
+      return;
+    }
+
+    addSystemMessage(
+      'discord-reminder-results-synced',
+      `Discord reminder delivery results saved: ${result.sent} sent, ${result.failed} failed, ${result.uncertain} uncertain.` +
+        (result.deferred ? ` ${result.deferred} cancelled reminder(s) stay queued in the add-on until ESO closes.` : '') +
+        (result.cleaned ? ` ${result.cleaned} saved acknowledgement(s) removed from the add-on.` : ''),
+      { ttlMs: TRANSIENT_MESSAGE_TTL_MS }
+    );
+  } catch (error) {
+    logGuildSyncFileWatcher(`Discord reminder delivery results could not be read: ${formatError(error)}`);
+  }
 }
 
 function handleGuildSyncFileWatcherError(message) {
@@ -10387,6 +10451,14 @@ function canIngestGuildSyncData() {
 
 function canManageGuildSyncLinks() {
   return isAuthenticatedSession() && canManageGuildSyncLinksRole(guildSyncSession.user?.role);
+}
+
+// The Discord Reminders button is for guild officers with GuildSync User or Admin
+// access. The backend re-checks both before returning any campaign data.
+async function refreshDiscordReminderAccess(){
+  const before=discordReminderControls.canOpen();
+  await discordReminderControls.refreshAccess();
+  if(before!==discordReminderControls.canOpen())renderGuildSyncTabLayout();
 }
 
 function getDisplayName() {

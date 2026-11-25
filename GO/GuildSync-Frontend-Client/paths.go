@@ -192,11 +192,6 @@ func getSavedVarsWatchFiles() []GuildSyncSavedVarsWatchFile {
 
 	watchFiles := []GuildSyncSavedVarsWatchFile{
 		{
-			Key:      "discord-reminders",
-			Label:    "Discord Reminders",
-			FileName: "GuildSyncDiscordReminder.lua",
-		},
-		{
 			Key:      "banking",
 			Label:    "Banking",
 			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_BANKING_FILE_NAME", "GuildSyncBanking.lua"),
@@ -215,6 +210,11 @@ func getSavedVarsWatchFiles() []GuildSyncSavedVarsWatchFile {
 			Key:      "trader",
 			Label:    "Trader",
 			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_TRADER_FILE_NAME", "GuildSyncTrader.lua"),
+		},
+		{
+			Key:      "discord_reminders",
+			Label:    "Discord Reminders",
+			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_DISCORD_REMINDER_FILE_NAME", "GuildSyncDiscordReminder.lua"),
 		},
 	}
 

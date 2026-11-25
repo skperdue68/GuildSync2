@@ -31,7 +31,8 @@ import {
 } from 'discord.js';
 
 import * as discordReminders from './commands/discord-reminders.js';
-import {startMembershipDMWorker} from './membership-dms.js';
+import {membershipDMRequest,startMembershipDMWorker} from './membership-dms.js';
+import {createMembershipDMTestMode} from './membership-dm-test-mode.js';
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
 import * as tickets from './commands/tickets.js';
@@ -220,6 +221,7 @@ for (const command of commands) {
 
 startTraderSaleNotifications(client, guildSyncSocket, Log);
 client.membershipDM=startMembershipDMWorker({client,socket:guildSyncSocket,guildId:DISCORD_GUILD_ID,log:Log});
+client.membershipDMTestMode=createMembershipDMTestMode({client,guildId:DISCORD_GUILD_ID,request:(action,payload)=>membershipDMRequest(guildSyncSocket,DISCORD_GUILD_ID,action,payload),log:Log});
 startCommunityHighlightsAnnouncements(client, guildSyncSocket, Log);
 
 let startupSyncDone = false;

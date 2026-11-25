@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 const discordReminderTable = "GuildSyncDiscordReminder"
@@ -148,12 +151,30 @@ func (a *App) CollectDiscordReminderSavedVars() DiscordReminderSavedVars {
 	return result
 }
 
+// GuildSyncDiscordReminder.lua is rewritten by three paths: the export watcher,
+// the cancelled-request rewrite and acknowledgement cleanup. Each one does its own
+// read-modify-write, so they share this lock; without it a rewrite can silently
+// drop another rewrite's change.
+var discordReminderFileMu sync.Mutex
+
+// A confirmed send records its request ID in sentMailIds as a second duplicate
+// guard. Only recent IDs can still matter — a finished request is deleted from
+// mailQueue — so cleanup keeps this window and drops older timestamps, otherwise
+// the table grows by one entry per reminder mail forever.
+const discordReminderSentIDRetention = 30 * 24 * time.Hour
+
 func (a *App) WriteDiscordReminderQueue(account, world string, records []map[string]interface{}) DiscordReminderSavedVars {
-	result := DiscordReminderSavedVars{FilePath: discordReminderPath()}
+	filePath := discordReminderPath()
 	if isESORunning() {
-		result.Message = "Close ESO completely before writing Discord reminders."
-		return result
+		return DiscordReminderSavedVars{FilePath: filePath, Message: "Close ESO completely before writing Discord reminders."}
 	}
+	return writeDiscordReminderQueueFile(filePath, account, world, records, isESORunning)
+}
+
+func writeDiscordReminderQueueFile(filePath, account, world string, records []map[string]interface{}, esoRunning func() bool) DiscordReminderSavedVars {
+	discordReminderFileMu.Lock()
+	defer discordReminderFileMu.Unlock()
+	result := DiscordReminderSavedVars{FilePath: filePath}
 	if len(records) == 0 {
 		result.Message = "No reminder recipients were provided."
 		return result
@@ -197,7 +218,7 @@ func (a *App) WriteDiscordReminderQueue(account, world string, records []map[str
 	if err == nil {
 		err = os.Chmod(tempPath, info.Mode().Perm())
 	}
-	if err == nil && isESORunning() {
+	if err == nil && esoRunning() {
 		err = fmt.Errorf("ESO started during export; SavedVariables were not replaced")
 	}
 	if err == nil {
@@ -210,4 +231,314 @@ func (a *App) WriteDiscordReminderQueue(account, world string, records []map[str
 	result.OK = true
 	result.Message = fmt.Sprintf("Wrote %d Discord reminder request(s). Start ESO to send them automatically.", len(records))
 	return result
+}
+
+type DiscordReminderAckCleanupResult struct {
+	OK           bool   `json:"ok"`
+	Message      string `json:"message"`
+	FilePath     string `json:"filePath"`
+	BackupPath   string `json:"backupPath,omitempty"`
+	RemovedCount int    `json:"removedCount"`
+	RemovedSentIDCount int `json:"removedSentIDs"`
+	PendingCount int    `json:"pendingCount"`
+	ESOIsRunning bool   `json:"esoIsRunning"`
+}
+
+// GuildSync uploads delivery results from mailAck, so the saved copies become
+// redundant once the database acknowledges them. ESO must be closed to rewrite
+// the file, so a cleanup requested while it is running is stored and applied on
+// exit instead of being dropped.
+func (a *App) CleanupDiscordReminderMailAcks(requestIDs []string) DiscordReminderAckCleanupResult {
+	filePath := discordReminderPath()
+	ids := normalizeMailRequestIDList(requestIDs)
+	result := DiscordReminderAckCleanupResult{OK: true, FilePath: filePath, ESOIsRunning: isESORunning()}
+	if len(ids) == 0 {
+		result.Message = "No reminder acknowledgements were provided for cleanup."
+		return result
+	}
+	if result.ESOIsRunning {
+		pending, err := addPendingDiscordReminderAckCleanupIDs(ids)
+		if err != nil {
+			result.OK = false
+			result.Message = fmt.Sprintf("ESO is running and pending reminder acknowledgement cleanup could not be stored: %v", err)
+			return result
+		}
+		result.PendingCount = len(pending)
+		result.Message = fmt.Sprintf("ESO is running. Stored %d reminder acknowledgement cleanup item(s) for later.", len(ids))
+		return result
+	}
+	return removeDiscordReminderAckIDsFromFile(filePath, ids, false, isESORunning)
+}
+
+func (a *App) FlushPendingDiscordReminderAckCleanup() DiscordReminderAckCleanupResult {
+	filePath := discordReminderPath()
+	ids, err := loadPendingDiscordReminderAckCleanupIDs()
+	result := DiscordReminderAckCleanupResult{OK: true, FilePath: filePath, ESOIsRunning: isESORunning(), PendingCount: len(ids)}
+	if err != nil {
+		result.OK = false
+		result.Message = fmt.Sprintf("Pending reminder acknowledgement cleanup could not be read: %v", err)
+		return result
+	}
+	if len(ids) == 0 {
+		result.Message = "No pending reminder acknowledgement cleanup is stored."
+		return result
+	}
+	if result.ESOIsRunning {
+		result.Message = fmt.Sprintf("ESO is running. %d reminder acknowledgement cleanup item(s) remain pending.", len(ids))
+		return result
+	}
+	cleanup := removeDiscordReminderAckIDsFromFile(filePath, ids, true, isESORunning)
+	if cleanup.OK {
+		_ = removePendingDiscordReminderAckCleanupIDs(ids)
+	}
+	return cleanup
+}
+
+func removeDiscordReminderAckIDsFromFile(filePath string, requestIDs []string, fromPending bool, esoRunning func() bool) DiscordReminderAckCleanupResult {
+	discordReminderFileMu.Lock()
+	defer discordReminderFileMu.Unlock()
+	ids := normalizeMailRequestIDList(requestIDs)
+	result := DiscordReminderAckCleanupResult{OK: false, FilePath: filePath, ESOIsRunning: esoRunning()}
+	if len(ids) == 0 {
+		result.Message = "No reminder acknowledgements were provided for cleanup."
+		return result
+	}
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		result.Message = fmt.Sprintf("GuildSyncDiscordReminder SavedVariables file could not be read for mailAck cleanup: %v", err)
+		return result
+	}
+	if info.IsDir() {
+		result.Message = fmt.Sprintf("GuildSyncDiscordReminder SavedVariables cleanup path is a directory, not a file: %s", filePath)
+		return result
+	}
+	originalBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		result.Message = fmt.Sprintf("GuildSyncDiscordReminder SavedVariables file could not be read for mailAck cleanup: %v", err)
+		return result
+	}
+	originalText := string(originalBytes)
+	extracted, err := extractFirstAvailableLuaTable(originalText, []string{discordReminderTable})
+	if err != nil {
+		result.Message = err.Error()
+		return result
+	}
+	parsed, err := parseEsoLuaTable(extracted.tableText)
+	if err != nil {
+		result.Message = fmt.Sprintf("GuildSyncDiscordReminder SavedVariables file could not be parsed for mailAck cleanup: %v", err)
+		return result
+	}
+	parsedMap, ok := parsed.(map[string]interface{})
+	if !ok {
+		result.Message = fmt.Sprintf("%s did not parse as a Lua table object.", extracted.tableName)
+		return result
+	}
+
+	idSet := map[string]bool{}
+	for _, id := range ids {
+		idSet[id] = true
+	}
+	// Reminders can be sent from more than one ESO account, so every account-wide
+	// mailAck and sentMailIds table is checked rather than only the first account.
+	removedCount := 0
+	removedSentCount := 0
+	sentCutoff := time.Now().Add(-discordReminderSentIDRetention).Unix()
+	defaults, _ := getLuaMap(parsedMap["Default"])
+	for account, value := range defaults {
+		if !strings.HasPrefix(account, "@") {
+			continue
+		}
+		profile, ok := getLuaMap(value)
+		if !ok {
+			continue
+		}
+		accountWide, ok := getLuaMap(profile["$AccountWide"])
+		if !ok {
+			continue
+		}
+		mailAck := normalizeExistingMailQueue(accountWide["mailAck"])
+		changed := false
+		for id := range idSet {
+			if _, exists := mailAck[id]; exists {
+				delete(mailAck, id)
+				removedCount++
+				changed = true
+			}
+		}
+		if changed {
+			accountWide["mailAck"] = mailAck
+		}
+		sentMailIDs := normalizeExistingMailQueue(accountWide["sentMailIds"])
+		sentChanged := false
+		for id, value := range sentMailIDs {
+			// Only numeric ESO timestamps carry an age. Anything else is left alone so
+			// an unknown-format guard is never dropped by mistake.
+			var stamp float64
+			switch typed := value.(type) {
+			case float64:
+				stamp = typed
+			case int64:
+				stamp = float64(typed)
+			case int:
+				stamp = float64(typed)
+			default:
+				continue
+			}
+			if stamp > 0 && int64(stamp) < sentCutoff {
+				delete(sentMailIDs, id)
+				removedSentCount++
+				sentChanged = true
+			}
+		}
+		if sentChanged {
+			accountWide["sentMailIds"] = sentMailIDs
+		}
+	}
+
+	result.RemovedCount = removedCount
+	result.RemovedSentIDCount = removedSentCount
+	if removedCount == 0 && removedSentCount == 0 {
+		result.OK = true
+		result.Message = "No reminder acknowledgements or old sent-mail guards needed cleanup."
+		return result
+	}
+
+	backupPath, err := createGuildSyncSavedVarsBackup(filePath, originalBytes)
+	if err != nil {
+		result.Message = fmt.Sprintf("Reminder acknowledgement cleanup could not create a backup file: %v", err)
+		return result
+	}
+	result.BackupPath = backupPath
+
+	newTableText := renderLuaAssignment(extracted.tableName, parsedMap)
+	newSavedVarsText := originalText[:extracted.assignmentStart] + newTableText + originalText[extracted.tableEnd:]
+	temp, err := os.CreateTemp(filepath.Dir(filePath), ".discord-reminder-ack-*.tmp")
+	if err != nil {
+		result.Message = fmt.Sprintf("Reminder acknowledgement cleanup could not create a temporary file: %v", err)
+		return result
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err = temp.WriteString(newSavedVarsText); err == nil {
+		err = temp.Sync()
+	}
+	closeErr := temp.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Chmod(tempPath, info.Mode().Perm())
+	}
+	if err == nil && esoRunning() {
+		err = fmt.Errorf("ESO started during cleanup; SavedVariables were not replaced")
+	}
+	if err == nil {
+		err = os.Rename(tempPath, filePath)
+	}
+	if err != nil {
+		result.Message = fmt.Sprintf("Reminder acknowledgement backup was created, but SavedVariables could not be updated: %v", err)
+		return result
+	}
+
+	result.OK = true
+	removed := []string{}
+	if removedCount > 0 {
+		removed = append(removed, fmt.Sprintf("%d reminder acknowledgement(s)", removedCount))
+	}
+	if removedSentCount > 0 {
+		removed = append(removed, fmt.Sprintf("%d old sent-mail guard(s)", removedSentCount))
+	}
+	result.Message = "Removed " + strings.Join(removed, " and ") + " from GuildSyncDiscordReminder.lua."
+	if fromPending {
+		result.PendingCount = len(mustLoadPendingDiscordReminderAckCleanupIDs())
+	}
+	return result
+}
+
+func getDiscordReminderAckCleanupPath() (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, "GuildSync", "pending-discord-reminder-ack-cleanup.json"), nil
+}
+
+func loadPendingDiscordReminderAckCleanupIDs() ([]string, error) {
+	path, err := getDiscordReminderAckCleanupPath()
+	if err != nil {
+		return []string{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return []string{}, err
+	}
+	var ids []string
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return []string{}, err
+	}
+	return normalizeMailRequestIDList(ids), nil
+}
+
+func mustLoadPendingDiscordReminderAckCleanupIDs() []string {
+	ids, err := loadPendingDiscordReminderAckCleanupIDs()
+	if err != nil {
+		return []string{}
+	}
+	return ids
+}
+
+func savePendingDiscordReminderAckCleanupIDs(ids []string) error {
+	path, err := getDiscordReminderAckCleanupPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	ids = normalizeMailRequestIDList(ids)
+	if len(ids) == 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	data, err := json.MarshalIndent(ids, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+func addPendingDiscordReminderAckCleanupIDs(ids []string) ([]string, error) {
+	existing, err := loadPendingDiscordReminderAckCleanupIDs()
+	if err != nil {
+		return []string{}, err
+	}
+	merged := normalizeMailRequestIDList(append(existing, ids...))
+	if err := savePendingDiscordReminderAckCleanupIDs(merged); err != nil {
+		return []string{}, err
+	}
+	return merged, nil
+}
+
+func removePendingDiscordReminderAckCleanupIDs(ids []string) error {
+	removeSet := map[string]bool{}
+	for _, id := range normalizeMailRequestIDList(ids) {
+		removeSet[id] = true
+	}
+	existing, err := loadPendingDiscordReminderAckCleanupIDs()
+	if err != nil {
+		return err
+	}
+	kept := []string{}
+	for _, id := range existing {
+		if !removeSet[id] {
+			kept = append(kept, id)
+		}
+	}
+	return savePendingDiscordReminderAckCleanupIDs(kept)
 }

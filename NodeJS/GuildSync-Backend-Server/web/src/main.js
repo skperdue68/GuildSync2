@@ -1171,7 +1171,7 @@ function renderEsoRosterPanel() {
         </div>
         <div class="discord-history-header-action" style="flex: 1; display: flex; justify-content: center; align-items: center;">
           <button id="openRosterHistoryButton" class="refresh-discord-button" type="button">Lookup Roster History</button>
-          ${canEditGuildSyncData()?'<button id="openDiscordRemindersButton" class="refresh-discord-button" type="button" style="margin-left:12px">Discord Reminders</button>':''}
+          ${discordReminderControls.canOpen()?'<button id="openDiscordRemindersButton" class="refresh-discord-button" type="button" style="margin-left:12px">Discord Reminders</button>':''}
         </div>
         <div class="discord-data-actions">
           <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatRosterRefreshDate(rosterLastRefreshValue))}</span>
@@ -9043,7 +9043,7 @@ function handleCurrentAccountProfile(user) {
     if(canEditGuildSyncRole(user.role))startDepositMailAvailabilityPolling();
     else stopDepositMailAvailabilityPolling();
   }
-  renderDiscordArea();userAdministrationPanel.start();
+  renderDiscordArea();userAdministrationPanel.start();void refreshDiscordReminderAccess();
 }
 
 function renderDiscordArea() {
@@ -9260,6 +9260,7 @@ function applyUserSwitchProfile(user) {
  disconnectSocket(false);
  userAdministrationPanel.reset(); adminConfigurationPanel.clear();
  pendingTabDataRefreshes.clear(); userSwitchOptions=[];
+  discordReminderControls.resetAccess();
   discordHistoryLoadGeneration++;
   rosterHistorySearchGeneration++;
   discordMembers = [];
@@ -9695,6 +9696,7 @@ async function startDiscordLogin() {
 }
 
 async function logoutGuildSync() {
+  discordReminderControls.resetAccess();
   try {
     guildSyncSession = await LogoutGuildSync();
 
@@ -9791,6 +9793,7 @@ function connectSocket() {
   });
 
   onCurrentSocket('guildsync:discord-member-data-updated', (payload) => {
+    void refreshDiscordReminderAccess();
     handleDiscordMemberDataUpdated(payload);
   });
 
@@ -10531,6 +10534,14 @@ function canIngestGuildSyncData() {
 
 function canManageGuildSyncLinks() {
   return isAuthenticatedSession() && canManageGuildSyncLinksRole(guildSyncSession.user?.role);
+}
+
+// The Discord Reminders button is for guild officers with GuildSync User or Admin
+// access. The backend re-checks both before returning any campaign data.
+async function refreshDiscordReminderAccess(){
+  const before=discordReminderControls.canOpen();
+  await discordReminderControls.refreshAccess();
+  if(before!==discordReminderControls.canOpen())renderGuildSyncTabLayout();
 }
 
 function getDisplayName() {

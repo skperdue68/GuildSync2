@@ -1,9 +1,41 @@
 import {randomUUID} from 'node:crypto';
 import {withEsoIdentityLock,esoAccountKey} from './eso-account-identity.js';
+import {recordDiscordMemberHistoryEvent} from './discord-member-history.js';
+
+// The Discord history row keeps the member's answer readable without exposing
+// the whole forwarded message.
+function responseHistoryText(choice,text,result={}) {
+  const account=result.accountName?`@${String(result.accountName).trim().replace(/^@+/,'')}`:'';
+  if(choice==='eso')return result.status==='linked'
+    ?`Linked ESO account ${account}`
+    :`ESO account ${account||String(text||'').trim()} submitted for officer review`;
+  if(choice==='community')return 'Community only; account reminders stopped';
+  if(choice==='not_playing')return 'Not playing ESO; account reminders stopped';
+  return `Other response: ${String(text||'').trim().slice(0,300)}`;
+}
 export {dmConfig} from './membership-dm-config.js';
 
-export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),random=Math.random}={}) {
-  const delay=()=>600+Math.floor(Math.max(0,Math.min(.999999999,random()))*301);
+export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),random=Math.random,pace=()=>null}={}) {
+  // The live membership DM settings decide this random window. Without a pace the
+  // defaults stay 10–15 minutes, which existing states and tests rely on.
+  const paceBounds=()=>{
+    const value=pace()||{},min=Number(value.minSeconds),max=Number(value.maxSeconds);
+    const low=Number.isFinite(min)&&min>0?min:600,high=Number.isFinite(max)&&max>=low?max:Math.max(low,900);
+    return [low,high];
+  };
+  const delay=()=>{const [min,max]=paceBounds();return min+Math.floor(Math.max(0,Math.min(.999999999,random()))*(max-min+1));};
+  const rememberPace=state=>{const [min,max]=paceBounds();if(state.campaign){state.campaign.paceMin=min;state.campaign.paceMax=max;}};
+  // A faster saved window shortens (never extends) the wait already scheduled, so
+  // the change reaches the campaign that is currently running.
+  function applyPace(state) {
+    const campaign=state.campaign;
+    if(!campaign)return;
+    const [min,max]=paceBounds();
+    if(campaign.paceMin===min&&campaign.paceMax===max)return;
+    const next=now()+delay();
+    campaign.paceMin=min;campaign.paceMax=max;
+    campaign.nextAt=Math.max(now(),Math.min(Number(campaign.nextAt)||next,next));
+  }
   const eligible=(state,member,days)=>!state.preferences[member.id]&&!state.history[member.id]?.uncertain&&
     (!state.history[member.id]?.sentAt||now()-state.history[member.id].sentAt>=days*86400);
   function expire(state) {
@@ -23,12 +55,14 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
         .sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id.localeCompare(b.id))
         .map(m=>({id:randomUUID(),userId:m.id,name:m.name,status:'pending'}));
       state.campaign={id:randomUUID(),status:queue.length?'running':'complete',queue,nextAt:now()+delay(),startedAt:now(),lastAttempted:null,lastSent:null};
+      rememberPace(state);
       for(const job of queue){job.campaignId=state.campaign.id;state.deliveries[job.id]=job;}
       return state.campaign;
     },
     pause(state){if(!state.campaign)throw Error('No campaign has been started.');state.campaign.status='paused';},
-    resume(state){if(!state.campaign)throw Error('No campaign has been started.');state.campaign.status='running';state.campaign.nextAt=Math.max(state.campaign.nextAt,now()+delay());},
+    resume(state){if(!state.campaign)throw Error('No campaign has been started.');applyPace(state);state.campaign.status='running';rememberPace(state);state.campaign.nextAt=Math.max(state.campaign.nextAt,now()+delay());},
     claim(state,members,days) {
+      applyPace(state);
       expire(state);
       const campaign=state.campaign;
       if(!campaign||campaign.status!=='running'||campaign.nextAt>now()||campaign.queue.some(q=>q.status==='sending'))return null;
@@ -49,7 +83,7 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
       job.status=result.status;job.detail=String(result.detail||'').slice(0,255);job.messageId=result.messageId||null;
       if(job.isTest)return job;
       const history=state.history[job.userId]??={};
-      if(result.status!=='skipped')state.campaign.nextAt=now()+delay();
+      if(result.status!=='skipped'){rememberPace(state);state.campaign.nextAt=now()+delay();}
       if(result.status==='sent'){
         if(!job.messageId)throw Error('A confirmed Discord message ID is required.');
         history.sentAt=now();history.uncertain=false;
@@ -107,7 +141,7 @@ export function pruneMembershipState(state,{maxEvents=200,maxDeliveries=1000}={}
 }
 
 export function createMembershipDMService(db,{configuration,upsertLink,authorizeOfficer,now=()=>Math.floor(Date.now()/1000),random=Math.random}={}) {
-  const engine=createDMCampaignEngine({now,random});
+  const engine=createDMCampaignEngine({now,random,pace:()=>configuration()});
   async function atomic(guildId,fn) {
     return withEsoIdentityLock(db,async connection=>{
       await connection.beginTransaction();
@@ -178,6 +212,14 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         return {job,config};
       });
     },
+    // Read-only list for the Discord test mode: same candidates the campaign would
+    // contact, but nothing is written to state, history or deliveries.
+    async testPlan(guildId,actorId) {
+      if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
+      const [rows]=await db.execute(`SELECT d.discord_id AS id,COALESCE(NULLIF(d.server_nickname,''),NULLIF(d.global_name,''),d.username) AS name
+        FROM discord_members d WHERE NOT EXISTS (SELECT 1 FROM guildsync_member_links l WHERE l.discord_user_id=d.discord_id AND l.link_status='linked')`);
+      return {members:rows.map(row=>({userId:String(row.id),name:row.name})),config:configuration()};
+    },
     async resolve(guildId,actorId,userId,outcome) {
       if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
       const key=String(userId??'').trim();
@@ -218,7 +260,16 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         (!state.history[job.userId]?.sentAt||now()-state.history[job.userId].sentAt>=config.repeatDays*86400)&&
         (await candidates(connection)).some(m=>m.id===job.userId))))};
     });},
-    async finish(guildId,id,token,result){return atomic(guildId,state=>engine.finish(state,id,token,result));},
+    async finish(guildId,id,token,result){return atomic(guildId,async(state,connection)=>{
+      const job=engine.finish(state,id,token,result);
+      // The DM is already delivered at this point; a history write must never
+      // turn a confirmed send into a retryable failure.
+      if(!job.isTest&&job.status==='sent')try{
+        await recordDiscordMemberHistoryEvent(connection,{discordId:job.userId,eventType:'membership_dm_sent',
+          fieldName:'membership_dm',newValue:'Membership DM delivered',source:'guildsync',at:new Date(now()*1000)});
+      }catch{}
+      return job;
+    });},
     async response(guildId,{userId,deliveryId,eventId,choice,text=''}) {
       if(!['eso','community','not_playing','other'].includes(choice)||String(text).length>10000||!/^\d+$/.test(String(eventId)))throw Error('Invalid membership response.');
       return atomic(guildId,async(state,connection,config)=>{
@@ -242,6 +293,10 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
           ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),eso_account_name=COALESCE(VALUES(eso_account_name),eso_account_name),
           choice=VALUES(choice),response_text=VALUES(response_text),responded_at=VALUES(responded_at)`,
           [guildId,userId,String(job.name||'').slice(0,255),result.accountName?String(result.accountName).slice(0,255):null,choice,String(text||'').slice(0,10000),new Date(now()*1000)]);
+        if(!job.isTest)try{
+          await recordDiscordMemberHistoryEvent(connection,{discordId:userId,eventType:'membership_dm_response',
+            fieldName:'membership_dm_response',newValue:responseHistoryText(choice,text,result),source:'discord',at:new Date(now()*1000)});
+        }catch{}
         state.events.push({eventId,deliveryId,userId,name:job.name,choice,text:String(text),at:now(),result,
           isTest:Boolean(job.isTest),destinationType:config.destinationId?config.destinationType:job.destinationType,destinationId:config.destinationId||job.destinationId,
           roleId:!job.isTest&&(['community','not_playing'].includes(choice)||result.status==='linked')?config.communityRoleId:'',
@@ -278,7 +333,7 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
 }
 
 export function registerMembershipDMSocket(socket,service,{guildId,onLinked=async()=>{}}={}) {
-  const actions={command:p=>service.command(guildId,p.actorId,p.command,p.targetId),test:p=>service.test(guildId,p.actorId,p.targetId),resolve:p=>service.resolve(guildId,p.actorId,p.userId,p.outcome),claim:()=>service.claim(guildId),
+  const actions={command:p=>service.command(guildId,p.actorId,p.command,p.targetId),test:p=>service.test(guildId,p.actorId,p.targetId),'test-plan':p=>service.testPlan(guildId,p.actorId),resolve:p=>service.resolve(guildId,p.actorId,p.userId,p.outcome),claim:()=>service.claim(guildId),
     validate:p=>service.validate(guildId,p.deliveryId,p.token),finish:p=>service.finish(guildId,p.deliveryId,p.token,p.result),
     response:async p=>{const result=await service.response(guildId,p);if(result.status==='linked')await onLinked();return result;},'claim-forward':()=>service.claimForward(guildId),
     'finish-forward':p=>service.finishForward(guildId,p.eventId,p.token,p.success,p.roleSuccess)};

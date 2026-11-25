@@ -1,6 +1,10 @@
 # Discord membership DMs
 
-An officer starts an alphabetical campaign for current Discord members without a confirmed ESO account link. The bot waits a random 10–15 minutes before its first attempt and between subsequent attempts. It rechecks eligibility immediately before sending. Recent contacts, existing links, bots, departed members and community preferences are skipped without waiting another interval.
+An officer starts an alphabetical campaign for current Discord members without a confirmed ESO account link. The bot waits a random window — 10–15 minutes by default — before its first attempt and between subsequent attempts. The window is a live setting, so it can be shortened or lengthened while a campaign is running. It rechecks eligibility immediately before sending. Recent contacts, existing links, bots, departed members and community preferences are skipped without waiting another interval.
+
+## History
+
+A confirmed membership DM adds a **Membership DM sent** note to that member's Discord history, and every reply adds a **Membership DM response** note naming the chosen option (with the linked ESO account when one was established). Officers see both in **Lookup Member History**. Test-mode messages and test responses are never recorded.
 
 ## Configure
 
@@ -8,6 +12,7 @@ In GuildSync, open **Reports & Admin → Administrator Configuration → Discord
 
 - Enable officer-initiated membership DMs. Enabling alone does not create a campaign.
 - Set the minimum days between confirmed membership DMs; the default is 30, configurable from 1 to 365.
+- Set the shortest and longest waits between attempts in seconds; defaults are 600 and 900 (10–15 minutes). Saving a faster window shortens a wait already in progress on the next bot poll, without pausing or restarting the campaign.
 - Edit the message using `{name}` and `{guild}`. The four buttons and the notice that replies go to guild officers are added automatically.
 - Select a reply destination type (**channel** or **user**) and its numeric Discord ID. A channel must be in this Discord server and writable by the bot; a user must accept the bot’s DMs.
 - Optionally choose a numeric community role ID. Blank records preferences without changing roles. A configured role requires the bot’s Manage Roles permission and a role position above it. These responses do not remove existing access or rank roles.
@@ -18,7 +23,7 @@ Deploy the updated bot and backend together. Register the new command with the b
 
 ## Officer commands
 
-The commands require Discord **Manage Server** permission and an approved GuildSync **User** or **Admin** account:
+The commands require the Discord **Consigliere** or **Kingpin** role and an approved GuildSync **User** or **Admin** account. Members without either officer role are refused. The **Discord Reminders** button in GuildSync applies the same rule: it appears only for an approved User or Admin whose guild rank role is Consigliere or Kingpin.
 
 | Command | Result |
 | --- | --- |
@@ -57,3 +62,8 @@ Reply forwarding and optional role changes retry independently. A newer membersh
 ## Smoke test after deployment
 
 Configure a private officer destination, then send a test to your own Discord account. Exercise all four buttons, submit an ESO account and an Other response, and confirm a message typed to the bot without pressing a button is ignored. Confirm the forwarded records are labelled TEST and that actual links, roles, preferences and normal send dates are unchanged. Then start a small real campaign, inspect status, pause/resume it, and verify its next scheduled time and the member’s confirmed send date. No live Discord send or role operation was performed during implementation.
+## Simulated test mode
+
+`/discord-reminders test-mode` sends a simulated copy of the membership DM to the officer who started it, one message every 30 seconds, cycling through the members a real campaign would contact. Each message is rendered from the live template for that member but is delivered only to the operator.
+
+Test mode writes nothing: no delivery claim, send date, preference, account link, role change or response row. Buttons on simulated messages are acknowledged privately and save nothing. Stop it with `/discord-reminders test-mode-stop`; it also stops when the bot restarts.

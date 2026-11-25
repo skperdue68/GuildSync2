@@ -7,6 +7,7 @@ import {createMembershipDMWorker} from '../GuildSync-Discord-Bot/src/membership-
 function fixture() {
  let time=1800000000,json=JSON.stringify({history:{},preferences:{},events:[],deliveries:{}}),snapshot;
  let links=[],roster=[{account_name:'ESOName'}],upserts=0,roleId='';
+ const memberHistory=[];
  const responses=new Map();
  const members=[{id:'10',name:'Alice'},{id:'20',name:'Zebra'}];
  const connection={
@@ -27,6 +28,8 @@ function fixture() {
     return [{affectedRows:1}];
    }
    if(sql.startsWith('SELECT choice,eso_account_name,responded_at FROM guildsync_membership_dm_responses'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
+   if(sql.startsWith('SELECT username,global_name,server_nickname FROM discord_members'))return [[{username:'Alice',global_name:'Alice G',server_nickname:null}]];
+   if(sql.startsWith('INSERT INTO discord_member_history')){memberHistory.push(args);return [{affectedRows:1}];}
    throw Error('Unexpected query: '+sql);
   }
  };
@@ -48,15 +51,20 @@ function fixture() {
  };
  return {db,service,worker:createMembershipDMWorker({client,guildId:'1',request,log:()=>{}}),request,sends,forwards,
   advance:seconds=>time+=seconds,state:()=>JSON.parse(json),restart:()=>createMembershipDMService(db,options),
-  block:()=>{links=[{eso_account_name:'ESOName',discord_user_id:'30',link_status:'linked'}];},upserts:()=>upserts,responses:()=>[...responses.values()],setRole:id=>roleId=id};
+  block:()=>{links=[{eso_account_name:'ESOName',discord_user_id:'30',link_status:'linked'}];},upserts:()=>upserts,responses:()=>[...responses.values()],setRole:id=>roleId=id,
+  history:()=>memberHistory};
 }
 test('bot → authenticated backend → persisted send date → modal auto-link → durable forwarding',async()=>{
  const f=fixture();await f.service.command('1','officer','start');f.advance(600);
  await f.worker.sendNext();assert.equal(f.sends.length,1);
  const delivery=f.state().history['10'].deliveryId;
  assert.equal(f.state().history['10'].sentAt,1800000600);
+ const sentNote=f.history().find(args=>args[4]==='membership_dm_sent');
+ assert.deepEqual([sentNote[0],sentNote[1],sentNote[7],sentNote[10]],['10','Alice','Membership DM delivered','guildsync']);
  const result=await f.request('response',{deliveryId:delivery,userId:'10',eventId:'300',choice:'eso',text:'@ESOName'});
  assert.equal(result.status,'linked');assert.equal(f.upserts(),1);
+ const responseNote=f.history().find(args=>args[4]==='membership_dm_response');
+ assert.deepEqual([responseNote[0],responseNote[7],responseNote[10]],['10','Linked ESO account @ESOName','discord']);
  await f.request('response',{deliveryId:delivery,userId:'10',eventId:'300',choice:'eso',text:'@ESOName'});
  assert.equal(f.upserts(),1,'event replay never relinks');
  await f.worker.forwardOne();assert.equal(f.forwards.length,1);assert.equal(f.state().events[0].forwardStatus,'sent');
@@ -81,6 +89,7 @@ test('test delivery and responses leave normal dates, preferences, links and cam
  const f=fixture();await f.service.command('1','officer','start');const before=f.state().campaign.nextAt;
  const outcome=await f.worker.test('officer','10');assert.equal(outcome.status,'sent');
  assert.deepEqual(f.state().history,{});assert.equal(f.state().campaign.nextAt,before);
+ assert.equal(f.history().length,0,'test messages and test responses are not history');
  const delivery=f.state().testHistory['10'].deliveryId;
  const result=await f.request('response',{deliveryId:delivery,userId:'10',eventId:'304',choice:'eso',text:'@ESOName'});
  assert.equal(result.status,'test');assert.equal(f.upserts(),0);assert.deepEqual(f.state().preferences,{});assert.equal(f.responses().length,0);
@@ -154,4 +163,14 @@ test('an officer can confirm an uncertain delivery as sent',async()=>{
  assert.equal(f.state().history['10'].uncertain,false);assert.equal(f.state().history['10'].sentAt,1800000600);
  assert.equal(f.state().campaign.queue.find(q=>q.userId==='10').status,'sent');
  await f.service.command('1','officer','restart');assert.deepEqual(f.state().campaign.queue.map(q=>q.userId),['20']);
+});
+
+test('the test mode plan is read-only and lists unlinked members',async()=>{
+ const f=fixture();
+ const before=JSON.stringify(f.state());
+ const plan=await f.request('test-plan',{actorId:'officer'});
+ assert.deepEqual(plan.members.map(member=>member.name),['Alice','Zebra']);
+ assert.equal(plan.config.enabled,true);
+ assert.equal(JSON.stringify(f.state()),before,'plan never writes campaign state');
+ await assert.rejects(()=>f.request('test-plan',{actorId:'stranger'}),/approved/i);
 });
