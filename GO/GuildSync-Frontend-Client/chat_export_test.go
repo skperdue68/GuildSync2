@@ -51,9 +51,6 @@ func TestGuildSyncChatSectionsCollectEveryAccount(t *testing.T) {
 	if strings.Join(sections.accounts, ",") != "@alt,@evainefaye,@secondaccount" {
 		t.Fatalf("unexpected account order: %v", sections.accounts)
 	}
-	if strings.Join(sections.worlds, ",") != "Default,NA Megaserver" {
-		t.Fatalf("unexpected worlds: %v", sections.worlds)
-	}
 	if len(sections.entries) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(sections.entries))
 	}

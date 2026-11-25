@@ -20,11 +20,11 @@ type GuildSyncChatDataResult struct {
 	Data     map[string]interface{} `json:"data,omitempty"`
 }
 
-// CollectGuildSyncChatData is called by the frontend after the GuildSyncChat
-// SavedVariables file changes. It extracts the captured messages from every
-// world and account section in the file without clearing anything; the
-// frontend calls CommitGuildSyncChatData only after the backend confirms
-// receipt.
+// CollectGuildSyncChatData is called by the frontend when the GuildSyncChat
+// SavedVariables file changes, on startup, and after a reconnect. It extracts
+// captured messages from every world and account section without clearing
+// anything; the frontend calls CommitGuildSyncChatData only after the backend
+// confirms receipt.
 func (a *App) CollectGuildSyncChatData(event GuildSyncSavedVarsFileModifiedEvent) GuildSyncChatDataResult {
 	watchFile := getSavedVarsWatchFileByKey("chat")
 
@@ -49,6 +49,14 @@ func (a *App) CollectGuildSyncChatData(event GuildSyncSavedVarsFileModifiedEvent
 
 	info, err := os.Stat(filePath)
 	if err != nil {
+		// Startup and reconnect read the file even before the add-on has saved
+		// once, so a missing file is not an error.
+		if os.IsNotExist(err) {
+			baseResult.Empty = true
+			baseResult.Message = fmt.Sprintf("%s has not been created yet.", fileName)
+			return baseResult
+		}
+
 		baseResult.Message = fmt.Sprintf("Guild chat SavedVariables file could not be read: %v", err)
 		return baseResult
 	}
@@ -104,11 +112,8 @@ func (a *App) CollectGuildSyncChatData(event GuildSyncSavedVarsFileModifiedEvent
 		fileName,
 	)
 	baseResult.Data = map[string]interface{}{
-		"table_name":    extracted.tableName,
-		"accounts":      sections.accounts,
-		"worlds":        sections.worlds,
-		"entries":       sections.entries,
-		"entries_count": len(sections.entries),
+		"table_name": extracted.tableName,
+		"entries":    sections.entries,
 	}
 
 	return baseResult
@@ -244,7 +249,6 @@ func getChatSavedVarsTableNames() []string {
 }
 
 type guildSyncChatCollection struct {
-	worlds   []string
 	accounts []string
 	entries  []interface{}
 }
@@ -253,7 +257,6 @@ type guildSyncChatCollection struct {
 // every ESO account section in the file, so one upload covers all accounts.
 func guildSyncChatSections(parsedMap map[string]interface{}) guildSyncChatCollection {
 	collection := guildSyncChatCollection{
-		worlds:   []string{},
 		accounts: []string{},
 		entries:  []interface{}{},
 	}
@@ -271,8 +274,6 @@ func guildSyncChatSections(parsedMap map[string]interface{}) guildSyncChatCollec
 			}
 		}
 		sort.Strings(accountNames)
-
-		addedWorld := false
 
 		for _, accountName := range accountNames {
 			accountSection, ok := getLuaMap(profile[accountName])
@@ -292,11 +293,6 @@ func guildSyncChatSections(parsedMap map[string]interface{}) guildSyncChatCollec
 
 			collection.accounts = append(collection.accounts, accountName)
 			collection.entries = append(collection.entries, entries...)
-			addedWorld = true
-		}
-
-		if addedWorld {
-			collection.worlds = append(collection.worlds, world)
 		}
 	}
 

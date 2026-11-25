@@ -74,7 +74,6 @@ const GUILDSYNC_APP_VERSION = '2.1.1';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 const PENDING_TRADER_UPLOADS_STORAGE_KEY = 'guildsync-pending-trader-uploads';
-const PENDING_CHAT_UPLOADS_STORAGE_KEY = 'guildsync-pending-chat-uploads';
 const PENDING_DEPOSIT_MAIL_STORAGE_KEY = 'guildsync-pending-deposit-mail';
 const ESO_STATUS_POLL_INTERVAL_MS = 5000;
 const DEPOSIT_MAIL_AVAILABILITY_POLL_INTERVAL_MS = 30 * 1000;
@@ -113,7 +112,7 @@ let bankingUploadQueueProcessing = false;
 let rosterUploadQueueProcessing = false;
 let applicationsUploadQueueProcessing = false;
 let traderUploadQueueProcessing = false;
-let chatUploadQueueProcessing = false;
+let chatUploadRunning = false;
 let guildSyncFileWatcherStatus = null;
 let esoRunningStatus = { running: false, message: '' };
 let esoStatusPollTimer = null;
@@ -7964,7 +7963,7 @@ async function refreshESORunningStatus(options = {}) {
       await discordReminderControls.sync().catch(error => {
         addSystemMessage('discord-reminder-sync', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
       });
-      await processPendingGuildSyncChatUpload();
+      await uploadGuildSyncChatFromFile();
     }
 
     if (previousRunning !== esoRunningStatus.running || previousError !== esoRunningStatus.error) {
@@ -7986,7 +7985,7 @@ function startESOStatusPolling() {
       processPendingDepositMailBatches();
     }
     if (!esoRunningStatus.running) {
-      processPendingGuildSyncChatUpload();
+      uploadGuildSyncChatFromFile();
     }
   });
   esoStatusPollTimer = window.setInterval(() => refreshESORunningStatus({ silent: true }), ESO_STATUS_POLL_INTERVAL_MS);
@@ -9010,7 +9009,7 @@ function handleCurrentAccountProfile(user) {
     if (!canEditGuildSyncRole(user.role)) { bankingMoveDialogOpen=false;manualBiweeklyTicketDialogOpen=false; }
     renderGuildSyncTabLayout();
     void syncGuildSyncFileWatcherWithAuthState({silent:true});
-    if(canIngestGuildSyncRole(user.role)){processPendingGuildSyncBankingUploads();processPendingGuildSyncRosterUploads();processPendingGuildSyncApplicationsUploads();processPendingGuildSyncTraderUploads();processPendingGuildSyncChatUpload();}
+    if(canIngestGuildSyncRole(user.role)){processPendingGuildSyncBankingUploads();processPendingGuildSyncRosterUploads();processPendingGuildSyncApplicationsUploads();processPendingGuildSyncTraderUploads();}
     if(canEditGuildSyncRole(user.role))startDepositMailAvailabilityPolling();
     else stopDepositMailAvailabilityPolling();
   }
@@ -9862,7 +9861,6 @@ function startSupportedDesktopConnection() {
   processPendingGuildSyncRosterUploads();
   processPendingGuildSyncApplicationsUploads();
   processPendingGuildSyncTraderUploads();
-  processPendingGuildSyncChatUpload();
   startVersionCheckTimer();
 }
 
@@ -10525,14 +10523,15 @@ async function handleGuildSyncTraderSavedVarsModified(payload = {}) {
 
 // Guild chat messages are written to GuildSyncChat.lua by the add-on and only
 // uploaded once ESO is closed: the game rewrites SavedVariables on reload and
-// logout, so clearing the file while ESO runs would race the next save.
+// logout, so clearing the file while ESO runs would race the next save. The
+// file itself is the queue, so a logout while GuildSync was closed is uploaded
+// on the next start or reconnect.
 async function collectAndSendGuildSyncChatData(payload = {}) {
   const nativeGeneration = sessionGeneration;
   if (userSwitchTransition || guildSyncSession.user?.user_switch?.active) return;
   if (!canIngestGuildSyncData()) return;
 
   if (esoRunningStatus.running) {
-    savePendingGuildSyncChatUpload(payload);
     addSystemMessage('chat-data-pending', 'Guild chat is saved in GuildSyncChat.lua and will upload after ESO closes.', {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
     });
@@ -10540,7 +10539,6 @@ async function collectAndSendGuildSyncChatData(payload = {}) {
   }
 
   if (!socket?.connected) {
-    savePendingGuildSyncChatUpload(payload);
     addSystemMessage('chat-data-pending', 'Guild chat SavedVariables changed, but GuildSync websocket is not connected yet. Messages were not cleared.', {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
     });
@@ -10552,7 +10550,6 @@ async function collectAndSendGuildSyncChatData(payload = {}) {
     if (nativeGeneration !== sessionGeneration || userSwitchTransition || guildSyncSession.user?.user_switch?.active) return;
 
     if (!result?.ok) {
-      clearPendingGuildSyncChatUpload();
       // Clearing the file after a successful upload rewrites it, so an empty
       // messages table is normal and should not report a problem.
       if (result?.empty) return;
@@ -10562,18 +10559,11 @@ async function collectAndSendGuildSyncChatData(payload = {}) {
       return;
     }
 
-    const chatPayload = {
-      local_upload_id: createLocalChatUploadId(),
-      authenticated_username: getDisplayName(),
-      authenticated_discord_user_id: guildSyncSession?.user?.discord_user_id || '',
-      source: 'guildsync-frontend-client',
+    await sendGuildSyncChatUpload({
       file_name: result.fileName || payload.fileName || '',
       file_path: result.filePath || payload.filePath || '',
-      collected_at: new Date().toISOString(),
       data: result.data || {}
-    };
-
-    await sendGuildSyncChatUpload(chatPayload);
+    });
   } catch (error) {
     addSystemMessage('chat-data-error', formatError(error), {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
@@ -10581,47 +10571,19 @@ async function collectAndSendGuildSyncChatData(payload = {}) {
   }
 }
 
-function createLocalChatUploadId() {
-  return `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function loadPendingGuildSyncChatUpload() {
-  try {
-    const raw = window.localStorage.getItem(PENDING_CHAT_UPLOADS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function savePendingGuildSyncChatUpload(payload = {}) {
-  window.localStorage.setItem(PENDING_CHAT_UPLOADS_STORAGE_KEY, JSON.stringify({
-    ...payload,
-    pending_saved_at: new Date().toISOString()
-  }));
-}
-
-function clearPendingGuildSyncChatUpload() {
-  window.localStorage.removeItem(PENDING_CHAT_UPLOADS_STORAGE_KEY);
-}
-
-async function processPendingGuildSyncChatUpload() {
-  if (chatUploadQueueProcessing || !socket?.connected || !canIngestGuildSyncData() || esoRunningStatus.running) {
+// Reads the SavedVariables file directly so messages left by a logout while
+// GuildSync was closed, or by a missed websocket, are not stranded.
+async function uploadGuildSyncChatFromFile() {
+  if (chatUploadRunning || !socket?.connected || !canIngestGuildSyncData() || esoRunningStatus.running) {
     return;
   }
 
-  const pending = loadPendingGuildSyncChatUpload();
-  if (!pending) {
-    return;
-  }
-
-  chatUploadQueueProcessing = true;
+  chatUploadRunning = true;
 
   try {
-    await collectAndSendGuildSyncChatData(pending);
+    await collectAndSendGuildSyncChatData({});
   } finally {
-    chatUploadQueueProcessing = false;
+    chatUploadRunning = false;
   }
 }
 
@@ -10648,7 +10610,6 @@ async function sendGuildSyncChatUpload(chatPayload) {
     throw new Error(commitResult?.message || 'Backend confirmed guild chat, but the SavedVariables messages could not be cleared.');
   }
 
-  clearPendingGuildSyncChatUpload();
   addSystemMessage('chat-data-sent', response.message || 'Guild chat sent to GuildSync backend.', {
     ttlMs: TRANSIENT_MESSAGE_TTL_MS
   });
