@@ -7,11 +7,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestDiscordReminderAckCleanupPrunesOnlyAcknowledgedIDs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "GuildSyncDiscordReminder.lua")
-	contents := `GuildSyncDiscordReminder = {
+	contents := fmt.Sprintf(`GuildSyncDiscordReminder = {
 	["Default"] = {
 		["@Officer"] = {
 			["$AccountWide"] = {
@@ -22,13 +23,13 @@ func TestDiscordReminderAckCleanupPrunesOnlyAcknowledgedIDs(t *testing.T) {
 					["b"] = { ["requestId"] = "b", ["status"] = "failed" }
 				},
 				["mailQueue"] = { ["q"] = { ["requestId"] = "q" } },
-				["sentMailIds"] = { ["s"] = 1 }
+				["sentMailIds"] = { ["s"] = %d }
 			}
 		},
 		["@Second"] = { ["$AccountWide"] = { ["mailAck"] = { ["b"] = { ["requestId"] = "b" } } } }
 	}
 }
-OtherAddon = { ["keep"] = true }`
+OtherAddon = { ["keep"] = true }`, time.Now().Unix()-86400)
 	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -150,5 +151,51 @@ func TestDiscordReminderFileWritesAreSerialized(t *testing.T) {
 	}
 	if fmt.Sprint(wide["version"]) != "1" {
 		t.Fatal("unrelated account data was not preserved")
+	}
+}
+
+func TestDiscordReminderAckCleanupPrunesOldSentMailIDs(t *testing.T) {
+	now := time.Now().Unix()
+	path := filepath.Join(t.TempDir(), "GuildSyncDiscordReminder.lua")
+	contents := fmt.Sprintf(`GuildSyncDiscordReminder = { ["Default"] = { ["@Officer"] = { ["$AccountWide"] = {
+		["sentMailIds"] = { ["old"] = %d, ["recent"] = %d, ["flag"] = true },
+		["mailAck"] = {}
+	} } } }`, now-60*86400, now-86400)
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing to acknowledge here: the rewrite happens for the stale guard alone.
+	result := removeDiscordReminderAckIDsFromFile(path, []string{"missing"}, false, func() bool { return false })
+	if !result.OK || result.RemovedCount != 0 || result.RemovedSentIDCount != 1 {
+		t.Fatalf("unexpected cleanup result: %+v", result)
+	}
+
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := parseDiscordReminderSavedVars(string(updated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wide, err := discordReminderAccount(root, "@Officer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, _ := getLuaMap(wide["sentMailIds"])
+	if _, exists := sent["old"]; exists {
+		t.Fatal("a stale sent-mail guard was kept")
+	}
+	if asNumber(sent["recent"]) != float64(now-86400) {
+		t.Fatalf("the recent duplicate-send guard was not preserved: %v", sent)
+	}
+	if _, exists := sent["flag"]; !exists {
+		t.Fatal("a non-timestamp guard was dropped")
+	}
+
+	again := removeDiscordReminderAckIDsFromFile(path, []string{"missing"}, false, func() bool { return false })
+	if !again.OK || again.RemovedSentIDCount != 0 {
+		t.Fatalf("a second cleanup should be a no-op: %+v", again)
 	}
 }

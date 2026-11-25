@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const discordReminderTable = "GuildSyncDiscordReminder"
@@ -156,6 +157,12 @@ func (a *App) CollectDiscordReminderSavedVars() DiscordReminderSavedVars {
 // drop another rewrite's change.
 var discordReminderFileMu sync.Mutex
 
+// A confirmed send records its request ID in sentMailIds as a second duplicate
+// guard. Only recent IDs can still matter — a finished request is deleted from
+// mailQueue — so cleanup keeps this window and drops older timestamps, otherwise
+// the table grows by one entry per reminder mail forever.
+const discordReminderSentIDRetention = 30 * 24 * time.Hour
+
 func (a *App) WriteDiscordReminderQueue(account, world string, records []map[string]interface{}) DiscordReminderSavedVars {
 	filePath := discordReminderPath()
 	if isESORunning() {
@@ -232,6 +239,7 @@ type DiscordReminderAckCleanupResult struct {
 	FilePath     string `json:"filePath"`
 	BackupPath   string `json:"backupPath,omitempty"`
 	RemovedCount int    `json:"removedCount"`
+	RemovedSentIDCount int `json:"removedSentIDs"`
 	PendingCount int    `json:"pendingCount"`
 	ESOIsRunning bool   `json:"esoIsRunning"`
 }
@@ -332,8 +340,10 @@ func removeDiscordReminderAckIDsFromFile(filePath string, requestIDs []string, f
 		idSet[id] = true
 	}
 	// Reminders can be sent from more than one ESO account, so every account-wide
-	// mailAck table is checked rather than only the first account in the file.
+	// mailAck and sentMailIds table is checked rather than only the first account.
 	removedCount := 0
+	removedSentCount := 0
+	sentCutoff := time.Now().Add(-discordReminderSentIDRetention).Unix()
 	defaults, _ := getLuaMap(parsedMap["Default"])
 	for account, value := range defaults {
 		if !strings.HasPrefix(account, "@") {
@@ -359,12 +369,38 @@ func removeDiscordReminderAckIDsFromFile(filePath string, requestIDs []string, f
 		if changed {
 			accountWide["mailAck"] = mailAck
 		}
+		sentMailIDs := normalizeExistingMailQueue(accountWide["sentMailIds"])
+		sentChanged := false
+		for id, value := range sentMailIDs {
+			// Only numeric ESO timestamps carry an age. Anything else is left alone so
+			// an unknown-format guard is never dropped by mistake.
+			var stamp float64
+			switch typed := value.(type) {
+			case float64:
+				stamp = typed
+			case int64:
+				stamp = float64(typed)
+			case int:
+				stamp = float64(typed)
+			default:
+				continue
+			}
+			if stamp > 0 && int64(stamp) < sentCutoff {
+				delete(sentMailIDs, id)
+				removedSentCount++
+				sentChanged = true
+			}
+		}
+		if sentChanged {
+			accountWide["sentMailIds"] = sentMailIDs
+		}
 	}
 
 	result.RemovedCount = removedCount
-	if removedCount == 0 {
+	result.RemovedSentIDCount = removedSentCount
+	if removedCount == 0 && removedSentCount == 0 {
 		result.OK = true
-		result.Message = "No matching reminder acknowledgement entries remained in GuildSyncDiscordReminder.lua."
+		result.Message = "No reminder acknowledgements or old sent-mail guards needed cleanup."
 		return result
 	}
 
@@ -406,7 +442,14 @@ func removeDiscordReminderAckIDsFromFile(filePath string, requestIDs []string, f
 	}
 
 	result.OK = true
-	result.Message = fmt.Sprintf("Removed %d reminder acknowledgement(s) from GuildSyncDiscordReminder.lua.", removedCount)
+	removed := []string{}
+	if removedCount > 0 {
+		removed = append(removed, fmt.Sprintf("%d reminder acknowledgement(s)", removedCount))
+	}
+	if removedSentCount > 0 {
+		removed = append(removed, fmt.Sprintf("%d old sent-mail guard(s)", removedSentCount))
+	}
+	result.Message = "Removed " + strings.Join(removed, " and ") + " from GuildSyncDiscordReminder.lua."
 	if fromPending {
 		result.PendingCount = len(mustLoadPendingDiscordReminderAckCleanupIDs())
 	}
