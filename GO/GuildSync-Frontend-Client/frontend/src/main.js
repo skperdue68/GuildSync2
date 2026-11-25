@@ -59,7 +59,9 @@ import {
   CollectGuildSyncApplicationsData,
   CommitGuildSyncApplicationsData,
   CollectGuildSyncTraderData,
-  CommitGuildSyncTraderData
+  CommitGuildSyncTraderData,
+  CollectGuildSyncChatData,
+  CommitGuildSyncChatData
 } from '../bindings/GuildSync/app.js';
 
 import * as AppBridge from '../bindings/GuildSync/app.js';
@@ -110,6 +112,7 @@ let bankingUploadQueueProcessing = false;
 let rosterUploadQueueProcessing = false;
 let applicationsUploadQueueProcessing = false;
 let traderUploadQueueProcessing = false;
+let chatUploadRunning = false;
 let guildSyncFileWatcherStatus = null;
 let esoRunningStatus = { running: false, message: '' };
 let esoStatusPollTimer = null;
@@ -7960,6 +7963,7 @@ async function refreshESORunningStatus(options = {}) {
       await discordReminderControls.sync().catch(error => {
         addSystemMessage('discord-reminder-sync', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
       });
+      await uploadGuildSyncChatFromFile();
     }
 
     if (previousRunning !== esoRunningStatus.running || previousError !== esoRunningStatus.error) {
@@ -7979,6 +7983,9 @@ function startESOStatusPolling() {
   refreshESORunningStatus({ silent: true }).then(() => {
     if (!esoRunningStatus.running && getPendingDepositMailWriteCount() > 0) {
       processPendingDepositMailBatches();
+    }
+    if (!esoRunningStatus.running) {
+      uploadGuildSyncChatFromFile();
     }
   });
   esoStatusPollTimer = window.setInterval(() => refreshESORunningStatus({ silent: true }), ESO_STATUS_POLL_INTERVAL_MS);
@@ -10490,6 +10497,11 @@ function handleGuildSyncSavedVarsFileModified(payload = {}) {
     handleGuildSyncTraderSavedVarsModified(payload);
   }
 
+  if (normalizedKey === 'chat') {
+    logGuildSyncFileWatcher(`Processing guild chat SavedVariables update from ${fileName}.`);
+    void collectAndSendGuildSyncChatData(payload);
+  }
+
   if (normalizedKey === 'discord_reminders') {
     logGuildSyncFileWatcher(`Processing Discord reminder SavedVariables update from ${fileName}.`);
     void handleDiscordReminderSavedVarsModified(payload);
@@ -10507,6 +10519,102 @@ async function handleGuildSyncRosterSavedVarsModified(payload = {}) {
 
 async function handleGuildSyncTraderSavedVarsModified(payload = {}) {
   await collectAndSendGuildSyncTraderData(payload);
+}
+
+// Guild chat messages are written to GuildSyncChat.lua by the add-on and only
+// uploaded once ESO is closed: the game rewrites SavedVariables on reload and
+// logout, so clearing the file while ESO runs would race the next save. The
+// file itself is the queue, so a logout while GuildSync was closed is uploaded
+// on the next start or reconnect.
+async function collectAndSendGuildSyncChatData(payload = {}) {
+  const nativeGeneration = sessionGeneration;
+  if (userSwitchTransition || guildSyncSession.user?.user_switch?.active) return;
+  if (!canIngestGuildSyncData()) return;
+
+  if (esoRunningStatus.running) {
+    addSystemMessage('chat-data-pending', 'Guild chat is saved in GuildSyncChat.lua and will upload after ESO closes.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  if (!socket?.connected) {
+    addSystemMessage('chat-data-pending', 'Guild chat SavedVariables changed, but GuildSync websocket is not connected yet. Messages were not cleared.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  try {
+    const result = await CollectGuildSyncChatData(payload);
+    if (nativeGeneration !== sessionGeneration || userSwitchTransition || guildSyncSession.user?.user_switch?.active) return;
+
+    if (!result?.ok) {
+      // Clearing the file after a successful upload rewrites it, so an empty
+      // messages table is normal and should not report a problem.
+      if (result?.empty) return;
+      addSystemMessage('chat-data-pending', result?.message || 'Guild chat SavedVariables changed, but no messages were sent yet.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    await sendGuildSyncChatUpload({
+      file_name: result.fileName || payload.fileName || '',
+      file_path: result.filePath || payload.filePath || '',
+      data: result.data || {}
+    });
+  } catch (error) {
+    addSystemMessage('chat-data-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
+// Reads the SavedVariables file directly so messages left by a logout while
+// GuildSync was closed, or by a missed websocket, are not stranded.
+async function uploadGuildSyncChatFromFile() {
+  if (chatUploadRunning || !socket?.connected || !canIngestGuildSyncData() || esoRunningStatus.running) {
+    return;
+  }
+
+  chatUploadRunning = true;
+
+  try {
+    await collectAndSendGuildSyncChatData({});
+  } finally {
+    chatUploadRunning = false;
+  }
+}
+
+async function sendGuildSyncChatUpload(chatPayload) {
+  const nativeGeneration = sessionGeneration;
+  if (userSwitchTransition || guildSyncSession.user?.user_switch?.active) throw new Error('Native uploads are paused while switching accounts.');
+  if (!socket?.connected) {
+    throw new Error('GuildSync websocket is not connected. Guild chat was not cleared.');
+  }
+
+  const response = await emitSocketWithAck('guildsync:sending-chat-data', chatPayload, 30000);
+
+  if (!response?.ok) {
+    throw new Error(response?.message || response?.error || 'Backend rejected the guild chat payload. Messages were not cleared.');
+  }
+
+  if (nativeGeneration !== sessionGeneration || userSwitchTransition || guildSyncSession.user?.user_switch?.active) throw new Error('Account session changed before native commit.');
+  const commitResult = await CommitGuildSyncChatData(
+    chatPayload.file_path || '',
+    chatPayload.file_name || ''
+  );
+
+  if (!commitResult?.ok) {
+    throw new Error(commitResult?.message || 'Backend confirmed guild chat, but the SavedVariables messages could not be cleared.');
+  }
+
+  addSystemMessage('chat-data-sent', response.message || 'Guild chat sent to GuildSync backend.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+
+  return response;
 }
 
 // ESO writes the add-on's delivery results (mailAck) only when it saves

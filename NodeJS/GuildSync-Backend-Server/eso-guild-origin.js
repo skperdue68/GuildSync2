@@ -39,6 +39,7 @@ export function validateEsoGuildImport(kind, payload, env = process.env) {
   const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
   validateOrigin(payload, `${kind} upload`, guildId, false);
   validateOrigin(data, `${kind} data`, guildId, false);
+  if (kind === 'chat') return; // Guild chat is filtered by guild name in the add-on and carries no per-record guild ID.
   if (kind === 'roster') {
     if (data?.guildList) {
       validateOrigin(data.guildList, 'Roster snapshot', guildId);

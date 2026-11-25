@@ -11,6 +11,7 @@ import { normalizeRaffleDate } from './raffle-date.js';
 import { initializeDiscordOnboardingSchema } from './discord-onboarding-schema.js';
 import { initializeTraderSalesSubscriptions } from './trader-sales-subscriptions.js';
 import { initializeVoiceMuteSchema } from './voice-mute-schema.js';
+import { ensureGuildChatSchema } from './guild-chat-ingest.js';
 import { ARCHIVE_CELLS_SCHEMA } from './raffle-archive-cells.js';
 import { RAFFLE_RESULTS_SCHEMA, RAFFLE_FORMULAS_SCHEMA } from './raffle-results.js';
 import mysql from 'mysql2/promise';
@@ -403,6 +404,7 @@ async function initializeSchema(db) {
   await initializeUserSettingsSchema(db);
   await initializeDiscordOnboardingSchema(db);
   await initializeVoiceMuteSchema(db);
+  await ensureGuildChatSchema(db);
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS guildsync_login_sessions (
