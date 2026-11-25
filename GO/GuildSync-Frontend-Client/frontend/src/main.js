@@ -1653,7 +1653,9 @@ function getDiscordHistoryDisplayName(match = {}) {
 
 const DISCORD_HISTORY_EVENT_LABELS = {
   membership_dm_sent: 'Membership DM sent',
-  membership_dm_response: 'Membership DM response'
+  membership_dm_response: 'Membership DM response',
+  membership_dm_failed: 'Membership DM not delivered',
+  membership_dm_uncertain: 'Membership DM delivery uncertain'
 };
 
 function formatDiscordHistoryEventType(value) {

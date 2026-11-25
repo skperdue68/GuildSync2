@@ -5,20 +5,20 @@ import {createDMCampaignEngine,dmConfig,membershipDMManaged,pruneMembershipState
 function fixture(random=()=>0) {
  let time=10000000;
  const engine=createDMCampaignEngine({now:()=>time,random});
- const state={history:{},preferences:{},events:[]};
+ const state={results:{},preferences:{},events:[]};
  const advance=seconds=>time+=seconds;
  const members=[{id:'2',name:'Zebra'},{id:'3',name:'alice'},{id:'1',name:'Alice'}];
  return {engine,state,advance,members};
 }
 test('alphabetic queue, cooldown skips without delay, persistent interval and no catch-up bursts',()=>{
  const {engine,state,advance,members}=fixture();
- state.history['1']={sentAt:10000000};
+ state.results['1']={sentAt:10000000};
  engine.start(state,members,30);
  assert.equal(engine.claim(state,members,30),null);
  advance(600);let job=engine.claim(state,members,30);
  assert.equal(job.userId,'3');assert.equal(state.campaign.lastAttempted.name,'alice');
  engine.finish(state,job.id,job.token,{status:'sent',messageId:'m'});
- assert.equal(state.history['3'].sentAt,10000600);
+ assert.equal(state.results['3'].sentAt,10000600);
  assert.equal(engine.claim(state,members,30),null);
  advance(100000);job=engine.claim(state,members,30);assert.equal(job.userId,'2');
  engine.finish(state,job.id,job.token,{status:'failed'});
@@ -37,7 +37,7 @@ test('random bounds, pause/resume and stale sends are uncertain instead of resen
 });
 test('nonmembers, opt-outs and recently sent users are rechecked at delivery time',()=>{
  const {engine,state,advance,members}=fixture();engine.start(state,members,30);advance(600);
- state.preferences['1']='community';state.history['3']={sentAt:10000599};
+ state.preferences['1']='community';state.results['3']={sentAt:10000599};
  const job=engine.claim(state,members,30);assert.equal(job.userId,'2');
  engine.finish(state,job.id,job.token,{status:'skipped'});
  assert.equal(state.campaign.nextAt,10000600);
@@ -59,28 +59,24 @@ test('next slot is paced from actual successful completion, not an earlier claim
  engine.finish(state,job.id,job.token,{status:'sent',messageId:'message'});
  assert.equal(state.campaign.nextAt,10001300);
 });
-test('settled responses and old deliveries are pruned so guild state stays bounded',()=>{
- const state={history:{},preferences:{},deliveries:{},events:[]};
+test('settled responses are pruned so guild state stays bounded',()=>{
+ const state={preferences:{},events:[]};
  for(let index=0;index<205;index++)state.events.push({eventId:String(index),forwardStatus:index<150?'sent':'pending',roleStatus:'sent'});
- for(let index=0;index<1005;index++)state.deliveries['d'+index]={id:'d'+index,status:index<800?'sent':'uncertain',claimedAt:index};
  pruneMembershipState(state);
  assert.equal(state.events.length,200);
  assert.equal(state.events[0].eventId,'5');
  assert.equal(state.events.at(-1).eventId,'204');
- assert.equal(Object.keys(state.deliveries).length,1000);
- assert.equal(state.deliveries.d1004.status,'uncertain');
- assert.equal(state.deliveries.d0,undefined);
- const pending={history:{},preferences:{},deliveries:{},events:Array.from({length:205},(_,index)=>({eventId:String(index),forwardStatus:'pending',roleStatus:'sent'}))};
+ const pending={preferences:{},events:Array.from({length:205},(_,index)=>({eventId:String(index),forwardStatus:'pending',roleStatus:'sent'}))};
  pruneMembershipState(pending);
  assert.equal(pending.events.length,205,'unforwarded responses are never dropped');
 });
 test('only confirmed, ambiguous or preferred contacts suppress onboarding reminders',async()=>{
- const managed=state=>membershipDMManaged({execute:async()=>[[{state_json:JSON.stringify(state)}]]},'1','10');
- assert.equal(await managed({history:{10:{lastAttemptAt:1,deliveryId:'job'}},preferences:{}}),false);
- assert.equal(await managed({history:{10:{uncertain:false}},preferences:{},campaign:{queue:[{userId:'10',status:'pending'}]}}),false);
- assert.equal(await managed({history:{10:{sentAt:1}},preferences:{}}),true);
- assert.equal(await managed({history:{10:{uncertain:true}},preferences:{}}),true);
- assert.equal(await managed({history:{},preferences:{10:'community'}}),true);
+ const managed=(state,result=null)=>membershipDMManaged({execute:async sql=>sql.startsWith('SELECT state_json')?[[{state_json:JSON.stringify(state)}]]:[[result].filter(Boolean)]},'1','10');
+ assert.equal(await managed({preferences:{}},{sent_at:null,uncertain:0}),false);
+ assert.equal(await managed({preferences:{},campaign:{queue:[{userId:'10',status:'pending'}]}}),false);
+ assert.equal(await managed({preferences:{}},{sent_at:1,uncertain:0}),true);
+ assert.equal(await managed({preferences:{}},{sent_at:null,uncertain:1}),true);
+ assert.equal(await managed({preferences:{10:'community'}}),true);
 });
 
 test('membership DM pacing is configurable and a running campaign adopts a faster window',()=>{
