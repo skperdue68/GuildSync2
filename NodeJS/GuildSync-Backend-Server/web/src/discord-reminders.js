@@ -6,7 +6,7 @@ const PENDING_REMINDER_KEY='guildsync-pending-discord-reminders';
 let pendingReminderWrites=[];
 let pendingReminderLoaded=false;
 const reminderStorage=()=>{try{return globalThis.localStorage||null;}catch{return null;}};
-const esoRunningMessage=message=>/ESO is currently running|Close ESO completely/i.test(String(message||''));
+const esoRunningMessage=message=>/ESO is currently running|Close ESO completely|could not determine whether ESO is running/i.test(String(message||''));
 
 export function getPendingReminderWrites(){
   const store=reminderStorage();
@@ -57,8 +57,9 @@ export async function flushReminderWrites({bridge,request}={}){
   if(!queue.length)return {ok:true,written:0,pending:0};
   if(typeof bridge?.WriteDiscordReminderQueue!=='function')throw Error('Saving reminders requires the GuildSync desktop app.');
   let status=null;
-  try{status=await bridge.GetESORunningStatus?.();}catch{}
-  if(status?.running)return {ok:true,written:0,pending:queue.length,waiting:true};
+  try{status=await bridge.GetESORunningStatus?.();}
+  catch(error){return {ok:true,written:0,pending:queue.length,waiting:true,error:String(error?.message||error)};}
+  if(status?.running||status?.error)return {ok:true,written:0,pending:queue.length,waiting:true,error:String(status?.error||'')};
   let written=0;
   for(const item of getPendingReminderWrites()){
     if(!item.writtenAt){

@@ -23,6 +23,28 @@ test('queues a reminder while ESO runs and writes it after ESO closes',async()=>
  assert.deepEqual(calls,['prepare','exported']);
  assert.equal(getPendingReminderWrites().length,0);
 });
+test('reminder write watcher retains queued work while ESO detection is unknown',async()=>{
+ clearPendingReminderWrites();
+ let failed=true,writes=0;
+ const request=async payload=>payload.action==='prepare'?{ok:true,records:[{requestId:'r'}]}:{ok:true};
+ const bridge={GetESORunningStatus:async()=>({running:false,error:failed?'pgrep failed':''}),
+  WriteDiscordReminderQueue:async()=>{writes++;return failed?{ok:false,message:'GuildSync could not determine whether ESO is running. SavedVariables writes are paused.'}:{ok:true,message:'Written'};}};
+ const queued=await exportReminderBatch({request,bridge,batchId:'unknown',account:'@A',world:'NA Megaserver'});
+ assert.equal(queued.queued,true);assert.equal(writes,1);
+ const waiting=await flushReminderWrites({request,bridge});
+ assert.equal(waiting.waiting,true);assert.equal(writes,1);assert.equal(getPendingReminderWrites().length,1);
+ failed=false;await flushReminderWrites({request,bridge});
+ assert.equal(writes,2);assert.equal(getPendingReminderWrites().length,0);
+});
+test('a failed detector bridge call does not flush queued reminder writes',async()=>{
+ clearPendingReminderWrites();let writes=0;
+ const request=async payload=>payload.action==='prepare'?{ok:true,records:[{requestId:'r'}]}:{ok:true};
+ const bridge={GetESORunningStatus:async()=>{throw Error('Detector unavailable');},WriteDiscordReminderQueue:async()=>{writes++;return {ok:false,message:'Close ESO completely'};}};
+ await exportReminderBatch({request,bridge,batchId:'bridge-error',account:'@A',world:'NA Megaserver'});
+ const waiting=await flushReminderWrites({request,bridge});
+ assert.equal(waiting.waiting,true);assert.equal(writes,1);
+ clearPendingReminderWrites();
+});
 test('records the export only after SavedVariables write succeeds',async()=>{
  clearPendingReminderWrites();
  const calls=[];

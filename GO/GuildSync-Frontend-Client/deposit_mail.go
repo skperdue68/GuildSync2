@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,14 +28,11 @@ type DepositMailWriteResult struct {
 type ESORunningStatus struct {
 	Running bool   `json:"running"`
 	Message string `json:"message"`
+	Error   string `json:"error,omitempty"`
 }
 
 func (a *App) GetESORunningStatus() ESORunningStatus {
-	running := isESORunning()
-	if running {
-		return ESORunningStatus{Running: true, Message: "ESO appears to be running."}
-	}
-	return ESORunningStatus{Running: false, Message: "ESO does not appear to be running."}
+	return esoProcessStatus(runtime.GOOS, runProcessCommand)
 }
 
 func (a *App) WriteDepositMailToGuildSyncBanking(records []map[string]interface{}) DepositMailWriteResult {
@@ -48,7 +46,12 @@ func (a *App) WriteDepositMailToGuildSyncBanking(records []map[string]interface{
 		filePath = filepath.Join(getSavedVarsDir(), fileName)
 	}
 
-	result := DepositMailWriteResult{OK: false, FileName: fileName, FilePath: filePath, ESOIsRunning: isESORunning()}
+	status := a.GetESORunningStatus()
+	result := DepositMailWriteResult{OK: false, FileName: fileName, FilePath: filePath, ESOIsRunning: esoStatusBlocksSavedVarsWrites(status)}
+	if status.Error != "" {
+		result.Message = status.Message
+		return result
+	}
 	if result.ESOIsRunning {
 		result.Message = "ESO is currently running. Deposit mail was not written to SavedVariables yet."
 		return result
@@ -198,6 +201,25 @@ func verifyDepositMailQueueWrite(filePath string, records []map[string]interface
 	return missingIDs, nil
 }
 func isESORunning() bool {
+	return esoStatusBlocksSavedVarsWrites(esoProcessStatus(runtime.GOOS, runProcessCommand))
+}
+
+func esoStatusBlocksSavedVarsWrites(status ESORunningStatus) bool {
+	return status.Running || status.Error != ""
+}
+
+func esoProcessStatus(platform string, run func(string, ...string) ([]byte, error)) ESORunningStatus {
+	running, err := detectESORunning(platform, run)
+	if err != nil {
+		return ESORunningStatus{Error: err.Error(), Message: "GuildSync could not determine whether ESO is running. SavedVariables writes are paused: " + err.Error()}
+	}
+	if running {
+		return ESORunningStatus{Running: true, Message: "ESO appears to be running."}
+	}
+	return ESORunningStatus{Message: "ESO does not appear to be running."}
+}
+
+func detectESORunning(platform string, run func(string, ...string) ([]byte, error)) (bool, error) {
 	patterns := []string{
 		"eso64.exe",
 		"eso.exe",
@@ -207,31 +229,44 @@ func isESORunning() bool {
 		"the elder scrolls online",
 	}
 
-	switch runtime.GOOS {
+	switch platform {
 	case "windows":
-		out, err := runProcessCommand("tasklist", "/FO", "CSV", "/NH")
+		out, err := run("tasklist", "/FO", "CSV", "/NH")
 		if err != nil {
-			return false
+			return false, nil
 		}
-		return outputContainsAnyProcessName(out, patterns)
+		return outputContainsAnyProcessName(out, patterns), nil
 
-	case "darwin", "linux":
-		// pgrep with -a/-f checks the full process command line, which is better for
-		// ESO on Mac/Linux because it may run through Wine, CrossOver, Steam, or Proton.
-		out, err := runProcessCommand("pgrep", "-af", "eso64.exe|eso.exe|eso64|eso|Zenimax Online|The Elder Scrolls Online")
+	case "darwin":
+		// On macOS -a includes ancestors; it does not print the command line.
+		// Match complete process names so Resources paths and launchers cannot
+		// make a stopped game appear to be running. Trust pgrep's exit status.
+		_, err := run("/usr/bin/pgrep", "-ilx", "eso|eso64|eso[.]exe|eso64[.]exe")
+		if err == nil {
+			return true, nil
+		}
+		var exit interface{ ExitCode() int }
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("macOS ESO process detection failed: %w", err)
+
+	case "linux":
+		// Preserve Linux's full command-line checks for Wine/Proton.
+		out, err := run("pgrep", "-af", "eso64.exe|eso.exe|eso64|eso|Zenimax Online|The Elder Scrolls Online")
 		if err == nil && outputContainsAnyProcessName(out, patterns) {
-			return true
+			return true, nil
 		}
 
 		// Fallback for systems without pgrep or with different pgrep behavior.
-		out, err = runProcessCommand("ps", "-axo", "comm=,args=")
+		out, err = run("ps", "-axo", "comm=,args=")
 		if err != nil {
-			return false
+			return false, nil
 		}
-		return outputContainsAnyProcessName(out, patterns)
+		return outputContainsAnyProcessName(out, patterns), nil
 
 	default:
-		return false
+		return false, nil
 	}
 }
 
