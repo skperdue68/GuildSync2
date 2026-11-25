@@ -104,6 +104,26 @@ function applyDefaultRange() {
   elements.rangeEndMinute.value = DEFAULT_CLOCK;
 }
 
+// Each clock belongs to its own date: without a date there is nothing for a time
+// to refer to, so the pickers are disabled and reset to 00:00.
+function syncClockState() {
+  const sides = [
+    [elements.rangeStart, elements.rangeStartHour, elements.rangeStartMinute],
+    [elements.rangeEnd, elements.rangeEndHour, elements.rangeEndMinute]
+  ];
+
+  for (const [dateInput, hourSelect, minuteSelect] of sides) {
+    const hasDate = Boolean(dateInput.value.trim());
+    hourSelect.disabled = !hasDate;
+    minuteSelect.disabled = !hasDate;
+
+    if (!hasDate) {
+      hourSelect.value = DEFAULT_CLOCK;
+      minuteSelect.value = DEFAULT_CLOCK;
+    }
+  }
+}
+
 function setConnection(stateName, label) {
   elements.connection.dataset.state = stateName;
   elements.connection.textContent = label;
@@ -537,6 +557,7 @@ for (const input of [
   elements.rangeEndMinute
 ]) {
   input.addEventListener('change', () => {
+    syncClockState();
     if (readRange()) loadMessages();
   });
 }
@@ -548,6 +569,7 @@ elements.rangeClear.addEventListener('click', () => {
   elements.rangeStartMinute.value = DEFAULT_CLOCK;
   elements.rangeEndHour.value = DEFAULT_CLOCK;
   elements.rangeEndMinute.value = DEFAULT_CLOCK;
+  syncClockState();
   state.start = null;
   state.end = null;
   setError('');
@@ -582,6 +604,7 @@ elements.tableScroll.addEventListener('scroll', hideTooltip, {passive: true});
 updateSortHeaders();
 fillTimeOptions();
 applyDefaultRange();
+syncClockState();
 readRange();
 connectLiveFeed();
 loadMessages();

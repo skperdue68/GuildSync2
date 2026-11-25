@@ -315,6 +315,12 @@ select:focus-visible {
   font-weight: 600;
 }
 
+/* A clock without a date has nothing to refer to, so it stays inert. */
+.time-select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .field-hint {
   margin-left: 6px;
   font-weight: 400;

@@ -106,7 +106,21 @@ test('the search box and the 24-hour date range drive the query and update immed
   assert.match(client, /getDate\(\) \+ 1/);
   assert.match(client, /elements\.rangeStart\.value = dateInputValue\(today\);/);
   assert.match(client, /elements\.rangeEnd\.value = dateInputValue\(tomorrow\);/);
-  assert.match(client, /\nfillTimeOptions\(\);\napplyDefaultRange\(\);\nreadRange\(\);\nconnectLiveFeed\(\);\nloadMessages\(\);/);
+  assert.match(client, /\nfillTimeOptions\(\);\napplyDefaultRange\(\);\nsyncClockState\(\);\nreadRange\(\);\nconnectLiveFeed\(\);\nloadMessages\(\);/);
+});
+
+test('a clock only works once its own date is set', () => {
+  // Both clocks start disabled in the markup, before any date is applied.
+  assert.equal((html.match(/class="time-select" aria-label="[^"]+" disabled/g) || []).length, 4);
+
+  assert.match(client, /function syncClockState\(/);
+  assert.match(client, /hourSelect\.disabled = !hasDate/);
+  assert.match(client, /minuteSelect\.disabled = !hasDate/);
+  assert.match(client, /if \(!hasDate\) \{[^}]*hourSelect\.value = DEFAULT_CLOCK/s);
+
+  // Clearing a date, from the input or from Clear, resets its clock and disables it.
+  assert.match(client, /elements\.rangeClear[\s\S]*?syncClockState\(\)/);
+  assert.match(ruleBody('.time-select:disabled'), /opacity:/);
 });
 
 test('the last update stands out and Clear reads as destructive', () => {
