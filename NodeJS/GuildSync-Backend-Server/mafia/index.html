@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alphabet Mafia — Guild Chat</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page">
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">AM</span>
+        <span class="brand-text">
+          <span class="brand-title">Alphabet Mafia</span>
+          <span class="brand-subtitle">ESO guild chat archive</span>
+        </span>
+      </div>
+      <div class="header-actions">
+        <span id="connection-status" class="connection-badge" data-state="connecting">Connecting…</span>
+        <button id="refresh-button" class="refresh-button" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <div id="update-banner" class="update-banner" role="status" hidden>
+      <span id="update-banner-text">New guild chat messages were saved.</span>
+      <button id="update-banner-refresh" class="refresh-button refresh-button-small" type="button">Refresh</button>
+    </div>
+
+    <section class="toolbar" aria-label="Chat filters">
+      <label class="search-field">
+        <span class="field-label">Search</span>
+        <input id="search-input" type="search" placeholder="Sender, message, uploaded by…" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="range-field">
+        <span class="field-label">Date range</span>
+        <div class="range-inputs">
+          <label class="range-input">
+            <span>From</span>
+            <input id="range-start" type="datetime-local" step="60">
+          </label>
+          <label class="range-input">
+            <span>To</span>
+            <input id="range-end" type="datetime-local" step="60">
+          </label>
+          <button id="range-clear" class="ghost-button" type="button">Clear</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-card">
+      <div class="table-scroll" id="table-scroll">
+        <table class="chat-table">
+          <thead>
+            <tr>
+              <th scope="col" data-sort="time" aria-sort="descending">
+                <button class="sort-button" type="button">Local time<span class="sort-indicator" aria-hidden="true"></span></button>
+              </th>
+              <th scope="col" data-sort="sender" class="align-right">
+                <button class="sort-button" type="button">Sender<span class="sort-indicator" aria-hidden="true"></span></button>
+              </th>
+              <th scope="col" data-sort="message">
+                <button class="sort-button" type="button">Message<span class="sort-indicator" aria-hidden="true"></span></button>
+              </th>
+              <th scope="col" data-sort="source">
+                <button class="sort-button" type="button">Source<span class="sort-indicator" aria-hidden="true"></span></button>
+              </th>
+              <th scope="col" data-sort="uploaded_by">
+                <button class="sort-button" type="button">Uploaded by<span class="sort-indicator" aria-hidden="true"></span></button>
+              </th>
+            </tr>
+          </thead>
+          <tbody id="chat-body"></tbody>
+        </table>
+      </div>
+      <div class="table-footer">
+        <span id="table-summary">Loading…</span>
+        <span id="table-error" class="table-error" role="alert" hidden></span>
+      </div>
+    </section>
+  </div>
+
+  <div id="row-tooltip" class="row-tooltip" role="tooltip" hidden></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -29,6 +29,7 @@ import cors from 'cors';
 import http from 'node:http';
 import {createDesktopVersionPolicy} from './desktop-version-policy.js';
 import {ingestGuildChatMessages} from './guild-chat-ingest.js';
+import {createMafiaChatRouter, MAFIA_CHAT_UPDATED_EVENT} from './mafia-chat-api.js';
 import {releaseExpiredDepositMailCheckouts} from './deposit-mail-lease.js';
 import {startDepositMailSweep} from './deposit-mail-sweep.js';
 import fs from 'node:fs';
@@ -123,6 +124,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const WEB_DIST_DIR = process.env.GUILDSYNC_WEB_DIST_DIR || path.join(__dirname, 'public');
 const GUILDSYNC_DOWNLOADS_DIR = process.env.GUILDSYNC_DOWNLOADS_DIR || path.join(__dirname, 'public', 'downloads');
+// mafia.perdues.me is served by this same process from plain files, with no build step.
+const MAFIA_DIST_DIR = process.env.MAFIA_WEB_DIST_DIR || path.join(__dirname, 'mafia');
+// mafia.perdues.me runs on its own listener so the reverse proxy can send that
+// host straight to it without going through the GuildSync app.
+const MAFIA_PORT = Number(process.env.MAFIA_PORT || 3018);
 
 const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
 const ESO_GUILD_CONFIGURATION = esoGuildConfiguration();
@@ -197,6 +203,36 @@ const io = new Server(server, {
   // Allow 25 MiB (matching the express.json limit) instead of the 1 MB default.
   maxHttpBufferSize: 26214400
 });
+
+// The mafia site is its own Express app and Socket.IO server on MAFIA_PORT, so
+// its pages, API and live notice never share a listener with GuildSync.
+const mafiaWebApp = express.static(MAFIA_DIST_DIR, {index: 'index.html'});
+const mafiaApp = express();
+mafiaApp.use(cors());
+mafiaApp.use('/api/mafia/chat', createMafiaChatRouter({getDb: () => openAppDataDB(), log: Log}));
+mafiaApp.use(mafiaWebApp);
+mafiaApp.get('/{*splat}', (req, res, next) => {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) return next();
+  return res.sendFile(path.join(MAFIA_DIST_DIR, 'index.html'));
+});
+const mafiaServer = http.createServer(mafiaApp);
+const mafiaIo = new Server(mafiaServer, {
+  cors: {
+    origin: '*',
+    methods: ['GET']
+  }
+});
+
+// Only says that rows were stored; the page fetches when the reader asks it to.
+// It goes out on the mafia listener only, so the GuildSync socket server is
+// untouched and no namespace is opened on the 3001 port.
+function broadcastMafiaChatUpdate(detail = {}) {
+  try {
+    mafiaIo.of('/mafia').emit(MAFIA_CHAT_UPDATED_EVENT, { ...detail, at: new Date().toISOString() });
+  } catch (error) {
+    Log('Mafia guild chat update broadcast failed:', error.message);
+  }
+}
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
@@ -1689,6 +1725,10 @@ function registerGuildSyncConnection(socket) {
         entries
       });
 
+      if (result.chat_messages_inserted > 0) {
+        broadcastMafiaChatUpdate({inserted: result.chat_messages_inserted});
+      }
+
       sendSocketResponse(socket, 'guildsync:chat-data-result', callback, {
         ok: true,
         message: `Guild chat processed: ${result.chat_messages_inserted} new, ${result.chat_messages_duplicates} duplicate${result.chat_messages_duplicates === 1 ? '' : 's'} skipped${result.chat_messages_skipped ? `, ${result.chat_messages_skipped} invalid skipped` : ''}.`,
@@ -3038,6 +3078,10 @@ async function notifyTraderSaleSubscribers(entries = []) {
 // checkout does not wait for a connected client to ask for banking data.
 depositMailSweep = startDepositMailSweep(applicationDB, {
   notify: (released) => broadcastDepositMailAvailability(released)
+});
+
+mafiaServer.listen(MAFIA_PORT, HOST, () => {
+  Log(`Mafia guild chat site listening at http://${HOST}:${MAFIA_PORT}`);
 });
 
 server.listen(PORT, HOST, () => {
