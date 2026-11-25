@@ -37,6 +37,15 @@ export function membershipChoiceSummary(choice) {
   return 'other response';
 }
 
+// A stored preference can come from a member's own DM reply or from an officer
+// marking them as not playing ESO / not in the guild in the member link window.
+export function membershipPreferenceLabel(value) {
+  if(value==='not_playing')return 'does not play ESO';
+  if(value==='community')return 'not in the ESO guild';
+  if(value==='opt_out')return 'do not contact';
+  return String(value||'');
+}
+
 export function formatMembershipStatus({campaign,member,recentFailures=[]}={}) {
   const who=value=>value?`${value.name} (<t:${value.at}:f>)`:'None';
   const lines=campaign?[
@@ -46,7 +55,7 @@ export function formatMembershipStatus({campaign,member,recentFailures=[]}={}) {
     `Remaining: ${campaign.remaining}; uncertain: ${campaign.uncertain}`,
     `Next scheduled attempt: <t:${campaign.nextAt}:f>`
   ]:['No membership DM campaign has been started.'];
-  if(member)lines.push(`User ${member.userId}: last confirmed DM ${member.history?.sentAt?`<t:${member.history.sentAt}:f>`:'Never'}; preference: ${member.preference||'None'}${member.history?.uncertain?'; delivery uncertain—review before retrying':''}${!member.history?.sentAt&&member.history?.status?`; last attempt ${member.history.status}${member.history.reason?`: ${safeText(member.history.reason)}`:''}`:''}`);
+  if(member)lines.push(`User ${member.userId}: last confirmed DM ${member.history?.sentAt?`<t:${member.history.sentAt}:f>`:'Never'}; ${member.preference?`preference: ${membershipPreferenceLabel(member.preference)}`:'preference: None'}${member.history?.uncertain?'; delivery uncertain—review before retrying':''}${!member.history?.sentAt&&member.history?.status?`; last attempt ${member.history.status}${member.history.reason?`: ${safeText(member.history.reason)}`:''}`:''}`);
   if(member?.lastResponse)lines.push(`Last response: ${membershipChoiceSummary(member.lastResponse.choice)}${member.lastResponse.accountName?` — ESO @${safeText(member.lastResponse.accountName)}`:''}${member.lastResponse.at?` (<t:${member.lastResponse.at}:f>)`:''}`);
   if(campaign?.uncertainMembers?.length)lines.push(`Uncertain deliveries: ${campaign.uncertainMembers.map(entry=>`${safeText(entry.name)} (${entry.userId})`).join(', ')}. Resolve each with /discord-reminders resolve.`);
   // Failed, uncertain and skipped attempts keep their reason and time, so an

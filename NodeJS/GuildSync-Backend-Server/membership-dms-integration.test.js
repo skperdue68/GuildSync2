@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createMembershipDMService,registerMembershipDMSocket} from './membership-dms.js';
+import {createMembershipDMService,registerMembershipDMSocket,registerMembershipDMPreferenceSocket} from './membership-dms.js';
 import {dmConfig} from './membership-dm-config.js';
 import {createMembershipDMWorker} from '../GuildSync-Discord-Bot/src/membership-dms.js';
 
@@ -19,6 +19,7 @@ function fixture({legacy}={}) {
    if(sql.startsWith('SELECT state_json'))return [[{state_json:json}]];
    if(sql.startsWith('UPDATE guildsync_membership_dm_state')){json=args[0];return [{affectedRows:1}];}
    if(sql.startsWith('SELECT * FROM guildsync_membership_dm_results'))return [[...results.values()].filter(row=>row.guild_id===args[0])];
+   if(sql.startsWith('SELECT status,reason,attempted_at,sent_at,uncertain FROM guildsync_membership_dm_results'))return [[...results.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
    if(sql.startsWith('SELECT sent_at,uncertain FROM guildsync_membership_dm_results'))return [[...results.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1]).map(row=>({sent_at:row.sent_at,uncertain:row.uncertain}))];
    if(sql.includes('SELECT discord_user_id,display_name,status,reason,attempted_at'))return [[...results.values()].filter(row=>row.guild_id===args[0]&&['failed','uncertain','skipped'].includes(row.status)).sort((a,b)=>(b.attempted_at||0)-(a.attempted_at||0)).slice(0,10)];
    if(sql.startsWith('INSERT INTO guildsync_membership_dm_results')){
@@ -246,4 +247,45 @@ test('a claim with no result after two minutes becomes uncertain history',async(
  const status=await f.restart().command('1','officer','status');
  assert.deepEqual(status.recentFailures.map(entry=>[entry.userId,entry.status,entry.reason,entry.at]),
    [['10','uncertain','No delivery result was recorded in time.',1800000600]]);
+});
+test('an officer can stop membership DMs for one Discord member and see the last send and reply',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'350',choice:'not_playing'});
+ assert.deepEqual(await f.service.setPreference('1','10','opt_out'),{userId:'10',preference:'opt_out'});
+ assert.equal(f.state().preferences['10'],'opt_out');
+ const note=f.history().find(args=>args[4]==='membership_dm_preference');
+ assert.deepEqual([note[0],note[7],note[10]],['10','Marked as “does not play ESO or is not in the ESO guild”; membership DMs stopped','guildsync']);
+ const summary=await f.service.memberSummary('1','10');
+ assert.equal(summary.preference,'opt_out');
+ assert.equal(summary.result.status,'sent');
+ assert.equal(summary.result.sentAt,1800000600);
+ assert.equal(summary.lastResponse.choice,'not_playing');
+ assert.deepEqual(await f.service.preferences('1'),{'10':'opt_out'});
+ await assert.rejects(()=>f.service.setPreference('1','10','bogus'),/membership contact preference/);
+ await assert.rejects(()=>f.service.setPreference('1','abc','opt_out'),/membership contact preference/);
+ f.advance(40*86400);await f.service.command('1','officer','restart');
+ assert.deepEqual(f.state().campaign.queue.map(q=>q.userId),['20'],'a marked member is never queued again');
+ await f.service.setPreference('1','10','');
+ assert.equal(f.state().preferences['10'],undefined);
+ await f.service.command('1','officer','restart');
+ assert.ok(f.state().campaign.queue.some(job=>job.userId==='10'),'clearing the preference restores contact');
+});
+
+test('the preference socket is approved-user only, guild scoped and read-only for viewers',async()=>{
+ const f=fixture();
+ const handlers={},socket={guildSyncAuthenticated:true,guildSyncUser:{discord_user_id:'1'},on:(event,fn)=>handlers[event]=fn};
+ registerMembershipDMPreferenceSocket(socket,f.service,{resolveGuildId:async()=>'1',authorize:async()=>'user'});
+ const send=async payload=>{let response;await handlers['guildsync:membership-dm-preferences'](payload,r=>response=r);return response;};
+ assert.equal((await send({action:'set',userId:'10',value:'opt_out'})).ok,true);
+ assert.deepEqual((await send({action:'list'})).preferences,{'10':'opt_out'});
+ const viewerHandlers={},viewer={...socket,on:(event,fn)=>viewerHandlers[event]=fn};
+ registerMembershipDMPreferenceSocket(viewer,f.service,{resolveGuildId:async()=>'1',authorize:async()=>'viewer'});
+ let response;await viewerHandlers['guildsync:membership-dm-preferences']({action:'set',userId:'10',value:'opt_out'},r=>response=r);
+ assert.equal(response.ok,false);assert.match(response.message,/User or Admin/);
+ await viewerHandlers['guildsync:membership-dm-preferences']({action:'list'},r=>response=r);
+ assert.equal(response.ok,true);
+ const strangerHandlers={},stranger={...socket,on:(event,fn)=>strangerHandlers[event]=fn};
+ registerMembershipDMPreferenceSocket(stranger,f.service,{resolveGuildId:async()=>'',authorize:async()=>false});
+ await strangerHandlers['guildsync:membership-dm-preferences']({action:'list'},r=>response=r);
+ assert.equal(response.ok,false);
 });

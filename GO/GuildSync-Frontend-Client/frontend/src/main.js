@@ -257,6 +257,9 @@ let memberLinkDialogLoading = false;
 let memberLinkDialogError = '';
 let memberLinkDialogSearchTerm = '';
 let memberLinkDialogSelectedOptionIndex = -1;
+let membershipDMPreferences = {};
+let membershipDMPreferenceSummary = null;
+let membershipDMPreferenceLoadPromise = null;
 let guildSyncConfirmDialogOpen = false;
 let guildSyncConfirmDialog = null;
 let guildSyncConfirmResolve = null;
@@ -1655,7 +1658,8 @@ const DISCORD_HISTORY_EVENT_LABELS = {
   membership_dm_sent: 'Membership DM sent',
   membership_dm_response: 'Membership DM response',
   membership_dm_failed: 'Membership DM not delivered',
-  membership_dm_uncertain: 'Membership DM delivery uncertain'
+  membership_dm_uncertain: 'Membership DM delivery uncertain',
+  membership_dm_preference: 'Membership DM preference'
 };
 
 function formatDiscordHistoryEventType(value) {
@@ -3001,6 +3005,7 @@ async function refreshMemberLinks(options = {}) {
     const response = await emitSocketWithAck('guildsync:request-member-links', {}, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to load member links.');
     memberLinks = Array.isArray(response.links) ? response.links : [];
+    void loadMembershipDMPreferences();
   } catch (error) {
     memberLinksError = formatError(error);
   } finally {
@@ -3269,6 +3274,11 @@ function getMemberLinkButtonData(context) {
   const status = String(link?.link_status || '').trim().toLowerCase();
   const linkedCount = links.filter((item) => String(item.link_status || '').trim().toLowerCase() === 'linked').length;
   const candidateCount = links.filter((item) => String(item.link_status || '').trim().toLowerCase() === 'candidate').length;
+
+  const membershipPreference = getMemberLinkMembershipPreference(context);
+  if (membershipPreference) {
+    return { color: 'purple', label: 'Do not contact', className: 'opt-out', title: `Marked as ${membershipPreferenceLabel(membershipPreference).toLowerCase()}. Skipped by membership DM campaigns.` };
+  }
 
   if (getMemberLinkReminderOptOut(context)) {
     return { color: 'purple', label: 'Does not use Discord', className: 'opt-out', title: 'Marked as “Does not use Discord”. Excluded from Discord reminder exports.' };
@@ -3604,6 +3614,124 @@ function renderMemberLinkReminderSection() {
           </section>`;
 }
 
+function membershipPreferenceLabel(value) {
+  if (value === 'not_playing') return 'Does not play ESO';
+  if (value === 'community') return 'Not an Alphabet Mafia member';
+  return 'Does not play ESO / not a guild member';
+}
+
+function membershipResponseLabel(choice) {
+  if (choice === 'eso') return 'Provided an ESO account';
+  if (choice === 'community') return 'Not in the guild; staying on Discord';
+  if (choice === 'not_playing') return 'No longer plays ESO; staying on Discord';
+  return 'Other response';
+}
+
+function getMembershipDMUserIdForContext(context) {
+  if (context?.mode === 'discord-to-eso') return String(context.discordUserId || '').trim();
+  const linked = getMemberLinksByEsoAccount(context?.esoAccountName)
+    .find((link) => String(link?.link_status || '').trim().toLowerCase() === 'linked');
+  return String(linked?.discord_user_id || '').trim();
+}
+
+function getMemberLinkMembershipPreference(context) {
+  const userId = getMembershipDMUserIdForContext(context);
+  return userId ? String(membershipDMPreferences[userId] || '') : '';
+}
+
+function formatMembershipDMTime(seconds) {
+  return seconds ? formatReminderHistoryValue(new Date(Number(seconds) * 1000).toISOString()) : 'Never';
+}
+
+function membershipAttemptText(result) {
+  if (!result) return 'No attempt recorded';
+  const reason = result.reason ? ` — ${result.reason}` : '';
+  return `${result.status}${reason} (${formatMembershipDMTime(result.attemptedAt)})`;
+}
+
+function membershipResponseText(lastResponse) {
+  if (!lastResponse) return 'No response yet';
+  const account = lastResponse.accountName ? ` (ESO @${lastResponse.accountName})` : '';
+  const at = lastResponse.at ? ` · ${formatMembershipDMTime(lastResponse.at)}` : '';
+  return `${membershipResponseLabel(lastResponse.choice)}${account}${at}`;
+}
+
+async function loadMembershipDMPreferences({ force = false } = {}) {
+  if (!socket?.connected || !isAuthenticatedSession()) return;
+  if (membershipDMPreferenceLoadPromise && !force) return membershipDMPreferenceLoadPromise;
+  membershipDMPreferenceLoadPromise = (async () => {
+    try {
+      const response = await emitSocketWithAck('guildsync:membership-dm-preferences', { action: 'list' });
+      if (!response?.ok) throw new Error(response?.message || 'Could not load membership DM preferences.');
+      membershipDMPreferences = response.preferences && typeof response.preferences === 'object' ? response.preferences : {};
+      if (memberLinkDialogOpen) renderGuildSyncTabLayout();
+    } catch (error) {
+      membershipDMPreferences = membershipDMPreferences || {};
+    } finally {
+      membershipDMPreferenceLoadPromise = null;
+    }
+  })();
+  return membershipDMPreferenceLoadPromise;
+}
+
+async function loadMemberLinkMembershipSummary(userId = getMembershipDMUserIdForContext(memberLinkDialogContext)) {
+  const key = String(userId || '').trim();
+  membershipDMPreferenceSummary = null;
+  if (!key || !socket?.connected || !isAuthenticatedSession()) return;
+  try {
+    const response = await emitSocketWithAck('guildsync:membership-dm-preferences', { action: 'get', userId: key });
+    if (!response?.ok) throw new Error(response?.message || 'Could not load the membership DM summary.');
+    membershipDMPreferenceSummary = { ...response, userId: key };
+    if (memberLinkDialogOpen) renderGuildSyncTabLayout();
+  } catch (error) {
+    membershipDMPreferenceSummary = null;
+  }
+}
+
+async function saveMemberLinkMembershipPreference(input) {
+  const userId = input.dataset.memberLinkMembershipOptOut || '';
+  const optedOut = Boolean(input.checked);
+  const value = optedOut ? 'opt_out' : '';
+  input.disabled = true;
+  try {
+    const response = await emitSocketWithAck('guildsync:membership-dm-preferences', { action: 'set', userId, value });
+    if (!response?.ok) throw new Error(response?.message || 'Could not save the membership DM preference.');
+    if (value) membershipDMPreferences[userId] = value;
+    else delete membershipDMPreferences[userId];
+    addSystemMessage('member-link-membership-preference', optedOut
+      ? 'Membership DMs stopped for this Discord member.'
+      : 'Membership DMs are allowed for this Discord member again.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    await loadMemberLinkMembershipSummary(userId);
+  } catch (error) {
+    input.checked = !optedOut;
+    addSystemMessage('member-link-membership-preference-error', error.message || 'Could not save the membership DM preference.');
+  } finally {
+    input.disabled = false;
+  }
+}
+
+function renderMemberLinkMembershipSection() {
+  const userId = getMembershipDMUserIdForContext(memberLinkDialogContext);
+  if (!userId) return '';
+  const preference = String(membershipDMPreferences[userId] || '');
+  const summary = membershipDMPreferenceSummary?.userId === userId ? membershipDMPreferenceSummary : null;
+  const editable = canEditGuildSyncData() && memberLinkDialogContext?.mode === 'discord-to-eso';
+  return `
+          <section class="member-link-dialog-section member-link-membership-section">
+            <h4>Discord · Membership DM</h4>
+            <div class="member-link-reminder-history">
+              <span>DM sent: ${escapeHtml(formatMembershipDMTime(summary?.result?.sentAt))}</span>
+              <span>Last attempt: ${escapeHtml(membershipAttemptText(summary?.result))}</span>
+              <span>Response: ${escapeHtml(membershipResponseText(summary?.lastResponse))}</span>
+            </div>
+            <label class="member-link-reminder-opt-out">
+              <input type="checkbox" data-member-link-membership-opt-out="${escapeAttribute(userId)}"${preference ? ' checked' : ''}${editable ? '' : ' disabled'}>
+              Does not play ESO / not in Alphabet Mafia (stay on Discord)
+            </label>
+            <p class="member-link-reminder-help">Checked members are skipped by the membership DM campaign, so GuildSync does not contact them on Discord again. Their link dot turns purple. Their DM replies stay in their Discord member history.</p>
+          </section>`;
+}
+
 function renderMemberLinkDialog() {
   const mode = memberLinkDialogContext?.mode || '';
   const sourceLabel = getMemberLinkDialogSourceLabel();
@@ -3626,6 +3754,8 @@ function renderMemberLinkDialog() {
           </section>
 
           ${renderMemberLinkReminderSection()}
+
+          ${renderMemberLinkMembershipSection()}
 
           <section class="member-link-dialog-section" ${canManageGuildSyncLinks() ? '' : 'hidden inert'}>
             <h4>Suggested Matches</h4>
@@ -3663,6 +3793,8 @@ async function openMemberLinkDialog(mode, value) {
   memberLinkDialogSearchTerm = '';
   memberLinkDialogSelectedOptionIndex = -1;
   renderGuildSyncTabLayout();
+  void loadMemberLinkMembershipSummary();
+  void loadMembershipDMPreferences();
 
   try {
     if (!Array.isArray(memberLinks) || memberLinks.length === 0) {
@@ -3908,6 +4040,10 @@ function wireMemberLinkDialog() {
 
   document.querySelectorAll('[data-member-link-reminder-opt-out]').forEach((input) => {
     input.addEventListener('change', () => saveMemberLinkReminderOptOut(input));
+  });
+
+  document.querySelectorAll('[data-member-link-membership-opt-out]').forEach((input) => {
+    input.addEventListener('change', () => saveMemberLinkMembershipPreference(input));
   });
 
   document.querySelectorAll('[data-accept-dialog-member-candidate]').forEach((button) => {

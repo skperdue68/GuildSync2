@@ -1,5 +1,5 @@
 import {initializeDiscordReminders,createDiscordReminders,registerDiscordReminderSocket,hasOfficerRole} from './discord-reminders.js';
-import {initializeMembershipDMs,createMembershipDMService,registerMembershipDMSocket,membershipDMManaged} from './membership-dms.js';
+import {initializeMembershipDMs,createMembershipDMService,registerMembershipDMSocket,registerMembershipDMPreferenceSocket,membershipDMManaged} from './membership-dms.js';
 import {dmConfig} from './membership-dm-config.js';
 import {createEsoAccountRenames,registerEsoAccountRenameSocket} from './eso-account-identity.js';
 import {registerTraderSalesSubscriptionSocket, planTraderSaleNotices, announceTraderSaleNotices, markTraderSaleNoticesDelivered} from './trader-sales-subscriptions.js';
@@ -170,6 +170,18 @@ const app = express();
 const roleViews = createRoleViews(loginDB);
 const discordReminders=createDiscordReminders(applicationDB,{guildId:ESO_GUILD_CONFIGURATION.guildId,
   guildName:process.env.GUILDSYNC_ESO_GUILD_NAME||''});
+
+// Membership DM state belongs to the bot's Discord guild. Keep the id it reports so
+// approved desktop users can read and set member preferences while they are online.
+let discordGuildId='';
+async function resolveDiscordGuildId() {
+  if(discordGuildId)return discordGuildId;
+  try {
+    const [rows]=await applicationDB.execute("SELECT value FROM guildsync_settings WHERE setting_key='discord_guild_id'");
+    discordGuildId=String(rows[0]?.value||'').trim();
+  } catch {}
+  return discordGuildId;
+}
 const userSwitches = createUserSwitches(loginDB,{log:Log});
 const rosterNoteAccess=createRosterNoteAccess({db:applicationDB,loginDB,
   effectiveRole:(socket,role)=>roleViews.effective(socket.guildSyncRoleViewId,role),
@@ -514,6 +526,11 @@ io.use(async (socket, next) => {
       connected_at: new Date().toISOString()
     };
 
+    discordGuildId = socket.guildSyncBot.guild_id;
+    if (applicationDB && discordGuildId) {
+      applicationDB.execute("INSERT INTO guildsync_settings(setting_key,value) VALUES('discord_guild_id',?) ON DUPLICATE KEY UPDATE value=VALUES(value)",[discordGuildId]).catch(()=>{});
+    }
+
     return next();
   }
 
@@ -725,6 +742,11 @@ function registerGuildSyncConnection(socket) {
   registerDiscordOnboardingSocket(socket, onboardingService);
   registerMembershipDMSocket(socket,membershipDMService,{guildId:socket.guildSyncBot?.guild_id,
     onLinked:()=>Promise.allSettled([broadcastMemberLinksUpdate(),broadcastRosterDataUpdate()])});
+  registerMembershipDMPreferenceSocket(socket,membershipDMService,{resolveGuildId:resolveDiscordGuildId,
+    authorize:async current=>{
+      const [rows]=await loginDB.execute('SELECT role,allowed FROM guildsync_users WHERE discord_user_id=? LIMIT 1',[current.guildSyncUser.discord_user_id]);
+      return Number(rows[0]?.allowed)===1?(roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role)||rows[0]?.role):false;
+    }});
   registerVoiceForSocket(socket);
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
   registerArchiveSocket(socket, applicationDB);

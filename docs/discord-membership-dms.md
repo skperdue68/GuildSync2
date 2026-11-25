@@ -4,7 +4,7 @@ An officer starts an alphabetical campaign for current Discord members without a
 
 ## History
 
-A confirmed membership DM adds a **Membership DM sent** note to that member's Discord history, and every reply adds a **Membership DM response** note naming the chosen option (with the linked ESO account when one was established). A failed or uncertain attempt adds a **Membership DM not delivered** or **Membership DM delivery uncertain** note with Discord's reason, so the member's history shows who did not get a DM and why. Officers see these in **Lookup Member History**. Test-mode messages and test responses are never recorded.
+A confirmed membership DM adds a **Membership DM sent** note to that member's Discord history, and every reply adds a **Membership DM response** note naming the chosen option (with the linked ESO account when one was established). A failed or uncertain attempt adds a **Membership DM not delivered** or **Membership DM delivery uncertain** note with Discord's reason, so the member's history shows who did not get a DM and why. Marking or clearing the membership contact preference adds a **Membership DM preference** note, and a reply records whether they supplied an ESO account, are no longer in the ESO guild, no longer play ESO, or sent another response. Officers see these in **Lookup Member History**. Test-mode messages and test responses are never recorded.
 
 ## Configure
 
@@ -13,6 +13,7 @@ In GuildSync, open **Reports & Admin → Administrator Configuration → Discord
 - Enable officer-initiated membership DMs. Enabling alone does not create a campaign.
 - Set the minimum days between confirmed membership DMs; the default is 30, configurable from 1 to 365.
 - Set the shortest and longest waits between attempts in seconds; defaults are 600 and 900 (10–15 minutes). Saving a faster window shortens a wait already in progress on the next bot poll, without pausing or restarting the campaign.
+- In a Discord member's link window, tick **Does not play ESO / not in Alphabet Mafia (stay on Discord)** to stop membership DMs for that Discord member. It is skipped by every future campaign, its link dot turns purple in the Discord member list and the Guild Roster, and the same window shows the last DM send, its outcome and the member's latest reply. Clearing the tick allows contact again.
 - Edit the message using `{name}` and `{guild}`. The four buttons and the notice that replies go to guild officers are added automatically.
 - Select a reply destination type (**channel** or **user**) and its numeric Discord ID. A channel must be in this Discord server and writable by the bot; a user must accept the bot’s DMs.
 - Optionally choose a numeric community role ID. Blank records preferences without changing roles. A configured role requires the bot’s Manage Roles permission and a role position above it. These responses do not remove existing access or rank roles.
