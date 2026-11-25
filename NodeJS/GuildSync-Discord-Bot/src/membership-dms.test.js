@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {membershipDMMessage,membershipReplyMessage,createMembershipDMWorker,formatMembershipStatus} from './membership-dms.js';
+const cardOf=payload=>{const embed=payload.embeds[0].toJSON();return {embed,fields:Object.fromEntries(embed.fields.map(field=>[field.name,field.value]))};};
 
 const job={id:'12345678-1234-1234-1234-123456789abc',userId:'10',name:'Member',token:'claim'};
 const config={template:'Hello {name}, please tell {guild} your ESO name.',destinationType:'channel',destinationId:'99'};
@@ -63,46 +64,58 @@ test('buttons open forms, and submitted responses are routed to the backend with
  await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>false,isModalSubmit:()=>true,inGuild:()=>false,user:{id:'10'},id:'123',fields:{getTextInputValue:()=>'@ESO'},deferReply:async()=>{},editReply:async value=>{reply=value;}});
  assert.equal(calls[0][1].userId,'10');assert.equal(calls[0][1].text,'@ESO');assert.equal(reply,'Linked');
 });
-test('forwarding renders the approved card, names the server and member, and attaches a long reply',async()=>{
+test('forwarding renders the approved embed card, names the server and member, and attaches a long reply',async()=>{
  const event={eventId:'123',userId:'10',name:'Member',choice:'other',text:'X'.repeat(4000),at:100,deliveryId:job.id,result:{status:'review'},destinationType:'channel',destinationId:'99',token:'token'};
  const calls=[];
  const {worker,forwards}=fixture(async(action,payload)=>{calls.push([action,payload]);return action==='claim-forward'?{event}:{};});
- await worker.forwardOne();assert.equal(forwards.length,1);assert.ok(forwards[0].files?.length);assert.deepEqual(forwards[0].allowedMentions.parse,[]);
+ await worker.forwardOne();assert.equal(forwards.length,1);assert.deepEqual(forwards[0].allowedMentions.parse,[]);
  assert.equal(calls.at(-1)[1].success,true);
- assert.match(forwards[0].content,/📨 <t:100:F>/);
- assert.match(forwards[0].content,/\*\*Member\*\* answered the membership DM: \*\*Sent another response\*\*\./);
- assert.match(forwards[0].content,/\*\*Member response:\*\*\n```text\n/);
- assert.match(forwards[0].content,/Server: Guild · Discord: Member \(10\) · Outcome: Response forwarded/);
- assert.doesNotMatch(forwards[0].content,/Server: 1\b/);
- assert.doesNotMatch(forwards[0].content,/Delivery:/);
- assert.match(forwards[0].content,/\[Full response attached\]$/);
- assert.ok(forwards[0].content.length<=1950);
- assert.equal((forwards[0].files[0].attachment.toString().match(/```/g)||[]).length,2,'the attached card closes its code block');
+ const {embed:card,fields}=cardOf(forwards[0]);
+ assert.equal(card.author.name,'Membership DM response');
+ assert.equal(card.title,'Member');
+ assert.equal(card.description,'**Sent another response**');
+ assert.equal(card.footer.text,'GuildSync');
+ assert.equal(new Date(card.timestamp).getTime(),100000);
+ assert.equal(card.color,0xfee75c);
+ assert.equal(fields.Server,'Guild');assert.equal(fields.Discord,'Member (10)');
+ assert.equal(fields.Outcome,'Response forwarded');
+ assert.equal(fields['Member response'],'```text\n'+'X'.repeat(1011)+'…\n```');
+ assert.ok(fields['Member response'].length<=1024);
+ assert.equal(forwards[0].files[0].attachment.toString(),'X'.repeat(4000));
 });
 
-test('the card summarizes links, button answers, removal requests and reposts',()=>{
- const linked=membershipReplyMessage({eventId:'1',userId:'10',name:'Member',choice:'eso',text:'Evaine',at:100,result:{status:'linked',accountName:'Evaine'}},{guildName:'Guild'});
- assert.match(linked.content,/Linked ESO account @Evaine/);
- assert.match(linked.content,/my ESO login is @Evaine/);
- assert.match(linked.content,/Outcome: Linked to @Evaine/);
- const community=membershipReplyMessage({eventId:'2',userId:'10',name:'Member',choice:'community',at:100,result:{status:'community'}},{guildName:'Guild'});
- assert.match(community.content,/Still plays ESO, not in Guild/);
- assert.match(community.content,/Outcome: Preference saved — membership DMs stopped/);
- assert.doesNotMatch(community.content,/Member response:/);
- const removal=membershipReplyMessage({eventId:'3',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal requested'}},{guildName:'Guild'});
- assert.match(removal.content,/Asked to be removed from the Discord server/);
- assert.match(removal.content,/Removal requested — an officer still needs to remove them/);
- const repost=membershipReplyMessage({eventId:'4',userId:'10',name:'Member',choice:'not_playing',at:100,result:{status:'not_playing'}},{guildName:'Guild',repostedBy:'Officer',nonceKey:'repost-1'});
- assert.match(repost.content,/Reposted by Officer/);
- assert.match(repost.content,/Outcome: Preference saved/);
+test('the embed card summarizes links, button answers, removal requests and reposts',()=>{
+ const linked=cardOf(membershipReplyMessage({eventId:'1',userId:'10',name:'Member',choice:'eso',text:'Evaine',at:100,result:{status:'linked',accountName:'Evaine'}},{guildName:'Guild'}));
+ assert.equal(linked.embed.color,0x57f287);
+ assert.equal(linked.embed.description,'**Linked ESO account @Evaine**');
+ assert.equal(linked.fields['Member response'],"```text\nI'm in Guild — my ESO login is @Evaine\n```");
+ assert.equal(linked.fields.Outcome,'Linked to @Evaine');
+ const community=cardOf(membershipReplyMessage({eventId:'2',userId:'10',name:'Member',choice:'community',at:100,result:{status:'community'}},{guildName:'Guild'}));
+ assert.equal(community.embed.color,0x5865f2);
+ assert.equal(community.embed.description,'**Still plays ESO, not in Guild**');
+ assert.equal(community.fields['Member response'],undefined);
+ assert.equal(community.fields.Outcome,'Preference saved — membership DMs stopped');
+ const removal=cardOf(membershipReplyMessage({eventId:'3',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal requested'}},{guildName:'Guild'}));
+ assert.equal(removal.embed.color,0xed4245);
+ assert.equal(removal.embed.description,'**Asked to be removed from the Discord server**');
+ assert.equal(removal.fields.Outcome,'Removal requested — an officer still needs to remove them');
+ const repost=cardOf(membershipReplyMessage({eventId:'4',userId:'10',name:'Member',choice:'not_playing',at:100,result:{status:'not_playing'}},{guildName:'Guild',repostedBy:'Officer',nonceKey:'repost-1'}));
+ assert.equal(repost.fields['Reposted by'],'Officer');
+ assert.equal(repost.fields.Server,'Guild');
+ assert.equal(repost.embed.description,'**No longer plays ESO — staying on Discord**');
+ assert.equal(new Date(repost.embed.timestamp).getTime(),100000);
 });
+
 test('repost sends the stored reply card to the configured destination',async()=>{
  const {worker,forwards}=fixture(async()=>({}));
  const message=await worker.repost({response:{userId:'10',name:'Member',choice:'community',text:'',at:100,result:{status:'community'}},destinationType:'channel',destinationId:'99'},'Officer');
  assert.equal(message.id,'200');assert.equal(forwards.length,1);
- assert.match(forwards[0].content,/Reposted by Officer/);
- assert.match(forwards[0].content,/Server: Guild/);
+ const {embed:card,fields}=cardOf(forwards[0]);
+ assert.equal(fields['Reposted by'],'Officer');
+ assert.equal(fields.Server,'Guild');
+ assert.equal(card.title,'Member');
 });
+
 test('status reports last attempted, last delivered and next scheduled time',()=>{
  const text=formatMembershipStatus({campaign:{status:'paused',remaining:2,nextAt:100,lastAttempted:{name:'A',at:50},lastSent:{name:'B',at:40},uncertain:1,uncertainMembers:[{userId:'10',name:'Member'}]}});
  assert.match(text,/Last attempted: A/);assert.match(text,/Last sent: B/);assert.match(text,/paused/);
