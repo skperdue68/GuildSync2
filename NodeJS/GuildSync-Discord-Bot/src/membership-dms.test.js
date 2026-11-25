@@ -110,3 +110,14 @@ test('simulated test mode messages name the member and never use real button IDs
  assert.equal(buttons.length,4);
  assert.ok(buttons.every(button=>button.custom_id.startsWith('gs-membership-sim:')));
 });
+
+test('status lists recent failures with their reason',()=>{
+ const text=formatMembershipStatus({campaign:null,recentFailures:[
+   {userId:'10',name:'Member',status:'failed',reason:'Cannot send messages to this user',at:70},
+   {userId:'20',name:'Other',status:'uncertain',reason:'Send timed out.',at:60},
+   {userId:'30',name:'Gone',status:'skipped',reason:'No longer in the Discord server.',at:50}]});
+ assert.match(text,/Recent failures and skips \(3\):/);
+ assert.match(text,/Member \(10\) — failed: Cannot send messages to this user at <t:70:f>/);
+ assert.match(text,/Other \(20\) — uncertain: Send timed out\. at <t:60:f>/);
+ assert.match(text,/Gone \(30\) — skipped: No longer in the Discord server\. at <t:50:f>/);
+});

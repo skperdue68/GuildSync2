@@ -15,6 +15,19 @@ function responseHistoryText(choice,text,result={}) {
 }
 export {dmConfig} from './membership-dm-config.js';
 
+// One row per member keeps the per-guild JSON small: send dates, the last
+// delivery outcome and its reason live in guildsync_membership_dm_results, so
+// the document no longer grows with every attempt.
+export const MEMBERSHIP_DM_RESULTS_TABLE=`CREATE TABLE IF NOT EXISTS guildsync_membership_dm_results (
+    guild_id VARCHAR(32) NOT NULL,discord_user_id VARCHAR(32) NOT NULL,
+    display_name VARCHAR(255) NOT NULL DEFAULT '',status VARCHAR(16) NOT NULL,reason VARCHAR(255) DEFAULT NULL,
+    delivery_id CHAR(36) DEFAULT NULL,message_id VARCHAR(32) DEFAULT NULL,campaign_id CHAR(36) DEFAULT NULL,
+    attempted_at BIGINT DEFAULT NULL,sent_at BIGINT DEFAULT NULL,uncertain TINYINT(1) NOT NULL DEFAULT 0,
+    updated_at DATETIME(3) NOT NULL,PRIMARY KEY (guild_id,discord_user_id),
+    INDEX idx_membership_dm_result_status (guild_id,status,attempted_at),
+    INDEX idx_membership_dm_result_delivery (guild_id,delivery_id)
+  ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`;
+
 export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),random=Math.random,pace=()=>null}={}) {
   // The live membership DM settings decide this random window. Without a pace the
   // defaults stay 10–15 minutes, which existing states and tests rely on.
@@ -36,17 +49,29 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
     campaign.paceMin=min;campaign.paceMax=max;
     campaign.nextAt=Math.max(now(),Math.min(Number(campaign.nextAt)||next,next));
   }
-  const eligible=(state,member,days)=>!state.preferences[member.id]&&!state.history[member.id]?.uncertain&&
-    (!state.history[member.id]?.sentAt||now()-state.history[member.id].sentAt>=days*86400);
+  const eligible=(state,member,days)=>{
+    const record=state.results?.[member.id];
+    return !state.preferences[member.id]&&!record?.uncertain&&
+      (!record?.sentAt||now()-record.sentAt>=days*86400);
+  };
   function expire(state) {
     for(const job of state.campaign?.queue||[])if(job.status==='sending'&&job.claimedAt+120<=now()){
-      job.status='uncertain';state.history[job.userId]={...state.history[job.userId],uncertain:true,deliveryId:job.id};
+      job.status='uncertain';
+      state.results??={};
+      const reason='No delivery result was recorded in time.';
+      const record=state.results[job.userId]??(state.results[job.userId]={});
+      Object.assign(record,{status:'uncertain',uncertain:true,reason,
+        deliveryId:job.id,name:record.name||job.name,attemptedAt:record.attemptedAt||job.claimedAt||null});
+      // A claim that never reports back is still an attempt the member may have
+      // received, so the transaction records it as uncertain history below.
+      state.expiredClaims??=[];
+      state.expiredClaims.push({discordId:String(job.userId),reason});
       state.campaign.nextAt=Math.max(state.campaign.nextAt,now()+delay());
     }
   }
   return {
     start(state,members,days,restart=false) {
-      state.history??={};state.preferences??={};state.events??=[];state.deliveries??={};
+      state.results??={};state.preferences??={};state.events??=[];
       expire(state);
       if(state.campaign?.queue.some(q=>q.status==='sending'))throw Error('A DM is still being sent. Wait for its result before restarting.');
       if(state.campaign&&['running','paused'].includes(state.campaign.status)&&!restart)throw Error('A campaign already exists. Resume it or explicitly restart.');
@@ -56,7 +81,7 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
         .map(m=>({id:randomUUID(),userId:m.id,name:m.name,status:'pending'}));
       state.campaign={id:randomUUID(),status:queue.length?'running':'complete',queue,nextAt:now()+delay(),startedAt:now(),lastAttempted:null,lastSent:null};
       rememberPace(state);
-      for(const job of queue){job.campaignId=state.campaign.id;state.deliveries[job.id]=job;}
+      for(const job of queue)job.campaignId=state.campaign.id;
       return state.campaign;
     },
     pause(state){if(!state.campaign)throw Error('No campaign has been started.');state.campaign.status='paused';},
@@ -71,26 +96,34 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
         if(!present.has(job.userId)||!eligible(state,present.get(job.userId),days)){job.status='skipped';continue;}
         job.status='sending';job.token=randomUUID();job.claimedAt=now();
         campaign.lastAttempted={userId:job.userId,name:job.name,at:now()};campaign.nextAt=now()+delay();
-        state.history[job.userId]={...state.history[job.userId],lastAttemptAt:now(),deliveryId:job.id};
+        state.results??={};
+        const record=state.results[job.userId]??(state.results[job.userId]={});
+        Object.assign(record,{status:'sending',reason:null,deliveryId:job.id,campaignId:campaign.id,attemptedAt:now(),name:job.name});
         return job;
       }
       campaign.status='complete';return null;
     },
     finish(state,id,token,result) {
-      const job=state.deliveries[id];
+      // Campaign claims live on the queue; only a test DM is looked up separately.
+      const job=state.campaign?.queue?.find(entry=>entry.id===id)||state.testDeliveries?.[id];
       if(!job||job.status!=='sending'||job.token!==token)throw Error('This DM delivery claim is no longer active.');
       if(!['sent','failed','skipped','uncertain'].includes(result.status))throw Error('Invalid DM outcome.');
       job.status=result.status;job.detail=String(result.detail||'').slice(0,255);job.messageId=result.messageId||null;
       if(job.isTest)return job;
-      const history=state.history[job.userId]??={};
-      if(result.status!=='skipped'){rememberPace(state);state.campaign.nextAt=now()+delay();}
+      state.results??={};
+      const record=state.results[job.userId]??(state.results[job.userId]={});
+      record.status=result.status;record.reason=job.detail||null;record.uncertain=result.status==='uncertain';
+      record.deliveryId=job.id;record.name=record.name||job.name;
       if(result.status==='sent'){
         if(!job.messageId)throw Error('A confirmed Discord message ID is required.');
-        history.sentAt=now();history.uncertain=false;
-        state.campaign.lastSent={userId:job.userId,name:job.name,at:now()};
+        record.sentAt=now();record.messageId=job.messageId;
+        if(state.campaign)state.campaign.lastSent={userId:job.userId,name:job.name,at:now()};
       }
-      if(result.status==='uncertain')history.uncertain=true;
-      if(result.status==='skipped')state.campaign.nextAt=now();
+      if(result.status!=='skipped'){
+        rememberPace(state);
+        if(state.campaign)state.campaign.nextAt=now()+delay();
+      }
+      if(result.status==='skipped'&&state.campaign)state.campaign.nextAt=now();
       return job;
     }
   };
@@ -100,17 +133,19 @@ export async function membershipDMManaged(db,guildId,userId) {
   const [rows]=await db.execute('SELECT state_json FROM guildsync_membership_dm_state WHERE guild_id=?',[guildId]);
   if(!rows[0])return false;
   const state=JSON.parse(rows[0].state_json);
-  const history=state.history?.[userId];
+  const [results]=await db.execute('SELECT sent_at,uncertain FROM guildsync_membership_dm_results WHERE guild_id=? AND discord_user_id=?',[guildId,userId]);
+  const result=results[0];
   // Only a confirmed contact, an ambiguous delivery or a recorded preference
   // replaces the older onboarding reminder. A failed or skipped attempt never
   // reached the member, so onboarding must still be able to.
-  return Boolean(state.preferences?.[userId]||history?.sentAt||history?.uncertain);
+  return Boolean(state.preferences?.[userId]||result?.sent_at||result?.uncertain);
 }
 
 export async function initializeMembershipDMs(db) {
   await db.query(`CREATE TABLE IF NOT EXISTS guildsync_membership_dm_state (
     guild_id VARCHAR(32) NOT NULL PRIMARY KEY,state_json LONGTEXT NOT NULL
   ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  await db.query(MEMBERSHIP_DM_RESULTS_TABLE);
   await db.query(`CREATE TABLE IF NOT EXISTS guildsync_membership_dm_responses (
     guild_id VARCHAR(32) NOT NULL,discord_user_id VARCHAR(32) NOT NULL,
     display_name VARCHAR(255) NOT NULL DEFAULT '',eso_account_name VARCHAR(255) DEFAULT NULL,
@@ -119,10 +154,10 @@ export async function initializeMembershipDMs(db) {
   ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 }
 
-// The per-guild JSON keeps only operational state. Fully forwarded responses live in
-// guildsync_membership_dm_responses, so settled events and old delivery claims are
-// dropped instead of accumulating for the life of the guild.
-export function pruneMembershipState(state,{maxEvents=200,maxDeliveries=1000}={}) {
+// The per-guild JSON keeps only operational state (the campaign queue, preferences
+// and unforwarded replies). Per-member results live in the results table, so only
+// settled replies are pruned here.
+export function pruneMembershipState(state,{maxEvents=200}={}) {
   const settled=event=>event.forwardStatus==='sent'&&['sent','superseded'].includes(event.roleStatus);
   if(state.events?.length>maxEvents) {
     let excess=state.events.length-maxEvents;
@@ -131,27 +166,75 @@ export function pruneMembershipState(state,{maxEvents=200,maxDeliveries=1000}={}
       return true;
     });
   }
-  const ids=Object.keys(state.deliveries||{});
-  if(ids.length>maxDeliveries) {
-    const removable=ids.filter(id=>['sent','failed','skipped'].includes(state.deliveries[id].status))
-      .sort((left,right)=>(state.deliveries[left].claimedAt||0)-(state.deliveries[right].claimedAt||0));
-    for(const id of removable.slice(0,ids.length-maxDeliveries))delete state.deliveries[id];
-  }
   return state;
 }
 
 export function createMembershipDMService(db,{configuration,upsertLink,authorizeOfficer,now=()=>Math.floor(Date.now()/1000),random=Math.random}={}) {
   const engine=createDMCampaignEngine({now,random,pace:()=>configuration()});
+  const fromRow=row=>({status:row.status,name:row.display_name||'',reason:row.reason||null,
+    deliveryId:row.delivery_id||null,messageId:row.message_id||null,campaignId:row.campaign_id||null,
+    attemptedAt:row.attempted_at==null?null:Number(row.attempted_at),sentAt:row.sent_at==null?null:Number(row.sent_at),
+    uncertain:Boolean(row.uncertain)});
+  async function loadResults(connection,guildId) {
+    const [rows]=await connection.execute('SELECT * FROM guildsync_membership_dm_results WHERE guild_id=?',[guildId]);
+    return Object.fromEntries(rows.map(row=>[String(row.discord_user_id),fromRow(row)]));
+  }
+  // Only rows touched by this transaction are written back, so a status call costs
+  // one indexed read and a send costs a single upsert.
+  async function saveResults(connection,guildId,before,results) {
+    for(const [userId,record] of Object.entries(results)) {
+      const previous=before[userId];
+      if(previous&&JSON.stringify(previous)===JSON.stringify(record))continue;
+      await connection.execute(`INSERT INTO guildsync_membership_dm_results(guild_id,discord_user_id,display_name,status,reason,
+        delivery_id,message_id,campaign_id,attempted_at,sent_at,uncertain,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),status=VALUES(status),reason=VALUES(reason),
+        delivery_id=VALUES(delivery_id),message_id=VALUES(message_id),campaign_id=VALUES(campaign_id),
+        attempted_at=VALUES(attempted_at),sent_at=VALUES(sent_at),uncertain=VALUES(uncertain),updated_at=VALUES(updated_at)`,
+        [guildId,userId,String(record.name||'').slice(0,255),String(record.status||'unknown').slice(0,16),
+          record.reason?String(record.reason).slice(0,255):null,record.deliveryId||null,record.messageId||null,
+          record.campaignId||null,record.attemptedAt??null,record.sentAt??null,record.uncertain?1:0,new Date(now()*1000)]);
+    }
+  }
+  // Older states kept one entry per member and one entry per attempt inside the JSON.
+  // Fold the send dates and uncertain flags into the results table once, then drop
+  // them from the document so an existing guild shrinks on its next command.
+  function migrateLegacyState(state,results) {
+    for(const [userId,entry] of Object.entries(state.history||{})) {
+      if(results[userId]||!entry)continue;
+      const status=entry.uncertain?'uncertain':entry.sentAt?'sent':entry.lastAttemptAt?'failed':null;
+      if(!status)continue;
+      results[userId]={status,name:'',reason:null,deliveryId:entry.deliveryId||null,messageId:null,campaignId:null,
+        attemptedAt:entry.lastAttemptAt||null,sentAt:entry.sentAt||null,uncertain:Boolean(entry.uncertain)};
+    }
+    delete state.history;
+    state.testDeliveries??={};
+    for(const [id,job] of Object.entries(state.deliveries||{}))if(job?.isTest&&!state.testDeliveries[id])state.testDeliveries[id]=job;
+    delete state.deliveries;
+  }
   async function atomic(guildId,fn) {
     return withEsoIdentityLock(db,async connection=>{
       await connection.beginTransaction();
       try{
-        await connection.execute('INSERT IGNORE INTO guildsync_membership_dm_state(guild_id,state_json) VALUES(?,?)',[guildId,JSON.stringify({history:{},preferences:{},events:[],deliveries:{}})]);
+        await connection.execute('INSERT IGNORE INTO guildsync_membership_dm_state(guild_id,state_json) VALUES(?,?)',[guildId,JSON.stringify({preferences:{},events:[]})]);
         const [rows]=await connection.execute('SELECT state_json FROM guildsync_membership_dm_state WHERE guild_id=? FOR UPDATE',[guildId]);
         const state=JSON.parse(rows[0].state_json);
-        // JSON round-trips lose queue/delivery object identity; restore it.
-        if(state.campaign)state.campaign.queue=state.campaign.queue.map(job=>state.deliveries[job.id]||job);
+        const results=await loadResults(connection,guildId);
+        const before=structuredClone(results);
+        migrateLegacyState(state,results);
+        state.results=results;
         const result=await fn(state,connection,configuration());
+        await saveResults(connection,guildId,before,results);
+        // An expired claim becomes uncertain inside the same transaction, so its
+        // member history note is written with the outcome and cannot drift.
+        if(state.expiredClaims?.length){
+          for(const claim of state.expiredClaims)try{
+            await recordDiscordMemberHistoryEvent(connection,{discordId:claim.discordId,eventType:'membership_dm_uncertain',
+              fieldName:'membership_dm',newValue:'Membership DM delivery uncertain: '+claim.reason,source:'guildsync',
+              at:new Date(now()*1000)});
+          }catch{}
+          delete state.expiredClaims;
+        }
+        delete state.results;
         const encoded=JSON.stringify(state);
         if(encoded!==rows[0].state_json)await connection.execute('UPDATE guildsync_membership_dm_state SET state_json=? WHERE guild_id=?',[encoded,guildId]);
         await connection.commit();return result;
@@ -185,6 +268,16 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
     return row?{choice:row.choice,accountName:row.eso_account_name||null,
       at:row.responded_at?Math.floor(new Date(row.responded_at).getTime()/1000):null}:null;
   }
+  // Recent unsuccessful outcomes are the officer-facing answer to "who never got a
+  // DM, and why". Failed, uncertain and skipped attempts are kept per member with
+  // their reason and attempt time, and listed here newest first.
+  async function recentFailures(connection,guildId) {
+    const [rows]=await connection.execute(`SELECT discord_user_id,display_name,status,reason,attempted_at
+      FROM guildsync_membership_dm_results WHERE guild_id=? AND status IN ('failed','uncertain','skipped')
+      ORDER BY attempted_at DESC LIMIT 10`,[guildId]);
+    return rows.map(row=>({userId:String(row.discord_user_id),name:row.display_name||'',status:row.status,
+      reason:row.reason||'',at:row.attempted_at==null?null:Number(row.attempted_at)}));
+  }
   return {
     async command(guildId,actorId,action,targetId) {
       if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
@@ -195,10 +288,17 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         else if(action==='resume')engine.resume(state);
         else if(action!=='status')throw Error('Unknown membership DM command.');
         const c=state.campaign;
+        const failures=await recentFailures(connection,guildId);
+        const record=targetId?state.results[targetId]:null;
         return {campaign:c?{id:c.id,status:c.status,lastAttempted:c.lastAttempted,lastSent:c.lastSent,nextAt:c.nextAt,
           remaining:c.queue.filter(q=>q.status==='pending').length,uncertain:c.queue.filter(q=>q.status==='uncertain').length,
-          uncertainMembers:c.queue.filter(q=>q.status==='uncertain').map(q=>({userId:q.userId,name:q.name})).slice(0,25)}:null,
-          member:targetId?{userId:targetId,history:state.history[targetId]||null,preference:state.preferences[targetId]||null,
+          uncertainMembers:c.queue.filter(q=>q.status==='uncertain').map(q=>({userId:q.userId,name:q.name})).slice(0,25),
+          recentFailures:failures}:null,recentFailures:failures,
+          member:targetId?{userId:targetId,history:record?{lastAttemptAt:record.attemptedAt,sentAt:record.sentAt??null,
+            uncertain:Boolean(record.uncertain),status:record.status,reason:record.reason||null,deliveryId:record.deliveryId||null}:null,
+            result:record?{status:record.status,reason:record.reason||null,messageId:record.messageId||null,
+              attemptedAt:record.attemptedAt??null,sentAt:record.sentAt??null,uncertain:Boolean(record.uncertain)}:null,
+            preference:state.preferences[targetId]||null,
             lastResponse:await lastResponse(connection,guildId,targetId)}:null};
       });
     },
@@ -208,7 +308,10 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         if(!config.destinationId)throw Error('Configure the reply destination before testing membership DMs.');
         const job={id:randomUUID(),campaignId:'test',userId,name:'Test recipient',isTest:true,status:'sending',token:randomUUID(),claimedAt:now(),
           destinationId:config.destinationId,destinationType:config.destinationType};
-        state.deliveries[job.id]=job;state.testHistory??={};state.testHistory[userId]={deliveryId:job.id,at:now()};
+        state.testDeliveries??={};
+        const ids=Object.keys(state.testDeliveries);
+        if(ids.length>=50)for(const id of ids.slice(0,ids.length-49))delete state.testDeliveries[id];
+        state.testDeliveries[job.id]=job;state.testHistory??={};state.testHistory[userId]={deliveryId:job.id,at:now()};
         return {job,config};
       });
     },
@@ -225,21 +328,20 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       const key=String(userId??'').trim();
       if(!/^\d+$/.test(key)||!['sent','retry'].includes(outcome))throw Error('Choose a Discord member and whether their uncertain DM arrived.');
       return atomic(guildId,state=>{
-        const history=state.history?.[key]||{};
-        const deliveries=Object.values(state.deliveries||{}).filter(job=>job.userId===key&&!job.isTest)
-          .sort((a,b)=>(b.claimedAt||0)-(a.claimedAt||0));
+        state.results??={};
+        const record=state.results[key]||null;
         const queued=state.campaign?.queue.find(job=>job.userId===key&&!job.isTest);
-        const uncertainJobs=deliveries.filter(job=>job.status==='uncertain'),queuedUncertain=queued?.status==='uncertain';
-        if(!(history.uncertain||uncertainJobs.length||queuedUncertain))throw Error('This member has no uncertain membership DM to resolve.');
+        const queuedUncertain=queued?.status==='uncertain';
+        if(!(record?.uncertain||queuedUncertain))throw Error('This member has no uncertain membership DM to resolve.');
+        const entry=record??(state.results[key]={status:'uncertain',uncertain:true,name:queued?.name||'',
+          deliveryId:queued?.id||null,campaignId:queued?.campaignId||null,attemptedAt:queued?.claimedAt||null});
         if(outcome==='sent') {
-          for(const job of uncertainJobs){job.status='sent';job.detail='Officer confirmed the DM arrived.';}
           if(queuedUncertain)queued.status='sent';
-          state.history[key]={...history,sentAt:now(),uncertain:false};
+          Object.assign(entry,{status:'sent',uncertain:false,reason:'Officer confirmed the DM arrived.',sentAt:now()});
           if(state.campaign&&queued)state.campaign.lastSent={userId:key,name:queued.name,at:now()};
           return {message:'Recorded the membership DM as delivered. This member is not contacted again until the repeat interval passes.'};
         }
-        for(const job of uncertainJobs){job.status='failed';job.detail='Officer confirmed the DM was not delivered.';}
-        state.history[key]={...history,uncertain:false};
+        Object.assign(entry,{status:'failed',uncertain:false,reason:'Officer confirmed the DM was not delivered.'});
         if(queuedUncertain){
           queued.status='pending';
           if(state.campaign.status==='complete')state.campaign.status='running';
@@ -254,19 +356,27 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       return {job,config};
     });},
     async validate(guildId,id,token){return atomic(guildId,async(state,connection,config)=>{
-      const job=state.deliveries[id];
+      const job=state.campaign?.queue?.find(entry=>entry.id===id)||state.testDeliveries?.[id];
+      const record=job?state.results?.[job.userId]:null;
       return {valid:Boolean(job?.status==='sending'&&job.token===token&&(job.isTest || (config.enabled&&state.campaign?.status==='running'&&
-        !state.preferences[job.userId]&&!state.history[job.userId]?.uncertain&&
-        (!state.history[job.userId]?.sentAt||now()-state.history[job.userId].sentAt>=config.repeatDays*86400)&&
+        !state.preferences[job.userId]&&!record?.uncertain&&
+        (!record?.sentAt||now()-record.sentAt>=config.repeatDays*86400)&&
         (await candidates(connection)).some(m=>m.id===job.userId))))};
     });},
     async finish(guildId,id,token,result){return atomic(guildId,async(state,connection)=>{
       const job=engine.finish(state,id,token,result);
-      // The DM is already delivered at this point; a history write must never
+      // The DM outcome is already settled at this point; a history write must never
       // turn a confirmed send into a retryable failure.
       if(!job.isTest&&job.status==='sent')try{
         await recordDiscordMemberHistoryEvent(connection,{discordId:job.userId,eventType:'membership_dm_sent',
           fieldName:'membership_dm',newValue:'Membership DM delivered',source:'guildsync',at:new Date(now()*1000)});
+      }catch{}
+      if(!job.isTest&&['failed','uncertain'].includes(job.status))try{
+        const reason=String(job.detail||'').trim().slice(0,300)||'No reason was recorded.';
+        await recordDiscordMemberHistoryEvent(connection,{discordId:job.userId,
+          eventType:job.status==='failed'?'membership_dm_failed':'membership_dm_uncertain',fieldName:'membership_dm',
+          newValue:(job.status==='failed'?'Membership DM not delivered: ':'Membership DM delivery uncertain: ')+reason,
+          source:'guildsync',at:new Date(now()*1000)});
       }catch{}
       return job;
     });},
@@ -274,8 +384,11 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       if(!['eso','community','not_playing','other'].includes(choice)||String(text).length>10000||!/^\d+$/.test(String(eventId)))throw Error('Invalid membership response.');
       return atomic(guildId,async(state,connection,config)=>{
         // Only the exact DM button or form a member pressed can answer a campaign;
-        // an unrelated message is never attributed to the latest delivery.
-        const job=state.deliveries[deliveryId];
+        // an unrelated message is never attributed to the latest delivery. The
+        // results table keeps the delivery ID even after the campaign queue moves on.
+        const testJob=state.testDeliveries?.[deliveryId];
+        const [recordUserId,record]=Object.entries(state.results||{}).find(([,row])=>row.deliveryId===deliveryId)||[];
+        const job=testJob||(record?{id:deliveryId,userId:recordUserId,name:record.name,status:record.status,isTest:false,deliveryId}:null);
         if(!job||job.userId!==userId||!['sent','uncertain','sending'].includes(job.status))throw Object.assign(Error('No membership DM for this user was found.'),{code:'NO_MEMBERSHIP_DM'});
         const existing=state.events.find(e=>e.eventId===eventId);
         if(existing)return existing.result;

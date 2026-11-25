@@ -37,7 +37,7 @@ export function membershipChoiceSummary(choice) {
   return 'other response';
 }
 
-export function formatMembershipStatus({campaign,member}={}) {
+export function formatMembershipStatus({campaign,member,recentFailures=[]}={}) {
   const who=value=>value?`${value.name} (<t:${value.at}:f>)`:'None';
   const lines=campaign?[
     `Campaign: ${campaign.status}`,
@@ -46,9 +46,15 @@ export function formatMembershipStatus({campaign,member}={}) {
     `Remaining: ${campaign.remaining}; uncertain: ${campaign.uncertain}`,
     `Next scheduled attempt: <t:${campaign.nextAt}:f>`
   ]:['No membership DM campaign has been started.'];
-  if(member)lines.push(`User ${member.userId}: last confirmed DM ${member.history?.sentAt?`<t:${member.history.sentAt}:f>`:'Never'}; preference: ${member.preference||'None'}${member.history?.uncertain?'; delivery uncertain—review before retrying':''}`);
+  if(member)lines.push(`User ${member.userId}: last confirmed DM ${member.history?.sentAt?`<t:${member.history.sentAt}:f>`:'Never'}; preference: ${member.preference||'None'}${member.history?.uncertain?'; delivery uncertain—review before retrying':''}${!member.history?.sentAt&&member.history?.status?`; last attempt ${member.history.status}${member.history.reason?`: ${safeText(member.history.reason)}`:''}`:''}`);
   if(member?.lastResponse)lines.push(`Last response: ${membershipChoiceSummary(member.lastResponse.choice)}${member.lastResponse.accountName?` — ESO @${safeText(member.lastResponse.accountName)}`:''}${member.lastResponse.at?` (<t:${member.lastResponse.at}:f>)`:''}`);
   if(campaign?.uncertainMembers?.length)lines.push(`Uncertain deliveries: ${campaign.uncertainMembers.map(entry=>`${safeText(entry.name)} (${entry.userId})`).join(', ')}. Resolve each with /discord-reminders resolve.`);
+  // Failed, uncertain and skipped attempts keep their reason and time, so an
+  // officer can see which members never received a DM instead of only that the
+  // last send did not match.
+  const failures=(recentFailures||[]).filter(entry=>['failed','uncertain','skipped'].includes(entry.status)).slice(0,10);
+  if(failures.length)lines.push(`Recent failures and skips (${failures.length}):`,...failures.map(entry=>
+    `• ${safeText(entry.name||'Unknown member')} (${entry.userId}) — ${entry.status}: ${safeText(entry.reason||'no reason recorded')}${entry.at?` at <t:${entry.at}:f>`:''}`));
   return lines.join('\n');
 }
 
