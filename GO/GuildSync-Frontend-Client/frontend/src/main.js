@@ -6042,7 +6042,7 @@ function renderDepositMailCheckoutButton() {
       : 'Deposit mail has been written to ESO SavedVariables and is ready for ESO to send it and write acknowledgements.';
 
   const busy = depositMailCheckoutRunning || depositMailPendingWriteRunning;
-  const esoStatusLabel = esoRunningStatus.running ? 'ESO Running' : 'ESO Not Running';
+  const esoStatusLabel = esoRunningStatus.error ? 'ESO Status Unknown' : esoRunningStatus.running ? 'ESO Running' : 'ESO Not Running';
   const esoStatusClass = esoRunningStatus.running ? 'eso-running' : 'eso-not-running';
   const buttonClass = `bank-export-button deposit-mail-button${statusOnly ? ' deposit-mail-status-only' : ''}`;
 
@@ -7783,9 +7783,11 @@ async function flushPendingDiscordReminderAckCleanup() {
 async function refreshESORunningStatus(options = {}) {
   try {
     const previousRunning = Boolean(esoRunningStatus.running);
+    const previousError = String(esoRunningStatus.error || '');
     const status = await GetESORunningStatus();
     esoRunningStatus = {
-      running: Boolean(status?.running),
+      running: Boolean(status?.running) || Boolean(status?.error),
+      error: String(status?.error || ''),
       message: String(status?.message || '')
     };
 
@@ -7797,9 +7799,12 @@ async function refreshESORunningStatus(options = {}) {
     if (previousRunning && !esoRunningStatus.running) {
       addSystemMessage('eso-closed-deposit-mail-flush', 'ESO is no longer running. Processing pending deposit mail SavedVariables work now.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
       await processPendingDepositMailBatches();
+      await discordReminderControls.sync().catch(error => {
+        addSystemMessage('discord-reminder-sync', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+      });
     }
 
-    if (previousRunning !== esoRunningStatus.running) {
+    if (previousRunning !== esoRunningStatus.running || previousError !== esoRunningStatus.error) {
       updateBankingDataView();
     }
   } catch (error) {

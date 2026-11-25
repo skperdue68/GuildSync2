@@ -165,7 +165,11 @@ const discordReminderSentIDRetention = 30 * 24 * time.Hour
 
 func (a *App) WriteDiscordReminderQueue(account, world string, records []map[string]interface{}) DiscordReminderSavedVars {
 	filePath := discordReminderPath()
-	if isESORunning() {
+	status := a.GetESORunningStatus()
+	if status.Error != "" {
+		return DiscordReminderSavedVars{FilePath: filePath, Message: status.Message}
+	}
+	if status.Running {
 		return DiscordReminderSavedVars{FilePath: filePath, Message: "Close ESO completely before writing Discord reminders."}
 	}
 	return writeDiscordReminderQueueFile(filePath, account, world, records, isESORunning)
@@ -234,14 +238,14 @@ func writeDiscordReminderQueueFile(filePath, account, world string, records []ma
 }
 
 type DiscordReminderAckCleanupResult struct {
-	OK           bool   `json:"ok"`
-	Message      string `json:"message"`
-	FilePath     string `json:"filePath"`
-	BackupPath   string `json:"backupPath,omitempty"`
-	RemovedCount int    `json:"removedCount"`
-	RemovedSentIDCount int `json:"removedSentIDs"`
-	PendingCount int    `json:"pendingCount"`
-	ESOIsRunning bool   `json:"esoIsRunning"`
+	OK                 bool   `json:"ok"`
+	Message            string `json:"message"`
+	FilePath           string `json:"filePath"`
+	BackupPath         string `json:"backupPath,omitempty"`
+	RemovedCount       int    `json:"removedCount"`
+	RemovedSentIDCount int    `json:"removedSentIDs"`
+	PendingCount       int    `json:"pendingCount"`
+	ESOIsRunning       bool   `json:"esoIsRunning"`
 }
 
 // GuildSync uploads delivery results from mailAck, so the saved copies become
