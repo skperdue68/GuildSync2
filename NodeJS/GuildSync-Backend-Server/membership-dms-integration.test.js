@@ -111,8 +111,8 @@ test('a removal request stops contact, removes the link and forwards the request
  const note=f.history().filter(args=>args[4]==='membership_dm_response').at(-1);
  assert.match(note[7],/^Asked to be removed from the Discord server — membership DMs stopped/);
  await f.worker.forwardOne();
- assert.match(f.forwards[0].content,/Asked to be removed from the Discord server/);
- assert.match(f.forwards[0].content,/Outcome: Removal requested — an officer still needs to remove them/);
+ assert.match(f.forwards[0].embeds[0].toJSON().description,/Asked to be removed from the Discord server/);
+ assert.match(f.forwards[0].embeds[0].toJSON().fields.find(field=>field.name==='Outcome').value,/Removal requested — an officer still needs to remove them/);
 });
 
 test('another recipient cannot submit a form; existing account ownership routes the answer to review',async()=>{
@@ -166,9 +166,10 @@ test('an officer can repost one member’s latest stored reply in the card forma
  await assert.rejects(()=>f.request('repost',{actorId:'officer',userId:'99'}),/No stored membership reply/);
  await f.worker.repost(repost,'Officer');
  assert.equal(f.forwards.length,1);
- assert.match(f.forwards[0].content,/Reposted by Officer/);
- assert.match(f.forwards[0].content,/Linked ESO account @ESOName/);
- assert.match(f.forwards[0].content,/<t:1800000600:F>/);
+ const card=f.forwards[0].embeds[0].toJSON();
+ assert.equal(card.fields.find(field=>field.name==='Reposted by').value,'Officer');
+ assert.match(card.description,/Linked ESO account @ESOName/);
+ assert.equal(new Date(card.timestamp).getTime(),1800000600*1000);
 });
 
 test('unapproved actors and unauthenticated or cross-guild callers cannot run campaigns',async()=>{

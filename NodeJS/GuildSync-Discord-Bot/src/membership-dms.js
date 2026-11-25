@@ -1,4 +1,4 @@
-import {ActionRowBuilder,ButtonBuilder,ButtonStyle,ModalBuilder,TextInputBuilder,TextInputStyle,Events} from 'discord.js';
+import {ActionRowBuilder,ButtonBuilder,ButtonStyle,EmbedBuilder,ModalBuilder,TextInputBuilder,TextInputStyle,Events} from 'discord.js';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {createFileDMIntake,createMemoryDMIntake} from './membership-dm-intake.js';
@@ -70,6 +70,10 @@ export function formatMembershipStatus({campaign,member,recentFailures=[]}={}) {
 }
 
 const fenceText=value=>String(value||'').replace(/```/g,"'''");
+// The embed's left bar carries the result, so an officer reads the outcome at a glance.
+const replyColors={linked:0x57f287,saved:0x5865f2,removal:0xed4245,review:0xfee75c,test:0x99aab5};
+const replyTone=event=>event.isTest?'test':event.result?.status==='linked'?'linked'
+ :event.choice==='remove'?'removal':['community','not_playing'].includes(event.choice)?'saved':'review';
 function replyFacts(event,guildName) {
  const typed=String(event.text||'').trim();
  if(event.choice==='eso'){
@@ -84,27 +88,32 @@ function replyFacts(event,guildName) {
  if(event.choice==='remove')return {summary:'Asked to be removed from the Discord server',outcome:'Removal requested — an officer still needs to remove them',box:''};
  return {summary:'Sent another response',outcome:'Response forwarded',box:typed};
 }
-// The officer-facing card: a timestamp line, a bold answer summary, the member’s
-// own words in a fenced box when they typed any, then muted routing details. The
-// same renderer serves live forwarding and an on-demand repost of a stored reply.
+const FIELD_LIMIT=1024;
+// The officer-facing embed card: the member's display name is the title, a bold
+// summary opens the description, and the routing facts are fields. The same
+// renderer serves live forwarding and an on-demand repost of a stored reply.
 export function membershipReplyMessage(event,{guildName='Guild',repostedBy='',nonceKey}={}) {
  const {summary,outcome,box:boxText}=replyFacts(event,guildName);
  const name=safeText(event.name||`User ${event.userId}`);
- const head=`${event.isTest?'[TEST] ':''}📨 <t:${event.at}:F>\n\n**${name}** answered the membership DM: **${summary}**.`;
- const box=value=>'\n\n**Member response:**\n```text\n'+fenceText(value)+'\n```';
- const meta=[`Server: ${safeText(guildName)}`,`Discord: ${name} (${event.userId})`,
-  `Outcome: ${event.isTest?'Test response — nothing changed':outcome}`];
- if(event.roleNote)meta.push(String(event.roleNote).replace(/^\n+/,''));
- if(repostedBy)meta.push(`Reposted by ${safeText(repostedBy)}`);
- const tail=`\n\n${meta.join(' · ')}`;
- const full=head+(boxText?box(boxText):'')+tail;
- const value={allowedMentions:{parse:[]},nonce:nonce(nonceKey||('forward-'+event.eventId)),enforceNonce:true};
- if(full.length<=1950)return {...value,content:full};
- const note='\n\n[Full response attached]';
- const room=Math.max(0,1950-(head.length+tail.length+note.length+'\n\n**Member response:**\n```text\n\n```'.length));
- const clipped=boxText.length>room?boxText.slice(0,Math.max(0,room-1))+'…':boxText;
- return {...value,content:head+(clipped?box(clipped):'')+tail+note,
-  files:[{attachment:Buffer.from(full,'utf8'),name:`membership-response-${event.eventId||'reply'}.txt`}]};
+ const embed=new EmbedBuilder().setColor(replyColors[replyTone(event)])
+  .setAuthor({name:event.isTest?'[TEST] Membership DM response':'Membership DM response'})
+  .setTitle(name).setDescription(`**${summary}**`)
+  .setFooter({text:'GuildSync'}).setTimestamp(new Date(event.at*1000))
+  .addFields({name:'Server',value:safeText(guildName).slice(0,FIELD_LIMIT),inline:true},
+   {name:'Discord',value:`${name} (${event.userId})`.slice(0,FIELD_LIMIT),inline:true});
+ const payload={allowedMentions:{parse:[]},nonce:nonce(nonceKey||('forward-'+event.eventId)),enforceNonce:true,embeds:[embed]};
+ if(boxText){
+  // A field holds 1024 characters, so a long answer is clipped inside a closed
+  // code block and the untouched text rides along as an attachment.
+  const text=fenceText(boxText),room=FIELD_LIMIT-('```text\n'.length+'\n```'.length+1);
+  const shown=text.length<=room?text:text.slice(0,room)+'…';
+  embed.addFields({name:'Member response',value:'```text\n'+shown+'\n```',inline:false});
+  if(shown!==text)payload.files=[{attachment:Buffer.from(text,'utf8'),name:`membership-response-${event.eventId||'reply'}.txt`}];
+ }
+ embed.addFields({name:'Outcome',value:(event.isTest?'Test response — nothing changed':outcome).slice(0,FIELD_LIMIT),inline:false});
+ if(event.roleNote)embed.addFields({name:'Community role',value:String(event.roleNote).replace(/^\n+/,'').slice(0,FIELD_LIMIT),inline:false});
+ if(repostedBy)embed.addFields({name:'Reposted by',value:safeText(repostedBy).slice(0,FIELD_LIMIT),inline:false});
+ return payload;
 }
 export function createMembershipDMWorker({client,guildId,request,log=console.log,intake=createMemoryDMIntake()}) {
   let busy=false;
