@@ -6,10 +6,7 @@ local ADDON_NAME = "GuildSyncChat"
 local SAVED_VARS_NAME = "GuildSyncChat"
 local SAVED_VARS_VERSION = 1
 
--- Guild chat channels follow guild slots, and slots differ per player, so the
--- stored guild identity is a fixed key rather than a channel or slot number.
 local GUILD_KEY = "alphabet_mafia"
-local MAX_GUILD_SLOTS = 5
 
 -- Older messages are dropped so SavedVariables stays bounded.
 local MAX_SAVED_MESSAGES = 1000
@@ -47,12 +44,10 @@ local function GSC_Trim(value)
   return value:match("^%s*(.-)%s*$") or ""
 end
 
--- Guild slots are sparse: one guild can sit in slot 3, so every slot is checked
--- instead of stopping at GetNumGuilds().
 local function GSC_FindTargetGuild()
   local wanted = string.lower(GSC_Trim(TARGET_GUILD_NAME))
 
-  for slot = 1, MAX_GUILD_SLOTS do
+  for slot = 1, GetNumGuilds() do
     local guildId = GetGuildId(slot)
 
     if guildId and guildId ~= 0 then
