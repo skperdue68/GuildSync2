@@ -9,9 +9,19 @@ function responseHistoryText(choice,text,result={}) {
   if(choice==='eso')return result.status==='linked'
     ?`Linked ESO account ${account}`
     :`ESO account ${account||String(text||'').trim()} submitted for officer review`;
-  if(choice==='community')return 'Community only; account reminders stopped';
-  if(choice==='not_playing')return 'Not playing ESO; account reminders stopped';
+  if(choice==='community')return 'Not in the ESO guild; staying on Discord — account reminders stopped';
+  if(choice==='not_playing')return 'Does not play ESO; staying on Discord — account reminders stopped';
   return `Other response: ${String(text||'').trim().slice(0,300)}`;
+}
+
+// Officers can mark a Discord member as "does not play ESO / not in the ESO guild"
+// from the member link window. It writes the same preference a DM response writes,
+// so the campaign, its send-time validation and onboarding reminders all honour it.
+function preferenceHistoryText(value) {
+  if(value==='opt_out')return 'Marked as “does not play ESO or is not in the ESO guild”; membership DMs stopped';
+  if(value==='not_playing')return 'Marked as “does not play ESO”; membership DMs stopped';
+  if(value==='community')return 'Marked as “not in the ESO guild”; membership DMs stopped';
+  return 'Membership DM contact preference cleared; membership DMs are allowed again';
 }
 export {dmConfig} from './membership-dm-config.js';
 
@@ -268,6 +278,10 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
     return row?{choice:row.choice,accountName:row.eso_account_name||null,
       at:row.responded_at?Math.floor(new Date(row.responded_at).getTime()/1000):null}:null;
   }
+  async function readPreferences(guildId) {
+    const [rows]=await db.execute('SELECT state_json FROM guildsync_membership_dm_state WHERE guild_id=?',[guildId]);
+    return rows[0]?JSON.parse(rows[0].state_json).preferences||{}:{};
+  }
   // Recent unsuccessful outcomes are the officer-facing answer to "who never got a
   // DM, and why". Failed, uncertain and skipped attempts are kept per member with
   // their reason and attempt time, and listed here newest first.
@@ -322,6 +336,40 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       const [rows]=await db.execute(`SELECT d.discord_id AS id,COALESCE(NULLIF(d.server_nickname,''),NULLIF(d.global_name,''),d.username) AS name
         FROM discord_members d WHERE NOT EXISTS (SELECT 1 FROM guildsync_member_links l WHERE l.discord_user_id=d.discord_id AND l.link_status='linked')`);
       return {members:rows.map(row=>({userId:String(row.id),name:row.name})),config:configuration()};
+    },
+    // One member's preference plus the last delivery outcome and reply, so the member
+    // link window can show that a DM went out and what the member answered.
+    async memberSummary(guildId,userId) {
+      const key=String(userId??'').trim();
+      if(!/^\d+$/.test(key))throw Error('Choose a Discord member.');
+      const preferences=await readPreferences(guildId);
+      const [results]=await db.execute('SELECT status,reason,attempted_at,sent_at,uncertain FROM guildsync_membership_dm_results WHERE guild_id=? AND discord_user_id=?',[guildId,key]);
+      const [responses]=await db.execute('SELECT choice,eso_account_name,responded_at FROM guildsync_membership_dm_responses WHERE guild_id=? AND discord_user_id=?',[guildId,key]);
+      const row=results[0],response=responses[0];
+      return {userId:key,preference:preferences[key]||'',
+        result:row?{status:row.status,reason:row.reason||null,
+          attemptedAt:row.attempted_at==null?null:Number(row.attempted_at),
+          sentAt:row.sent_at==null?null:Number(row.sent_at),uncertain:Boolean(row.uncertain)}:null,
+        lastResponse:response?{choice:response.choice,accountName:response.eso_account_name||null,
+          at:response.responded_at?Math.floor(new Date(response.responded_at).getTime()/1000):null}:null};
+    },
+    async preferences(guildId) {
+      return readPreferences(guildId);
+    },
+    // An empty value clears the preference. Any other value keeps the member out of
+    // every campaign and DM send-time check until an officer clears it again.
+    async setPreference(guildId,userId,value) {
+      const key=String(userId??'').trim();
+      if(!/^\d+$/.test(key)||!['','community','not_playing','opt_out'].includes(value))
+        throw Error('Choose a Discord member and a membership contact preference.');
+      return atomic(guildId,async(state,connection)=>{
+        if(value)state.preferences[key]=value;else delete state.preferences[key];
+        try{
+          await recordDiscordMemberHistoryEvent(connection,{discordId:key,eventType:'membership_dm_preference',
+            fieldName:'membership_dm',newValue:preferenceHistoryText(value),source:'guildsync',at:new Date(now()*1000)});
+        }catch{}
+        return {userId:key,preference:value};
+      });
     },
     async resolve(guildId,actorId,userId,outcome) {
       if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
@@ -456,5 +504,28 @@ export function registerMembershipDMSocket(socket,service,{guildId,onLinked=asyn
       if(!actions[payload.action])throw Error('Unknown membership DM action.');
       callback?.({ok:true,result:await actions[payload.action](payload)});
     }catch(error){callback?.({ok:false,message:error.message,code:error.code});}
+  });
+}
+
+// The member link window is used by approved people who are not bot sockets, so the
+// preference is read and written through its own user-authenticated action. The
+// guild is the bot's Discord guild, resolved by the server and never sent by a client.
+export function registerMembershipDMPreferenceSocket(socket,service,{resolveGuildId,authorize}={}) {
+  socket.on('guildsync:membership-dm-preferences',async(payload={},callback)=>{
+    try{
+      if(!socket.guildSyncAuthenticated||!socket.guildSyncUser?.discord_user_id||socket.guildSyncAuthType==='discord-bot')
+        throw Error('Approved GuildSync access is required.');
+      const role=await authorize(socket);
+      if(!['viewer','user','admin'].includes(role))throw Error('Approved GuildSync access is required.');
+      if(payload.action==='set'&&!['user','admin'].includes(role))throw Error('User or Admin access is required.');
+      const guildId=String(await resolveGuildId?.()||'').trim();
+      if(!guildId)throw Error('Connect the GuildSync Discord bot before changing membership DM preferences.');
+      let result;
+      if(payload.action==='list')result={preferences:await service.preferences(guildId)};
+      else if(payload.action==='get')result=await service.memberSummary(guildId,payload.userId);
+      else if(payload.action==='set')result=await service.setPreference(guildId,payload.userId,payload.value);
+      else throw Error('Unknown membership preference action.');
+      callback?.({ok:true,...result});
+    }catch(error){callback?.({ok:false,message:error.message});}
   });
 }

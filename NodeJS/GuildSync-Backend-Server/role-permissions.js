@@ -45,6 +45,7 @@ const readEvents = new Set([
   'guildsync:request-associate-ticket-report',
   'guildsync:request-discord-rank-audit-report',
   'guildsync:request-member-links',
+  'guildsync:membership-dm-preferences',
   'guildsync:request-member-link-options',
   'guildsync:request-admin-configuration',
   'guildsync:request-active-raffles',
