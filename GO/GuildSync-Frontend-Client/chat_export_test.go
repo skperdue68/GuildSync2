@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -68,6 +70,53 @@ func TestGuildSyncChatSectionsCollectEveryAccount(t *testing.T) {
 	}
 }
 
+func TestGuildSyncChatSectionsReadWorldSectionUnderAccountWide(t *testing.T) {
+	parsed, err := parseEsoLuaTable(`{
+		["Default"] = {
+			["@evainefaye"] = {
+				["$AccountWide"] = {
+					["NA Megaserver"] = {
+						["version"] = 1,
+						["debugChat"] = false,
+						["messages"] = {
+							[1] = { ["sender"] = "@TheLamb_Sauce", ["guild"] = "alphabet_mafia", ["timestamp"] = 1795636949, ["text"] = "Howdy Mafia!" },
+							[2] = { ["guild"] = "alphabet_mafia", ["text"] = "Hi Lamb!!", ["sender"] = "@evainefaye", ["timestamp"] = 1795636954 }
+						}
+					}
+				}
+			}
+		}
+	}`)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	parsedMap, ok := parsed.(map[string]interface{})
+	if !ok {
+		t.Fatal("parsed table is not an object")
+	}
+
+	sections := guildSyncChatSections(parsedMap)
+	if len(sections.accounts) != 1 || sections.accounts[0] != "@evainefaye" {
+		t.Fatalf("expected the world-nested account section, got %v", sections.accounts)
+	}
+	if len(sections.entries) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(sections.entries))
+	}
+
+	texts := []string{}
+	for _, entry := range sections.entries {
+		value, ok := getLuaMap(entry)
+		if !ok {
+			t.Fatal("entry is not an object")
+		}
+		texts = append(texts, value["text"].(string))
+	}
+	if strings.Join(texts, "|") != "Howdy Mafia!|Hi Lamb!!" {
+		t.Fatalf("unexpected message order: %v", texts)
+	}
+}
+
 func TestGuildSyncChatEntriesOrderNumericallyAndDropInvalidRows(t *testing.T) {
 	messages := map[string]interface{}{
 		"10": map[string]interface{}{"sender": "@Ten", "timestamp": float64(1795636950), "text": "tenth"},
@@ -95,6 +144,88 @@ func TestGuildSyncChatEntriesOrderNumericallyAndDropInvalidRows(t *testing.T) {
 		if _, ok := value["timestamp"].(int64); !ok {
 			t.Fatalf("entry %d timestamp is not an int64", index)
 		}
+	}
+}
+
+func writeChatSavedVarsFile(t *testing.T, text string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "GuildSyncChat.lua")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatalf("could not write test file: %v", err)
+	}
+
+	return path
+}
+
+func TestCollectGuildSyncChatDataTreatsEmptyMessagesAsBenign(t *testing.T) {
+	path := writeChatSavedVarsFile(t, `GuildSyncChat =
+{
+    ["Default"] =
+    {
+        ["@evainefaye"] =
+        {
+            ["$AccountWide"] =
+            {
+                ["NA Megaserver"] =
+                {
+                    ["version"] = 1,
+                    ["debugChat"] = false,
+                    ["messages"] =
+                    {
+                    },
+                },
+            },
+        },
+    },
+}
+`)
+
+	result := (&App{}).CollectGuildSyncChatData(GuildSyncSavedVarsFileModifiedEvent{
+		FileName: "GuildSyncChat.lua",
+		FilePath: path,
+	})
+
+	if result.OK {
+		t.Fatal("an empty messages table should not be reported as a successful upload")
+	}
+	if !result.Empty {
+		t.Fatalf("expected the benign empty state, got message %q", result.Message)
+	}
+	if strings.Contains(result.Message, "account section") {
+		t.Fatalf("empty messages should not report a missing account section: %q", result.Message)
+	}
+	if result.Data != nil {
+		t.Fatal("the empty state should not carry an upload payload")
+	}
+}
+
+func TestCollectGuildSyncChatDataStillReportsMissingAccountSection(t *testing.T) {
+	path := writeChatSavedVarsFile(t, `GuildSyncChat =
+{
+    ["Default"] =
+    {
+        ["NA Megaserver"] =
+        {
+            ["version"] = 1,
+        },
+    },
+}
+`)
+
+	result := (&App{}).CollectGuildSyncChatData(GuildSyncSavedVarsFileModifiedEvent{
+		FileName: "GuildSyncChat.lua",
+		FilePath: path,
+	})
+
+	if result.Empty {
+		t.Fatal("a file without an account section should not be treated as a benign empty state")
+	}
+	if result.OK {
+		t.Fatal("a file without an account section should not be reported as success")
+	}
+	if !strings.Contains(result.Message, "Could not find an ESO account section under GuildSyncChat.") {
+		t.Fatalf("unexpected message: %q", result.Message)
 	}
 }
 

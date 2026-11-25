@@ -91,7 +91,7 @@ func (a *App) CollectGuildSyncChatData(event GuildSyncSavedVarsFileModifiedEvent
 	}
 
 	sections := guildSyncChatSections(parsedMap)
-	if len(sections.accounts) == 0 {
+	if sections.sections == 0 {
 		baseResult.Message = fmt.Sprintf("Could not find an ESO account section under %s.", extracted.tableName)
 		return baseResult
 	}
@@ -250,6 +250,7 @@ func getChatSavedVarsTableNames() []string {
 
 type guildSyncChatCollection struct {
 	accounts []string
+	sections int
 	entries  []interface{}
 }
 
@@ -286,7 +287,11 @@ func guildSyncChatSections(parsedMap map[string]interface{}) guildSyncChatCollec
 				continue
 			}
 
-			entries := guildSyncChatEntries(accountWide["messages"])
+			// The section is present even when its messages table is empty, which
+			// is the normal state right after a confirmed upload was cleared.
+			collection.sections++
+
+			entries := guildSyncChatAccountWideEntries(accountWide)
 			if len(entries) == 0 {
 				continue
 			}
@@ -297,6 +302,31 @@ func guildSyncChatSections(parsedMap map[string]interface{}) guildSyncChatCollec
 	}
 
 	return collection
+}
+
+// guildSyncChatAccountWideEntries reads the messages ZO_SavedVars keeps under
+// $AccountWide. NewAccountWide stores one section per megaserver, so the
+// messages table usually sits under the world name instead of directly on
+// $AccountWide; files written that older, flatter way are still read.
+func guildSyncChatAccountWideEntries(accountWide map[string]interface{}) []interface{} {
+	entries := guildSyncChatEntries(accountWide["messages"])
+
+	keys := make([]string, 0, len(accountWide))
+	for key := range accountWide {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		section, ok := getLuaMap(accountWide[key])
+		if !ok {
+			continue
+		}
+
+		entries = append(entries, guildSyncChatEntries(section["messages"])...)
+	}
+
+	return entries
 }
 
 // orderedGuildSyncChatWorlds returns profile keys with the legacy "Default"
