@@ -2,6 +2,10 @@
 
 An officer starts an alphabetical campaign for current Discord members without a confirmed ESO account link. The bot waits a random window — 10–15 minutes by default — before its first attempt and between subsequent attempts. The window is a live setting, so it can be shortened or lengthened while a campaign is running. It rechecks eligibility immediately before sending. Recent contacts, existing links, bots, departed members and community preferences are skipped without waiting another interval.
 
+## History
+
+A confirmed membership DM adds a **Membership DM sent** note to that member's Discord history, and every reply adds a **Membership DM response** note naming the chosen option (with the linked ESO account when one was established). Officers see both in **Lookup Member History**. Test-mode messages and test responses are never recorded.
+
 ## Configure
 
 In GuildSync, open **Reports & Admin → Administrator Configuration → Discord membership DMs**:

@@ -1,5 +1,18 @@
 import {randomUUID} from 'node:crypto';
 import {withEsoIdentityLock,esoAccountKey} from './eso-account-identity.js';
+import {recordDiscordMemberHistoryEvent} from './discord-member-history.js';
+
+// The Discord history row keeps the member's answer readable without exposing
+// the whole forwarded message.
+function responseHistoryText(choice,text,result={}) {
+  const account=result.accountName?`@${String(result.accountName).trim().replace(/^@+/,'')}`:'';
+  if(choice==='eso')return result.status==='linked'
+    ?`Linked ESO account ${account}`
+    :`ESO account ${account||String(text||'').trim()} submitted for officer review`;
+  if(choice==='community')return 'Community only; account reminders stopped';
+  if(choice==='not_playing')return 'Not playing ESO; account reminders stopped';
+  return `Other response: ${String(text||'').trim().slice(0,300)}`;
+}
 export {dmConfig} from './membership-dm-config.js';
 
 export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),random=Math.random,pace=()=>null}={}) {
@@ -247,7 +260,16 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         (!state.history[job.userId]?.sentAt||now()-state.history[job.userId].sentAt>=config.repeatDays*86400)&&
         (await candidates(connection)).some(m=>m.id===job.userId))))};
     });},
-    async finish(guildId,id,token,result){return atomic(guildId,state=>engine.finish(state,id,token,result));},
+    async finish(guildId,id,token,result){return atomic(guildId,async(state,connection)=>{
+      const job=engine.finish(state,id,token,result);
+      // The DM is already delivered at this point; a history write must never
+      // turn a confirmed send into a retryable failure.
+      if(!job.isTest&&job.status==='sent')try{
+        await recordDiscordMemberHistoryEvent(connection,{discordId:job.userId,eventType:'membership_dm_sent',
+          fieldName:'membership_dm',newValue:'Membership DM delivered',source:'guildsync',at:new Date(now()*1000)});
+      }catch{}
+      return job;
+    });},
     async response(guildId,{userId,deliveryId,eventId,choice,text=''}) {
       if(!['eso','community','not_playing','other'].includes(choice)||String(text).length>10000||!/^\d+$/.test(String(eventId)))throw Error('Invalid membership response.');
       return atomic(guildId,async(state,connection,config)=>{
@@ -271,6 +293,10 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
           ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),eso_account_name=COALESCE(VALUES(eso_account_name),eso_account_name),
           choice=VALUES(choice),response_text=VALUES(response_text),responded_at=VALUES(responded_at)`,
           [guildId,userId,String(job.name||'').slice(0,255),result.accountName?String(result.accountName).slice(0,255):null,choice,String(text||'').slice(0,10000),new Date(now()*1000)]);
+        if(!job.isTest)try{
+          await recordDiscordMemberHistoryEvent(connection,{discordId:userId,eventType:'membership_dm_response',
+            fieldName:'membership_dm_response',newValue:responseHistoryText(choice,text,result),source:'discord',at:new Date(now()*1000)});
+        }catch{}
         state.events.push({eventId,deliveryId,userId,name:job.name,choice,text:String(text),at:now(),result,
           isTest:Boolean(job.isTest),destinationType:config.destinationId?config.destinationType:job.destinationType,destinationId:config.destinationId||job.destinationId,
           roleId:!job.isTest&&(['community','not_playing'].includes(choice)||result.status==='linked')?config.communityRoleId:'',
