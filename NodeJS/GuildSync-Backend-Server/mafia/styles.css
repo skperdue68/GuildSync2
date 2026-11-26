@@ -146,6 +146,8 @@ body {
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
   cursor: pointer;
   transition: filter 120ms ease, box-shadow 120ms ease;
 }
@@ -189,6 +191,8 @@ input:focus-visible {
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
   cursor: pointer;
   transition: filter 120ms ease;
 }
@@ -263,6 +267,7 @@ input:focus-visible {
 .range-field {
   display: flex;
   flex-direction: column;
+  align-items: center;
 }
 
 .range-inputs {
@@ -290,14 +295,6 @@ input:focus-visible {
   font-size: 13px;
   color-scheme: dark;
   font-variant-numeric: tabular-nums;
-}
-
-.field-hint {
-  margin-left: 6px;
-  font-weight: 400;
-  letter-spacing: 0.2px;
-  text-transform: none;
-  color: #64748b;
 }
 
 /* Table */

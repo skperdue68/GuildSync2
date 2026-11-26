@@ -77,12 +77,44 @@ test('the range covers whole days and has no clock controls', () => {
   assert.match(html, /placeholder="Message text…"/);
   assert.match(html, /id="range-start"/);
   assert.match(html, /id="range-end"/);
+  assert.doesNotMatch(html, /field-hint|24-hour/);
 
   // From is midnight, To is the last second of its day.
   assert.match(client, /new Date\(year, month - 1, day, 0, 0, 0\)/);
   assert.match(client, /new Date\(year, month - 1, day, 23, 59, 59\)/);
   assert.match(client, /params\.set\('start', String\(state\.start\)\)/);
   assert.match(client, /params\.set\('end', String\(state\.end\)\)/);
+});
+
+test('the range label is centred and the buttons read CLEAR and REFRESH', () => {
+  assert.match(ruleBody('.range-field'), /align-items:\s*center/);
+  assert.match(html, />CLEAR</);
+  assert.equal((html.match(/>REFRESH</g) || []).length, 2);
+  assert.match(ruleBody('.clear-button'), /text-transform:\s*uppercase/);
+  assert.match(ruleBody('.refresh-button'), /text-transform:\s*uppercase/);
+});
+
+test('Refresh reloads the window on screen instead of jumping to the first page', () => {
+  assert.match(client, /async function refreshCurrent\(/);
+  assert.match(client, /const start = state\.offset;/);
+  assert.match(client, /limit: String\(limit\)/);
+  assert.match(
+    client,
+    /await loadPage\(\{offset: start \+ \(first \? 0 : state\.loaded\), limit, append: !first\}\);/
+  );
+  assert.match(client, /elements\.refresh\.addEventListener\('click', refreshCurrent\)/);
+  assert.match(client, /elements\.bannerRefresh\.addEventListener\('click', refreshCurrent\)/);
+  assert.match(client, /if \(elements\.pill\.dataset\.mode === 'refresh'\) \{\n    refreshCurrent\(\);/);
+
+  // The refresh itself never scrolls the page or rewrites the URL.
+  const refreshBody = client.slice(
+    client.indexOf('async function refreshCurrent'),
+    client.indexOf('function updateSortHeaders')
+  );
+  assert.match(refreshBody, /do \{/);
+  assert.match(refreshBody, /elements\.tableScroll\.scrollTop = scrollTop;/);
+  assert.doesNotMatch(refreshBody, /scrollTop = 0/);
+  assert.doesNotMatch(client, /history\.(pushState|replaceState)|location\.hash =|location\.assign/);
 });
 
 test('the footer centres MOST RECENT DATA and right-aligns LAST SCREEN REFRESH', () => {
@@ -123,7 +155,7 @@ test('results page with a Load older button and a restamped footer', () => {
   assert.match(client, /offset: String\(offset\)/);
   assert.match(client, /elements\.loadOlder\.addEventListener\('click', \(\) => \{\n  loadPage\(\{offset: state\.offset \+ state\.loaded, append: true\}\);\n\}\);/);
   assert.match(client, /elements\.loadOlder\.hidden = total === 0 \|\| loaded >= total;/);
-  assert.match(client, /state\.offset = Number\(payload\.offset\) \|\| 0;/);
+  assert.match(client, /if \(!append\) state\.offset = Number\(payload\.offset\) \|\| 0;/);
 
   const loader = client.slice(client.indexOf('async function loadPage'), client.indexOf('async function refreshAll'));
   assert.match(loader, /markUpdated\(\)/);

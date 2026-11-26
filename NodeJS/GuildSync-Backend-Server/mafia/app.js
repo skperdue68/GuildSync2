@@ -439,7 +439,7 @@ function revealFocusedRow(id) {
   setTimeout(() => row.classList.remove('row-flash'), 2400);
 }
 
-async function loadPage({offset = 0, append = false, focus = null} = {}) {
+async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, focus = null} = {}) {
   const sequence = ++requestSequence;
   if (requestController) requestController.abort();
   requestController = new AbortController();
@@ -447,7 +447,7 @@ async function loadPage({offset = 0, append = false, focus = null} = {}) {
   const params = new URLSearchParams({
     sort: state.sort,
     dir: state.dir,
-    limit: String(PAGE_SIZE),
+    limit: String(limit),
     offset: String(offset)
   });
 
@@ -473,7 +473,9 @@ async function loadPage({offset = 0, append = false, focus = null} = {}) {
     }
 
     state.total = Number(payload.total) || 0;
-    state.offset = Number(payload.offset) || 0;
+    // On append the window start stays put; the payload offset is the start of
+    // the page just added.
+    if (!append) state.offset = Number(payload.offset) || 0;
     markLatest(payload.latest);
 
     if (append) appendMessages(payload.messages);
@@ -493,11 +495,29 @@ async function loadPage({offset = 0, append = false, focus = null} = {}) {
   }
 }
 
-async function refreshAll() {
+// Refresh in place: the same window is fetched again, so paging through the
+// archive is never undone by pressing Refresh.
+async function refreshCurrent() {
   hidePill();
   clearUpdateBanner();
-  await loadPage({offset: 0});
-  elements.tableScroll.scrollTop = 0;
+
+  const scrollTop = elements.tableScroll.scrollTop;
+  const start = state.offset;
+  const target = Math.max(PAGE_SIZE, state.loaded);
+  let first = true;
+
+  do {
+    const limit = Math.min(PAGE_SIZE, Math.max(1, target - (first ? 0 : state.loaded)));
+    const before = state.loaded;
+
+    await loadPage({offset: start + (first ? 0 : state.loaded), limit, append: !first});
+
+    const added = first ? state.loaded : state.loaded - before;
+    first = false;
+    if (added <= 0) break;
+  } while (state.loaded < target);
+
+  elements.tableScroll.scrollTop = scrollTop;
 }
 
 function updateSortHeaders() {
@@ -682,7 +702,7 @@ elements.loadOlder.addEventListener('click', () => {
 
 elements.pill.addEventListener('click', () => {
   if (elements.pill.dataset.mode === 'refresh') {
-    refreshAll();
+    refreshCurrent();
     return;
   }
 
@@ -690,8 +710,8 @@ elements.pill.addEventListener('click', () => {
   hidePill();
 });
 
-elements.refresh.addEventListener('click', refreshAll);
-elements.bannerRefresh.addEventListener('click', refreshAll);
+elements.refresh.addEventListener('click', refreshCurrent);
+elements.bannerRefresh.addEventListener('click', refreshCurrent);
 
 document.querySelectorAll('.chat-table thead th[data-sort]').forEach(header => {
   header.addEventListener('click', () => applySort(header.dataset.sort));
