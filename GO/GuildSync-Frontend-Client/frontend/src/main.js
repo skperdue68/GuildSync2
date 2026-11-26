@@ -2998,6 +2998,8 @@ function handleMemberLinksUpdated(payload = {}) {
   if (!Array.isArray(payload.links)) return;
   const changed = JSON.stringify(memberLinks) !== JSON.stringify(payload.links);
   memberLinks = payload.links;
+  // Linking clears contact preferences on the server, including links made from the ESO roster.
+  void loadMembershipDMPreferences({ force: true });
   // Reports & Admin has no live member rows unless a member-link dialog is open.
   if (changed && shouldRefreshMemberLinksView()) {
     updateMemberLinksView();
@@ -3027,7 +3029,7 @@ async function refreshMemberLinks(options = {}) {
   try {
     const response = await emitSocketWithAck('guildsync:request-member-links', {}, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to load member links.');
-    memberLinks = Array.isArray(response.links) ? response.links : [];
+    if (Array.isArray(response.links)) handleMemberLinksUpdated({ links: response.links });
     void loadMembershipDMPreferences();
   } catch (error) {
     memberLinksError = formatError(error);
@@ -3052,7 +3054,7 @@ async function runMemberAutoLinking() {
   try {
     const response = await emitSocketWithAck('guildsync:run-member-auto-linking', {}, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to run auto-linking.');
-    memberLinks = Array.isArray(response.links) ? response.links : [];
+    if (Array.isArray(response.links)) handleMemberLinksUpdated({ links: response.links });
     addSystemMessage('member-auto-link', response.message || 'Member auto-linking complete.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } catch (error) {
     memberLinksError = formatError(error);
@@ -3066,7 +3068,7 @@ async function acceptMemberLinkCandidate(esoAccountName, discordUserId = '') {
   try {
     const response = await emitSocketWithAck('guildsync:accept-member-link-candidate', { esoAccountName, discordUserId }, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to accept candidate.');
-    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    if (Array.isArray(response.links)) handleMemberLinksUpdated({ links: response.links });
     addSystemMessage('member-link-accepted', response.message || 'Candidate accepted as a link.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } catch (error) {
     memberLinksError = formatError(error);
@@ -3092,7 +3094,7 @@ async function unblockMemberAutoLink(esoAccountName, discordUserId = '') {
   try {
     const response = await emitSocketWithAck('guildsync:unblock-member-auto-link', { esoAccountName, discordUserId }, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to remove auto-link block.');
-    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    if (Array.isArray(response.links)) handleMemberLinksUpdated({ links: response.links });
 
     const normalizedEso = normalizeMemberLinkName(esoAccountName);
     const normalizedDiscordId = String(discordUserId || '').trim();
@@ -3133,7 +3135,7 @@ async function unlinkMemberLink(esoAccountName, discordUserId = '') {
   try {
     const response = await emitSocketWithAck('guildsync:manual-unlink-member', { esoAccountName, discordUserId }, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to unlink member.');
-    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    if (Array.isArray(response.links)) handleMemberLinksUpdated({ links: response.links });
     addSystemMessage('member-link-unlinked', response.message || 'Member link removed.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } catch (error) {
     memberLinksError = formatError(error);
@@ -3155,7 +3157,7 @@ async function unlinkDiscordMemberLink(discordUserId) {
   try {
     const response = await emitSocketWithAck('guildsync:manual-unlink-member', { discordUserId }, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to unlink member.');
-    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    if (Array.isArray(response.links)) handleMemberLinksUpdated({ links: response.links });
     addSystemMessage('member-link-unlinked', response.message || 'Member link removed. Auto-linking is disabled.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } catch (error) {
     memberLinksError = formatError(error);
@@ -3542,7 +3544,10 @@ function renderMemberLinkDialogOptions() {
     return '<div class="member-link-options-muted">No additional suggested matches found.</div>';
   }
 
-  const currentPairKeys = new Set(getMemberLinksForDialog().map((link) => memberLinkPairKeyFromLink(link)));
+  // Candidates and blocked pairs must remain available for an officer's explicit manual link.
+  const currentPairKeys = new Set(getMemberLinksForDialog()
+    .filter((link) => String(link.link_status || '').toLowerCase() === 'linked')
+    .map((link) => memberLinkPairKeyFromLink(link)));
   const sortedOptions = [...memberLinkDialogOptions]
     .filter((option) => {
       const pairKey = memberLinkDialogContext?.mode === 'discord-to-eso'
@@ -3682,13 +3687,19 @@ function membershipResponseText(lastResponse) {
 
 async function loadMembershipDMPreferences({ force = false } = {}) {
   if (!socket?.connected || !isAuthenticatedSession()) return;
-  if (membershipDMPreferenceLoadPromise && !force) return membershipDMPreferenceLoadPromise;
+  if (membershipDMPreferenceLoadPromise) {
+    if (!force) return membershipDMPreferenceLoadPromise;
+    await membershipDMPreferenceLoadPromise;
+    return loadMembershipDMPreferences();
+  }
   membershipDMPreferenceLoadPromise = (async () => {
     try {
       const response = await emitSocketWithAck('guildsync:membership-dm-preferences', { action: 'list' });
       if (!response?.ok) throw new Error(response?.message || 'Could not load membership DM preferences.');
-      membershipDMPreferences = response.preferences && typeof response.preferences === 'object' ? response.preferences : {};
-      if (memberLinkDialogOpen) renderGuildSyncTabLayout();
+      const preferences = response.preferences && typeof response.preferences === 'object' ? response.preferences : {};
+      const changed = JSON.stringify(membershipDMPreferences) !== JSON.stringify(preferences);
+      membershipDMPreferences = preferences;
+      if (changed && shouldRefreshMemberLinksView()) updateMemberLinksView();
     } catch (error) {
       membershipDMPreferences = membershipDMPreferences || {};
     } finally {
@@ -3941,7 +3952,7 @@ async function selectMemberLinkDialogOption(value) {
       : { esoAccountName: memberLinkDialogContext.esoAccountName, discordUserId: value };
     const response = await emitSocketWithAck('guildsync:manual-link-member', payload, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to link members.');
-    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    if (Array.isArray(response.links)) handleMemberLinksUpdated({ links: response.links });
     addSystemMessage('member-link-saved', response.message || 'Member link saved.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
     closeMemberLinkDialog();
   } catch (error) {
@@ -3999,7 +4010,7 @@ async function unlinkMemberLinkFromDialog(esoAccountName = '', discordUserId = '
       discordUserId: link.discord_user_id
     }, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to unlink member.');
-    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    if (Array.isArray(response.links)) handleMemberLinksUpdated({ links: response.links });
     addSystemMessage('member-link-unlinked', response.message || 'Member link removed.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
     await reloadMemberLinkDialogOptions();
   } catch (error) {
