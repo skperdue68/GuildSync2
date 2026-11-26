@@ -400,6 +400,7 @@ func guildSyncChatEntries(value interface{}) []interface{} {
 			"sender":    sender,
 			"timestamp": timestamp,
 			"text":      text,
+			"channel":   guildSyncChatChannel(entry["channel"]),
 		})
 	}
 
@@ -475,6 +476,17 @@ func luaChatString(value interface{}) string {
 	}
 
 	return ""
+}
+
+// guildSyncChatChannel keeps the add-on's guild/officer marker. Files written
+// before officer chat was captured have no channel, and those rows are guild
+// chat.
+func guildSyncChatChannel(value interface{}) string {
+	if strings.EqualFold(strings.TrimSpace(luaChatString(value)), "officer") {
+		return "officer"
+	}
+
+	return "guild"
 }
 
 func luaChatTimestamp(value interface{}) int64 {

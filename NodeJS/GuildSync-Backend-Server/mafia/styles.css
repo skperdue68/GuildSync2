@@ -1,0 +1,615 @@
+/* Alphabet Mafia guild chat archive. Same navy-and-blue palette as GuildSync:
+   the radial glow over the vertical gradient, translucent blue cards, and
+   Segoe UI as the UI face. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  color: #e5e7eb;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.16) 0%, rgba(59, 130, 246, 0) 48%),
+    linear-gradient(180deg, #0f172a 0%, #111c3d 100%);
+  background-attachment: fixed;
+}
+
+.page {
+  width: 100%;
+  max-width: 1720px;
+  margin: 0 auto;
+  padding: 24px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Header */
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  border: 1px solid rgba(147, 197, 253, 0.18);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(18, 31, 62, 0.78) 0%, rgba(10, 18, 39, 0.78) 100%);
+  box-shadow: 0 18px 40px rgba(2, 8, 23, 0.35);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 11px;
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.96), rgba(37, 99, 235, 0.96));
+  color: #f8fafc;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.35);
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.brand-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: #f8fafc;
+}
+
+.brand-subtitle {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #cbd5e1;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.connection-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.connection-badge[data-state="live"] {
+  border-color: rgba(74, 222, 128, 0.45);
+  color: #bbf7d0;
+}
+
+.connection-badge[data-state="live"]::before {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
+}
+
+.connection-badge[data-state="offline"] {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+}
+
+.connection-badge[data-state="offline"]::before {
+  background: #ef4444;
+}
+
+/* Buttons */
+
+.refresh-button {
+  border: 1px solid rgba(147, 197, 253, 0.45);
+  border-radius: 9px;
+  padding: 8px 18px;
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.96), rgba(37, 99, 235, 0.96));
+  color: #f8fafc;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: filter 120ms ease, box-shadow 120ms ease;
+}
+
+.refresh-button:hover {
+  filter: brightness(1.08);
+}
+
+.refresh-button:focus-visible,
+.clear-button:focus-visible,
+.new-pill:focus-visible,
+input:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.refresh-button[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.refresh-button-attention {
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35), 0 0 22px rgba(59, 130, 246, 0.55);
+}
+
+.refresh-button-small {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+/* Clear removes the filters, so it carries the same red as other destructive
+   actions rather than the neutral ghost style. */
+.clear-button {
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  border-radius: 8px;
+  padding: 7px 14px;
+  background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
+  color: #fef2f2;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+
+.clear-button:hover {
+  filter: brightness(1.1);
+}
+
+/* Update notice: the socket only says new rows exist, the reader refreshes. */
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  border-radius: 11px;
+  background: linear-gradient(180deg, rgba(34, 83, 184, 0.35) 0%, rgba(20, 55, 139, 0.35) 100%);
+  color: #dbeafe;
+  font-size: 13px;
+}
+
+.update-banner[hidden] {
+  display: none;
+}
+
+/* Filters */
+
+.toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border: 1px solid rgba(147, 197, 253, 0.16);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(18, 31, 62, 0.74) 0%, rgba(10, 18, 39, 0.74) 100%);
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.search-field {
+  flex: 1 1 320px;
+  min-width: 240px;
+}
+
+.search-field input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 9px;
+  background: rgba(7, 12, 24, 0.65);
+  color: #e5e7eb;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.search-field input::placeholder {
+  color: #64748b;
+}
+
+.range-field {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.range-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.range-input input {
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 9px;
+  background: rgba(7, 12, 24, 0.65);
+  color: #e5e7eb;
+  font-family: inherit;
+  font-size: 13px;
+  color-scheme: dark;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Table */
+
+.table-card {
+  position: relative;
+  border: 1px solid rgba(147, 197, 253, 0.18);
+  border-radius: 14px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(18, 31, 62, 0.82) 0%, rgba(10, 18, 39, 0.82) 100%);
+  box-shadow: 0 18px 40px rgba(2, 8, 23, 0.35);
+}
+
+.table-scroll {
+  max-height: calc(100vh - 300px);
+  min-height: 280px;
+  overflow: auto;
+}
+
+.chat-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.chat-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 11px 14px;
+  background: #16264a;
+  border-bottom: 1px solid rgba(147, 197, 253, 0.28);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: #bfdbfe;
+}
+
+.chat-table thead th.align-right {
+  text-align: right;
+}
+
+.chat-table thead th:nth-child(1) {
+  width: 168px;
+}
+
+.chat-table thead th:nth-child(2) {
+  width: 170px;
+}
+
+.chat-table tbody td {
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  vertical-align: top;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* Zebra stripes: a faint blue wash on every other row so the eye can follow a
+   message across the full width. Kept below the hover rule so hover wins. */
+.chat-table tbody tr:nth-child(even) td {
+  background: rgba(59, 130, 246, 0.065);
+}
+
+/* Officer chat is the same guild's private channel: tinted and edge-marked so
+   it reads as a different conversation without leaving chronological order. */
+.chat-table tbody tr.chat-row-officer td {
+  background: rgba(250, 204, 21, 0.09);
+}
+
+.chat-table tbody tr.chat-row-officer td:first-child {
+  box-shadow: inset 3px 0 0 #facc15;
+}
+
+.officer-tag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 6px;
+  border: 1px solid rgba(250, 204, 21, 0.55);
+  border-radius: 5px;
+  background: rgba(250, 204, 21, 0.16);
+  color: #fde68a;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+}
+
+.chat-table tbody tr {
+  cursor: help;
+}
+
+.chat-table tbody tr:hover td {
+  background: rgba(96, 165, 250, 0.22);
+}
+
+/* A bright edge marks the row the pointer is on, across every column. */
+.chat-table tbody tr:hover td:first-child {
+  box-shadow: inset 3px 0 0 #60a5fa;
+}
+
+.chat-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.cell-time {
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.cell-sender {
+  text-align: right;
+  font-weight: 600;
+  color: #93c5fd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell-message {
+  color: #e5e7eb;
+  white-space: pre-wrap;
+}
+
+.chat-table .empty-row td {
+  padding: 40px 16px;
+  text-align: center;
+  color: #94a3b8;
+}
+
+.table-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(7, 12, 24, 0.45);
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.latest-data {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  color: #e0f2fe;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.latest-data[data-stale="true"] {
+  color: #fbbf24;
+}
+
+.last-update {
+  color: #e0f2fe;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+/* Jump back to the newest rows when live inserts landed above the viewport. */
+.new-pill {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 4;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border: 1px solid rgba(147, 197, 253, 0.55);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  color: #f8fafc;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(2, 8, 23, 0.45);
+}
+
+.new-pill[hidden] {
+  display: none;
+}
+
+.new-pill:hover {
+  filter: brightness(1.08);
+}
+
+@keyframes row-flash {
+  0%,
+  100% {
+    background: transparent;
+  }
+
+  20% {
+    background: rgba(250, 204, 21, 0.3);
+  }
+}
+
+.chat-row.row-flash td {
+  animation: row-flash 2.4s ease;
+}
+
+.table-error {
+  color: #fecaca;
+}
+
+/* Tooltip for the received/downloaded provenance of any row */
+
+.row-tooltip {
+  position: fixed;
+  z-index: 20;
+  max-width: 320px;
+  padding: 9px 12px;
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  border-radius: 9px;
+  background: #0b1428;
+  box-shadow: 0 14px 32px rgba(2, 8, 23, 0.55);
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+.row-tooltip[hidden] {
+  display: none;
+}
+
+.tooltip-line strong {
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .page {
+    padding: 16px 12px 32px;
+  }
+
+  .table-scroll {
+    max-height: calc(100vh - 260px);
+  }
+
+  .chat-table {
+    min-width: 720px;
+  }
+
+  .table-footer {
+    justify-content: flex-start;
+    gap: 8px;
+    padding-bottom: 34px;
+  }
+
+  .latest-data {
+    left: 16px;
+    bottom: 10px;
+    transform: none;
+    text-align: left;
+  }
+
+  .footer-right {
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+}
+
+/* Scrollbars anywhere on the page: navy track, blue thumb, matching the cards. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 165, 250, 0.5) rgba(7, 12, 24, 0.6);
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: rgba(7, 12, 24, 0.6);
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid rgba(7, 12, 24, 0.6);
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.5);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(147, 197, 253, 0.75);
+}

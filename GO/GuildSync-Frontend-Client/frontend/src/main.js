@@ -67,6 +67,7 @@ import {
 import * as AppBridge from '../bindings/GuildSync/app.js';
 import {Browser, Events} from '@wailsio/runtime';
 import {createEventsOn} from './desktop-events.mjs';
+import {uploadGuildChatAndMaybeClear} from './chat-upload.js';
 const EventsOn = createEventsOn(Events);
 const BrowserOpenURL = url => Browser.OpenURL(url);
 
@@ -10521,22 +10522,16 @@ async function handleGuildSyncTraderSavedVarsModified(payload = {}) {
   await collectAndSendGuildSyncTraderData(payload);
 }
 
-// Guild chat messages are written to GuildSyncChat.lua by the add-on and only
-// uploaded once ESO is closed: the game rewrites SavedVariables on reload and
-// logout, so clearing the file while ESO runs would race the next save. The
-// file itself is the queue, so a logout while GuildSync was closed is uploaded
-// on the next start or reconnect.
+// Guild chat messages are written to GuildSyncChat.lua by the add-on and are
+// uploaded as soon as the file changes, even while ESO is running. Only the
+// clearing of the file waits for ESO to close: the game rewrites SavedVariables
+// on reload and logout, so clearing while ESO runs would race the next save. The
+// file itself stays the queue, so a logout while GuildSync was closed is
+// uploaded on the next start or reconnect.
 async function collectAndSendGuildSyncChatData(payload = {}) {
   const nativeGeneration = sessionGeneration;
   if (userSwitchTransition || guildSyncSession.user?.user_switch?.active) return;
   if (!canIngestGuildSyncData()) return;
-
-  if (esoRunningStatus.running) {
-    addSystemMessage('chat-data-pending', 'Guild chat is saved in GuildSyncChat.lua and will upload after ESO closes.', {
-      ttlMs: TRANSIENT_MESSAGE_TTL_MS
-    });
-    return;
-  }
 
   if (!socket?.connected) {
     addSystemMessage('chat-data-pending', 'Guild chat SavedVariables changed, but GuildSync websocket is not connected yet. Messages were not cleared.', {
@@ -10553,6 +10548,9 @@ async function collectAndSendGuildSyncChatData(payload = {}) {
       // Clearing the file after a successful upload rewrites it, so an empty
       // messages table is normal and should not report a problem.
       if (result?.empty) return;
+      // ESO may be midway through writing the file; the watcher fires again
+      // when it finishes, so this is a retry rather than an error.
+      if (esoRunningStatus.running) return;
       addSystemMessage('chat-data-pending', result?.message || 'Guild chat SavedVariables changed, but no messages were sent yet.', {
         ttlMs: TRANSIENT_MESSAGE_TTL_MS
       });
@@ -10574,7 +10572,7 @@ async function collectAndSendGuildSyncChatData(payload = {}) {
 // Reads the SavedVariables file directly so messages left by a logout while
 // GuildSync was closed, or by a missed websocket, are not stranded.
 async function uploadGuildSyncChatFromFile() {
-  if (chatUploadRunning || !socket?.connected || !canIngestGuildSyncData() || esoRunningStatus.running) {
+  if (chatUploadRunning || !socket?.connected || !canIngestGuildSyncData()) {
     return;
   }
 
@@ -10594,27 +10592,28 @@ async function sendGuildSyncChatUpload(chatPayload) {
     throw new Error('GuildSync websocket is not connected. Guild chat was not cleared.');
   }
 
-  const response = await emitSocketWithAck('guildsync:sending-chat-data', chatPayload, 30000);
+  // The upload always happens; clearing GuildSyncChat.lua waits for ESO to close.
+  const outcome = await uploadGuildChatAndMaybeClear({
+    esoRunning: Boolean(esoRunningStatus.running),
+    upload: async () => {
+      const response = await emitSocketWithAck('guildsync:sending-chat-data', chatPayload, 30000);
 
-  if (!response?.ok) {
-    throw new Error(response?.message || response?.error || 'Backend rejected the guild chat payload. Messages were not cleared.');
-  }
+      if (!response?.ok) {
+        throw new Error(response?.message || response?.error || 'Backend rejected the guild chat payload. Messages were not cleared.');
+      }
 
-  if (nativeGeneration !== sessionGeneration || userSwitchTransition || guildSyncSession.user?.user_switch?.active) throw new Error('Account session changed before native commit.');
-  const commitResult = await CommitGuildSyncChatData(
-    chatPayload.file_path || '',
-    chatPayload.file_name || ''
-  );
+      if (nativeGeneration !== sessionGeneration || userSwitchTransition || guildSyncSession.user?.user_switch?.active) throw new Error('Account session changed before native commit.');
 
-  if (!commitResult?.ok) {
-    throw new Error(commitResult?.message || 'Backend confirmed guild chat, but the SavedVariables messages could not be cleared.');
-  }
-
-  addSystemMessage('chat-data-sent', response.message || 'Guild chat sent to GuildSync backend.', {
-    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      return response;
+    },
+    clear: () => CommitGuildSyncChatData(
+      chatPayload.file_path || '',
+      chatPayload.file_name || ''
+    ),
+    notify: (messageId, message) => addSystemMessage(messageId, message, {ttlMs: TRANSIENT_MESSAGE_TTL_MS})
   });
 
-  return response;
+  return outcome.response;
 }
 
 // ESO writes the add-on's delivery results (mailAck) only when it saves

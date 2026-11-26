@@ -4618,6 +4618,121 @@ export function parseGuildSyncRosterSavedVarsLua(rawLuaText = '') {
   };
 }
 
+function savedVarsProfiles(parsed) {
+  return Object.values(parsed && typeof parsed === 'object' ? parsed : {})
+    .filter((profile) => profile && typeof profile === 'object');
+}
+
+function savedVarsAccountWideSections(account) {
+  const accountWide = account && typeof account === 'object' ? account['$AccountWide'] : null;
+  if (!accountWide || typeof accountWide !== 'object') return [];
+
+  // NewAccountWide nests the messages under the megaserver name, while older
+  // files keep them directly on $AccountWide; both shapes are read.
+  return [
+    accountWide,
+    ...Object.values(accountWide).filter((value) => value && typeof value === 'object' && !Array.isArray(value))
+  ];
+}
+
+function savedVarsMessages(source) {
+  const table = source?.messages;
+  if (!table || typeof table !== 'object') return [];
+  return Object.values(table).filter((message) => message && typeof message === 'object');
+}
+
+// Guild chat is saved per account and world. Reading every section means one
+// dropped file uploads chat from every account the add-on ran under.
+export function parseGuildSyncChatSavedVarsLua(rawLuaText = '') {
+  const tableText = extractLuaAssignmentTable(rawLuaText, 'GuildSyncChat');
+  const parsed = parseEsoLuaTableForRoster(tableText);
+  const accounts = new Set();
+  const entries = [];
+
+  for (const profile of savedVarsProfiles(parsed)) {
+    for (const [accountName, account] of Object.entries(profile)) {
+      if (!accountName.startsWith('@')) continue;
+
+      const sections = savedVarsAccountWideSections(account);
+      if (sections.length > 0) accounts.add(accountName);
+
+      for (const section of sections) {
+        for (const message of savedVarsMessages(section)) {
+          const sender = String(message.sender ?? '').trim();
+          const text = String(message.text ?? '');
+          const timestamp = Number(message.timestamp);
+
+          if (!sender || !text.trim() || !Number.isFinite(timestamp) || timestamp <= 0) continue;
+
+          entries.push({
+            sender,
+            text,
+            timestamp: Math.floor(timestamp),
+            channel: String(message.channel ?? '').trim().toLowerCase() === 'officer' ? 'officer' : 'guild'
+          });
+        }
+      }
+    }
+  }
+
+  entries.sort((left, right) => left.timestamp - right.timestamp);
+
+  return {
+    table_name: 'GuildSyncChat',
+    account_names: [...accounts],
+    entries,
+    entries_count: entries.length
+  };
+}
+
+// The reminder file is only useful to the backend for its delivery results: the
+// addon writes one mailAck per request when ESO saves SavedVariables.
+export function parseGuildSyncDiscordReminderSavedVarsLua(rawLuaText = '') {
+  const tableText = extractLuaAssignmentTable(rawLuaText, 'GuildSyncDiscordReminder');
+  const parsed = parseEsoLuaTableForRoster(tableText);
+  const acks = [];
+  const seen = new Set();
+
+  for (const profile of savedVarsProfiles(parsed)) {
+    for (const [accountName, account] of Object.entries(profile)) {
+      if (!accountName.startsWith('@')) continue;
+
+      for (const section of savedVarsAccountWideSections(account)) {
+        const mailAck = section?.mailAck;
+        if (!mailAck || typeof mailAck !== 'object') continue;
+
+        for (const ack of Object.values(mailAck)) {
+          if (!ack || typeof ack !== 'object') continue;
+
+          const requestId = String(ack.requestId ?? '').trim();
+          const batchId = String(ack.batchId ?? '').trim();
+          const status = String(ack.status ?? '').trim().toLowerCase();
+
+          if (!requestId || !batchId || !['sent', 'failed', 'uncertain'].includes(status) || seen.has(requestId)) continue;
+          seen.add(requestId);
+
+          acks.push({
+            requestId,
+            batchId,
+            guildId: String(ack.guildId ?? '').trim(),
+            sendingAccount: String(ack.sendingAccount ?? '').trim(),
+            worldName: String(ack.worldName ?? '').trim(),
+            status,
+            detail: String(ack.detail ?? ''),
+            sentAt: Number(ack.sentAt) > 0 ? Number(ack.sentAt) : undefined
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    table_name: 'GuildSyncDiscordReminder',
+    acks,
+    acks_count: acks.length
+  };
+}
+
 export function parseGuildSyncApplicationsSavedVarsLua(rawLuaText = '') {
   const tableText = extractLuaAssignmentTable(rawLuaText, 'GuildSyncApplications');
   const parsed = parseEsoLuaTableForRoster(tableText);

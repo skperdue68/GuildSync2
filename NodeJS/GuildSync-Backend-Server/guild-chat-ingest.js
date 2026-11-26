@@ -7,6 +7,7 @@ export const GUILD_CHAT_SCHEMA = `CREATE TABLE IF NOT EXISTS guildsync_guild_cha
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   message_hash CHAR(64) NOT NULL,
   guild VARCHAR(64) NOT NULL,
+  channel VARCHAR(16) NOT NULL DEFAULT 'guild',
   sender VARCHAR(255) NOT NULL,
   message_text TEXT NOT NULL,
   message_timestamp BIGINT NOT NULL,
@@ -19,7 +20,17 @@ export const GUILD_CHAT_SCHEMA = `CREATE TABLE IF NOT EXISTS guildsync_guild_cha
   INDEX idx_guildsync_chat_guild_timestamp (guild, message_timestamp)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`;
 
+// Tables created before officer chat was captured have no channel column. The
+// default backfills existing rows as guild chat, which is what they were.
+export const GUILD_CHAT_CHANNEL_MIGRATION = `ALTER TABLE guildsync_guild_chat_messages
+  ADD COLUMN channel VARCHAR(16) NOT NULL DEFAULT 'guild'`;
+
 const DEDUPE_WINDOW_SECONDS = 30;
+
+// Only two conversations are captured, so anything unexpected is guild chat.
+export function normalizeGuildChatChannel(value) {
+  return String(value ?? '').trim().toLowerCase() === 'officer' ? 'officer' : 'guild';
+}
 
 export function normalizeGuildChatSender(value) {
   return Array.from(String(value ?? '').trim().toLowerCase()).slice(0, 255).join('');
@@ -53,25 +64,48 @@ export function guildChatGuildKey(payload = {}, env = process.env) {
   return (guildName || 'guild').slice(0, 64);
 }
 
-export function guildChatMessageHash({ guild, sender, text }) {
+export function guildChatMessageHash({ guild, channel = 'guild', sender, text }) {
   return crypto
     .createHash('sha256')
-    .update(`${guild}:${normalizeGuildChatSender(sender)}:${normalizeGuildChatText(text)}`)
+    .update(
+      `${guild}:${normalizeGuildChatChannel(channel)}:${normalizeGuildChatSender(sender)}:${normalizeGuildChatText(text)}`
+    )
     .digest('hex');
 }
 
-export async function ensureGuildChatSchema(db) {
+// Databases whose table already has the officer chat column. The startup schema
+// pass is the only place the column is added, so an upload never runs DDL.
+const guildChatChannelReady = new WeakSet();
+
+export async function ensureGuildChatSchema(db, {log = () => {}} = {}) {
+  if (guildChatChannelReady.has(db)) return;
+
   await db.query(GUILD_CHAT_SCHEMA);
+
+  try {
+    await db.query(GUILD_CHAT_CHANNEL_MIGRATION);
+  } catch (error) {
+    // 1060 is MariaDB/MySQL's "duplicate column": the column is already there.
+    if (Number(error?.errno) === 1060 || /duplicate column/i.test(String(error?.message || ''))) {
+      guildChatChannelReady.add(db);
+      return;
+    }
+
+    const detail = String(error?.message || error || 'unknown database error');
+    const code = error?.code ? ` [${error.code}]` : '';
+    const message = `Guild chat schema migration failed: the officer chat column could not be added${code} (${detail}). Fix the database permissions or table, then restart GuildSync.`;
+
+    log(message);
+    throw new Error(message);
+  }
+
+  guildChatChannelReady.add(db);
 }
 
 // Looks up and inserts every report inside one transaction, so two clients
 // uploading at the same second cannot both pass the duplicate check.
 export async function ingestGuildChatMessages(db, payload = {}) {
   const entries = Array.isArray(payload?.entries) ? payload.entries : [];
-
-  if (entries.length > 0) {
-    await ensureGuildChatSchema(db);
-  }
 
   const guild = guildChatGuildKey(payload);
   const uploadedBy = Array.from(String(payload?.uploadedBy || '').trim()).slice(0, 255).join('');
@@ -82,7 +116,10 @@ export async function ingestGuildChatMessages(db, payload = {}) {
     chat_messages_received: entries.length,
     chat_messages_inserted: 0,
     chat_messages_duplicates: 0,
-    chat_messages_skipped: 0
+    chat_messages_skipped: 0,
+    // Ids of the rows this report created, so the live site can be handed the
+    // exact records instead of re-reading the table.
+    inserted_ids: []
   };
 
   if (entries.length === 0) {
@@ -105,7 +142,8 @@ export async function ingestGuildChatMessages(db, payload = {}) {
       }
 
       const messageTimestamp = Math.floor(timestamp);
-      const messageHash = guildChatMessageHash({ guild, sender, text });
+      const channel = normalizeGuildChatChannel(entry?.channel);
+      const messageHash = guildChatMessageHash({ guild, channel, sender, text });
 
       const [existingRows] = await connection.execute(
         `SELECT id FROM guildsync_guild_chat_messages
@@ -121,10 +159,11 @@ export async function ingestGuildChatMessages(db, payload = {}) {
         continue;
       }
 
-      await connection.execute(
+      const [insertResult] = await connection.execute(
         `INSERT INTO guildsync_guild_chat_messages (
           message_hash,
           guild,
+          channel,
           sender,
           message_text,
           message_timestamp,
@@ -132,11 +171,12 @@ export async function ingestGuildChatMessages(db, payload = {}) {
           data_source,
           uploaded_by
         )
-        VALUES (?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`,
-        [messageHash, guild, sender, text, messageTimestamp, messageTimestamp, dataSource, uploadedBy]
+        VALUES (?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`,
+        [messageHash, guild, channel, sender, text, messageTimestamp, messageTimestamp, dataSource, uploadedBy]
       );
 
       result.chat_messages_inserted += 1;
+      if (Number(insertResult?.insertId) > 0) result.inserted_ids.push(Number(insertResult.insertId));
     }
 
     await connection.commit();

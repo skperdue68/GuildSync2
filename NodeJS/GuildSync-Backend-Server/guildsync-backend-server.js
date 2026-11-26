@@ -29,6 +29,7 @@ import cors from 'cors';
 import http from 'node:http';
 import {createDesktopVersionPolicy} from './desktop-version-policy.js';
 import {ingestGuildChatMessages} from './guild-chat-ingest.js';
+import {createMafiaChatRouter, mapMafiaChatRow, MAFIA_CHAT_BULK_LIMIT, MAFIA_CHAT_UPDATED_EVENT} from './mafia-chat-api.js';
 import {releaseExpiredDepositMailCheckouts} from './deposit-mail-lease.js';
 import {startDepositMailSweep} from './deposit-mail-sweep.js';
 import fs from 'node:fs';
@@ -104,6 +105,8 @@ import {
   parseGuildSyncBankingSavedVarsLua,
   parseGuildSyncTraderSavedVarsLua,
   parseGuildSyncRosterSavedVarsLua,
+  parseGuildSyncChatSavedVarsLua,
+  parseGuildSyncDiscordReminderSavedVarsLua,
   parseGuildSyncApplicationsSavedVarsLua
 } from './guildsync-database-actions.js';
 
@@ -123,6 +126,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const WEB_DIST_DIR = process.env.GUILDSYNC_WEB_DIST_DIR || path.join(__dirname, 'public');
 const GUILDSYNC_DOWNLOADS_DIR = process.env.GUILDSYNC_DOWNLOADS_DIR || path.join(__dirname, 'public', 'downloads');
+// mafia.perdues.me is served by this same process from plain files, with no build step.
+const MAFIA_DIST_DIR = process.env.MAFIA_WEB_DIST_DIR || path.join(__dirname, 'mafia');
+// mafia.perdues.me runs on its own listener so the reverse proxy can send that
+// host straight to it without going through the GuildSync app.
+const MAFIA_PORT = Number(process.env.MAFIA_PORT || 3018);
 
 const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
 const ESO_GUILD_CONFIGURATION = esoGuildConfiguration();
@@ -197,6 +205,73 @@ const io = new Server(server, {
   // Allow 25 MiB (matching the express.json limit) instead of the 1 MB default.
   maxHttpBufferSize: 26214400
 });
+
+// The mafia site is its own Express app and Socket.IO server on MAFIA_PORT, so
+// its pages, API and live notice never share a listener with GuildSync.
+const mafiaWebApp = express.static(MAFIA_DIST_DIR, {index: 'index.html'});
+const mafiaApp = express();
+mafiaApp.use(cors());
+mafiaApp.use('/api/mafia/chat', createMafiaChatRouter({getDb: () => openAppDataDB(), log: Log}));
+mafiaApp.use(mafiaWebApp);
+mafiaApp.get('/{*splat}', (req, res, next) => {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) return next();
+  return res.sendFile(path.join(MAFIA_DIST_DIR, 'index.html'));
+});
+const mafiaServer = http.createServer(mafiaApp);
+const mafiaIo = new Server(mafiaServer, {
+  cors: {
+    origin: '*',
+    methods: ['GET']
+  }
+});
+// Create the live-update namespace now. Socket.IO rejects a client that joins a
+// namespace nothing has created yet, so registering it lazily in the broadcast
+// left the page on "Invalid namespace" until the next chat insert.
+const mafiaChatNamespace = mafiaIo.of('/mafia');
+
+// Sends the stored records themselves, so the page can slot each one into its
+// sorted position without a reload. It goes out on the mafia listener only, so
+// the GuildSync socket server is untouched and no namespace is opened on 3001.
+async function broadcastMafiaChatUpdate(detail = {}) {
+  try {
+    const ids = (Array.isArray(detail.ids) ? detail.ids : [])
+      .map(id => Number(id))
+      .filter(id => Number.isInteger(id) && id > 0);
+    const {ids: _ids, ...notice} = detail;
+    let messages = [];
+
+    // A first upload can insert thousands of rows at once; every open page only
+    // needs to know to reload, not to receive the whole batch.
+    if (ids.length > MAFIA_CHAT_BULK_LIMIT) {
+      mafiaChatNamespace.emit(MAFIA_CHAT_UPDATED_EVENT, {
+        ...notice,
+        bulk: true,
+        messages: [],
+        at: new Date().toISOString()
+      });
+      return;
+    }
+
+    if (ids.length > 0) {
+      const placeholders = ids.map(() => '?').join(', ');
+      const [rows] = await applicationDB.execute(
+        `SELECT id, channel, sender, message_text, message_timestamp, data_source, uploaded_by, received_at
+         FROM guildsync_guild_chat_messages
+         WHERE id IN (${placeholders})`,
+        ids
+      );
+      messages = (Array.isArray(rows) ? rows : []).map(mapMafiaChatRow);
+    }
+
+    mafiaChatNamespace.emit(MAFIA_CHAT_UPDATED_EVENT, {
+      ...notice,
+      messages,
+      at: new Date().toISOString()
+    });
+  } catch (error) {
+    Log('Mafia guild chat update broadcast failed:', error.message);
+  }
+}
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
@@ -797,12 +872,19 @@ function registerGuildSyncConnection(socket) {
       const fileName = path.basename(String(payload.file_name || payload.fileName || '').trim());
       const rawLuaText = String(payload.raw_lua_text || payload.rawLuaText || '').trim();
       const source = String(payload.source || 'web-drag-drop').trim() || 'web-drag-drop';
-      const allowedFiles = new Set(['GuildSyncBanking.lua', 'GuildSyncRoster.lua', 'GuildSyncApplications.lua', 'GuildSyncTrader.lua']);
+      const allowedFiles = new Set([
+        'GuildSyncBanking.lua',
+        'GuildSyncRoster.lua',
+        'GuildSyncApplications.lua',
+        'GuildSyncTrader.lua',
+        'GuildSyncChat.lua',
+        'GuildSyncDiscordReminder.lua'
+      ]);
 
       if (!allowedFiles.has(fileName)) {
         sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
           ok: false,
-          message: `Unsupported file: ${fileName || 'unknown file'}. Drop only GuildSyncBanking.lua, GuildSyncRoster.lua, GuildSyncApplications.lua, or GuildSyncTrader.lua.`
+          message: `Unsupported file: ${fileName || 'unknown file'}. Drop only ${[...allowedFiles].join(', ')}.`
         });
         return;
       }
@@ -857,6 +939,79 @@ function registerGuildSyncConnection(socket) {
           message: `GuildSyncTrader.lua uploaded and processed. Sales: ${result.trader_entries_received}.`,
           world: data.world || null,
           ...result
+        });
+        return;
+      }
+
+      if (fileName === 'GuildSyncChat.lua') {
+        const data = parseGuildSyncChatSavedVarsLua(rawLuaText);
+        validateEsoGuildImport('chat', data);
+        const result = await ingestGuildChatMessages(applicationDB, {
+          uploadedBy: socket.guildSyncUser.display_name || socket.guildSyncUser.username || socket.guildSyncUser.discord_user_id,
+          source: 'web-drag-drop',
+          entries: data.entries || []
+        });
+
+        const {inserted_ids: insertedIds = [], ...chatResult} = result;
+
+        if (insertedIds.length > 0) {
+          await broadcastMafiaChatUpdate({inserted: insertedIds.length, ids: insertedIds});
+        }
+
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: true,
+          kind: 'chat',
+          file_name: fileName,
+          message: `GuildSyncChat.lua uploaded and processed. Entries: ${chatResult.chat_messages_received}, new: ${chatResult.chat_messages_inserted}, duplicate: ${chatResult.chat_messages_duplicates}.`,
+          ...chatResult
+        });
+        return;
+      }
+
+      if (fileName === 'GuildSyncDiscordReminder.lua') {
+        const data = parseGuildSyncDiscordReminderSavedVarsLua(rawLuaText);
+
+        if (!data.acks.length) {
+          sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+            ok: true,
+            kind: 'discord_reminders',
+            file_name: fileName,
+            message: 'GuildSyncDiscordReminder.lua contains no delivery results to synchronize.',
+            acks: 0,
+            processed: 0
+          });
+          return;
+        }
+
+        const reminderUserId = socket.guildSyncUser.discord_user_id;
+        const [roleRows] = await applicationDB.execute('SELECT role_id, role_name FROM discord_roles');
+        const [heldRows] = await applicationDB.execute('SELECT role_id FROM discord_member_roles WHERE discord_id = ?', [reminderUserId]);
+
+        if (!hasOfficerRole(roleRows, (heldRows || []).map(row => row.role_id))) {
+          sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+            ok: false,
+            kind: 'discord_reminders',
+            file_name: fileName,
+            message: 'Only members with the Consigliere or Kingpin role can synchronize Discord reminder results.'
+          });
+          return;
+        }
+
+        // The reminder service caps one acknowledgement call, so the saved
+        // results go over in the same batches the desktop client uses.
+        let processed = 0;
+        for (let offset = 0; offset < data.acks.length; offset += 250) {
+          const ackResult = await discordReminders.acknowledge(reminderUserId, data.acks.slice(offset, offset + 250));
+          processed += Number(ackResult?.processed) || 0;
+        }
+
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: true,
+          kind: 'discord_reminders',
+          file_name: fileName,
+          message: `GuildSyncDiscordReminder.lua uploaded and processed. Delivery results: ${data.acks.length}, updated: ${processed}.`,
+          acks: data.acks.length,
+          processed
         });
         return;
       }
@@ -1689,15 +1844,21 @@ function registerGuildSyncConnection(socket) {
         entries
       });
 
+      const {inserted_ids: insertedIds = [], ...chatResult} = result;
+
+      if (insertedIds.length > 0) {
+        await broadcastMafiaChatUpdate({inserted: insertedIds.length, ids: insertedIds});
+      }
+
       sendSocketResponse(socket, 'guildsync:chat-data-result', callback, {
         ok: true,
-        message: `Guild chat processed: ${result.chat_messages_inserted} new, ${result.chat_messages_duplicates} duplicate${result.chat_messages_duplicates === 1 ? '' : 's'} skipped${result.chat_messages_skipped ? `, ${result.chat_messages_skipped} invalid skipped` : ''}.`,
+        message: `Guild chat processed: ${chatResult.chat_messages_inserted} new, ${chatResult.chat_messages_duplicates} duplicate${chatResult.chat_messages_duplicates === 1 ? '' : 's'} skipped${chatResult.chat_messages_skipped ? `, ${chatResult.chat_messages_skipped} invalid skipped` : ''}.`,
         received: true,
         received_from: authenticatedUsername,
         file_name: fileName || null,
         data_source: dataSource,
         entries_count: entries.length,
-        ...result,
+        ...chatResult,
         at: new Date().toLocaleString()
       });
     } catch (error) {
@@ -3038,6 +3199,10 @@ async function notifyTraderSaleSubscribers(entries = []) {
 // checkout does not wait for a connected client to ask for banking data.
 depositMailSweep = startDepositMailSweep(applicationDB, {
   notify: (released) => broadcastDepositMailAvailability(released)
+});
+
+mafiaServer.listen(MAFIA_PORT, HOST, () => {
+  Log(`Mafia guild chat site listening at http://${HOST}:${MAFIA_PORT}`);
 });
 
 server.listen(PORT, HOST, () => {

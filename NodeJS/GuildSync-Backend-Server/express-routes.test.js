@@ -39,7 +39,9 @@ test('the single-page fallback serves the app from the root and every nested pat
  const source = fs.readFileSync(serverFile, 'utf8');
  // Anchor on the handler that sends the app shell, then take the route that
  // registers it, so unrelated routes and comments cannot be picked up.
- const sendAt = source.search(/res\.sendFile\([^)]*index\.html/);
+ // The mafia site registers its own sendFile earlier in the file, so anchor on
+ // the GuildSync shell itself rather than on the first sendFile literal.
+ const sendAt = source.search(/res\.sendFile\([^)]*WEB_DIST_DIR[^)]*index\.html/);
  assert.ok(sendAt > 0, 'the single-page fallback was not found');
  const literal = [...source.slice(0, sendAt).matchAll(/app\.get\(\s*'([^']+)'/g)].pop();
  assert.ok(literal, 'the single-page fallback route was not found');

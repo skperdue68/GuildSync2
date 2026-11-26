@@ -135,9 +135,9 @@ export async function StopGuildSyncFileWatcher() {
 }
 
 export async function GetGuildSyncFileWatcherStatus() {
-  // The web client has no SavedVariables watcher. The list mirrors the desktop
-  // client's four files so the profile menu can name them for web users, and
-  // every entry is read-only because only the desktop client can watch them.
+  // The web client has no SavedVariables watcher. The list mirrors every file
+  // the desktop client watches so the profile menu can name them for web users,
+  // and every entry is read-only because only the desktop client can watch them.
   const filePath = 'Desktop client only. Drop this file onto the GuildSync web window to upload it.';
   return {
     watching: false,
@@ -147,7 +147,9 @@ export async function GetGuildSyncFileWatcherStatus() {
       { key: 'banking', fileName: 'GuildSyncBanking.lua', enabled: true, filePath },
       { key: 'roster', fileName: 'GuildSyncRoster.lua', enabled: true, filePath },
       { key: 'applications', fileName: 'GuildSyncApplications.lua', enabled: true, filePath },
-      { key: 'trader', fileName: 'GuildSyncTrader.lua', enabled: true, filePath }
+      { key: 'trader', fileName: 'GuildSyncTrader.lua', enabled: true, filePath },
+      { key: 'chat', fileName: 'GuildSyncChat.lua', enabled: true, filePath },
+      { key: 'discord_reminders', fileName: 'GuildSyncDiscordReminder.lua', enabled: true, filePath }
     ]
   };
 }

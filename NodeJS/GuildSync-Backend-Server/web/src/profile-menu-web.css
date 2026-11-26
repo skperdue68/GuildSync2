@@ -38,6 +38,31 @@
   max-height: calc(100vh - 74px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* A visible thin scrollbar on the dark panel, with the track left clear so it
+     does not read as part of the card. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.7) transparent;
+  scrollbar-gutter: stable;
+}
+
+.discord-profile-wrap .discord-profile-menu::-webkit-scrollbar {
+  width: 10px;
+}
+
+.discord-profile-wrap .discord-profile-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.discord-profile-wrap .discord-profile-menu::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.55);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.discord-profile-wrap .discord-profile-menu::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.85);
+  background-clip: padding-box;
 }
 
 /* Section headings used to differ: some used <strong>, others the header div,

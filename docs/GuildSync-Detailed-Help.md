@@ -270,6 +270,7 @@ Use each component's own `.env`/deployment environment. Restart the owning proce
 | --- | --- | --- |
 | `HOST` | Optional; `127.0.0.1` | HTTP/socket bind address. Example uses `0.0.0.0` for network/proxy access. |
 | `PORT` | Optional; `3001` | Backend HTTP/socket port. |
+| `MAFIA_PORT` | Optional; `3018` | Listener for the mafia guild chat site (`mafia.perdues.me`), which has its own page, API and socket notice. |
 | `DISCORD_CLIENT_ID` | Required | Discord OAuth application ID. |
 | `DISCORD_CLIENT_SECRET` | Required; secret | Server-side OAuth client secret; never place in desktop settings. |
 | `DISCORD_REDIRECT_URI` | Optional; `http://127.0.0.1:53682/callback` | Desktop OAuth local callback; must match Discord application configuration. |
@@ -283,6 +284,7 @@ Use each component's own `.env`/deployment environment. Restart the owning proce
 | `GUILDSYNC_DESKTOP_UPDATE_URL` | Optional; GitHub releases page | Fallback download page when no compatible local platform installer is available. Must be an HTTP(S) URL. |
 | `GUILDSYNC_WEB_DIST_DIR` | Optional; backend `public` | Served web bundle directory. |
 | `GUILDSYNC_DOWNLOADS_DIR` | Optional; backend `public/downloads` | Installer ZIP directory. |
+| `MAFIA_WEB_DIST_DIR` | Optional; backend `mafia` | Files for the mafia guild chat site. |
 | `MARIADB_HOST` | Optional; `127.0.0.1` | Database host. |
 | `MARIADB_PORT` | Optional; `3306` | Database port. |
 | `MARIADB_USER` | Required | Database account; allow startup schema initialization. |

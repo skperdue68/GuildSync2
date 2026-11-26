@@ -67,10 +67,14 @@ const GUILDSYNC_DESKTOP_CLIENT_PLATFORM_LABELS = {
   linux: { label: 'Linux detected', shortLabel: 'Linux' }
 };
 const WEB_SAVEDVARS_UPLOAD_BANNER_DISMISSED_STORAGE_KEY = 'guildsync-web-savedvars-upload-banner-dismissed';
+// Every file the desktop client watches can be dropped on the web client.
 const WEB_SAVEDVARS_ALLOWED_FILES = new Map([
   ['GuildSyncBanking.lua', 'banking'],
   ['GuildSyncRoster.lua', 'roster'],
-  ['GuildSyncApplications.lua', 'applications']
+  ['GuildSyncApplications.lua', 'applications'],
+  ['GuildSyncTrader.lua', 'trader'],
+  ['GuildSyncChat.lua', 'chat'],
+  ['GuildSyncDiscordReminder.lua', 'discord_reminders']
 ]);
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
@@ -2213,9 +2217,7 @@ function ensureWebSavedVarsDropOverlay() {
       <h2>Drop GuildSync SavedVariables File</h2>
       <p>Allowed files only:</p>
       <div class="web-savedvars-allowed-file-list">
-        <span>GuildSyncBanking.lua</span>
-        <span>GuildSyncRoster.lua</span>
-        <span>GuildSyncApplications.lua</span>
+        ${[...WEB_SAVEDVARS_ALLOWED_FILES.keys()].map((fileName) => `<span>${fileName}</span>`).join('')}
       </div>
     </div>
   `;
@@ -2357,7 +2359,7 @@ async function handleWebSavedVarsDroppedFiles(files = []) {
 
   const invalidFile = droppedFiles.find((file) => !getAllowedWebSavedVarsKind(file.name));
   if (invalidFile) {
-    addSystemMessage('web-savedvars-drop-invalid', `Unsupported file: ${invalidFile.name}. Drop only GuildSyncBanking.lua, GuildSyncRoster.lua, or GuildSyncApplications.lua.`, {
+    addSystemMessage('web-savedvars-drop-invalid', `Unsupported file: ${invalidFile.name}. Drop only ${[...WEB_SAVEDVARS_ALLOWED_FILES.keys()].join(', ')}.`, {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
     });
     return;
@@ -2406,6 +2408,8 @@ async function uploadWebSavedVarsRawFile(file) {
     } else if (kind === 'roster') {
       await refreshRosterDataFromBackend({ silent: true });
       await refreshMemberLinks({ silent: true });
+    } else if (kind === 'discord_reminders') {
+      await discordReminderControls.refresh?.();
     }
 
     addSystemMessage(messageId, response.message || `${file.name} uploaded and processed.`, {
@@ -9788,6 +9792,7 @@ function openProfileMenu() {
   menu.classList.add('open');
   menu.setAttribute('aria-hidden', 'false');
   profileMenuOpen = true;
+  fitProfileMenuToSurface();
   void loadUserSwitchOptions();
 
   refreshProfileFileWatcherStatus();
@@ -9795,7 +9800,27 @@ function openProfileMenu() {
   setTimeout(() => {
     window.addEventListener('click', closeProfileMenuOnOutsideClick);
     window.addEventListener('keydown', closeProfileMenuOnEscape);
+    window.addEventListener('resize', fitProfileMenuToSurface);
   }, 0);
+}
+
+// The menu sits inside .main-surface, which clips overflow. A viewport-sized
+// max-height could leave the last options past the clipped edge where no
+// scrollbar appears, so size the menu to the space actually on screen.
+function fitProfileMenuToSurface() {
+  const menu = document.querySelector('#discordProfileMenu');
+  if (!menu || !profileMenuOpen) {
+    return;
+  }
+
+  const surface = menu.closest('.main-surface');
+  const bottom = Math.min(
+    window.innerHeight,
+    surface ? surface.getBoundingClientRect().bottom : window.innerHeight
+  );
+  const top = menu.getBoundingClientRect().top;
+
+  menu.style.maxHeight = `${Math.max(180, Math.floor(bottom - top - 16))}px`;
 }
 
 function closeProfileMenu(removeListeners = true) {
@@ -9810,6 +9835,7 @@ function closeProfileMenu(removeListeners = true) {
   if (removeListeners) {
     window.removeEventListener('click', closeProfileMenuOnOutsideClick);
     window.removeEventListener('keydown', closeProfileMenuOnEscape);
+    window.removeEventListener('resize', fitProfileMenuToSurface);
   }
 }
 

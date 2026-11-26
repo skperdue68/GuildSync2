@@ -21,6 +21,19 @@ local SLOT_BY_GUILD_CHANNEL = {
   [CHAT_CHANNEL_GUILD_5] = 5,
 }
 
+-- Officer chat has its own channels but belongs to the same guild slot.
+local SLOT_BY_OFFICER_CHANNEL = {
+  [CHAT_CHANNEL_OFFICER_1] = 1,
+  [CHAT_CHANNEL_OFFICER_2] = 2,
+  [CHAT_CHANNEL_OFFICER_3] = 3,
+  [CHAT_CHANNEL_OFFICER_4] = 4,
+  [CHAT_CHANNEL_OFFICER_5] = 5,
+}
+
+-- Every saved message says which of the two conversations it came from.
+local CHANNEL_GUILD = "guild"
+local CHANNEL_OFFICER = "officer"
+
 local gscSavedVars = nil
 
 local function GSC_Print(message)
@@ -69,21 +82,28 @@ end
 
 -- The guild that owns a channel is looked up whenever a message arrives instead
 -- of being cached at login, so a guild that fills its slot late, or that moves
--- slots between sessions, is still captured.
+-- slots between sessions, is still captured. Guild and officer channels share
+-- the slot numbering, so the same lookup serves both.
 local function GSC_GuildForChannel(channelType)
   local slot = SLOT_BY_GUILD_CHANNEL[channelType]
+  local channel = CHANNEL_GUILD
 
   if not slot then
-    return nil, nil
+    slot = SLOT_BY_OFFICER_CHANNEL[channelType]
+    channel = CHANNEL_OFFICER
+  end
+
+  if not slot then
+    return nil, nil, nil
   end
 
   local guildId = GetGuildId(slot)
 
   if not guildId or guildId == 0 then
-    return slot, nil
+    return slot, nil, channel
   end
 
-  return slot, GetGuildName(guildId)
+  return slot, GetGuildName(guildId), channel
 end
 
 local function GSC_PrintSlots()
@@ -116,7 +136,7 @@ local function GSC_OnChatMessage(eventCode, channelType, fromName, text, isCusto
     return
   end
 
-  local slot, guildName = GSC_GuildForChannel(channelType)
+  local slot, guildName, channel = GSC_GuildForChannel(channelType)
 
   if not slot or not GSC_IsTargetGuildName(guildName) then
     if slot and gscSavedVars.debugChat then
@@ -137,18 +157,29 @@ local function GSC_OnChatMessage(eventCode, channelType, fromName, text, isCusto
   end
 
   -- The add-on only captures TARGET_GUILD_NAME, so the guild does not need to be
-  -- repeated in every saved message.
+  -- repeated in every saved message. Officer chat shares the guild, so only the
+  -- channel is stored to tell the two conversations apart.
   local message = {
     sender = sender,
     timestamp = GetTimeStamp(),
     text = tostring(text or ""),
+    channel = channel,
   }
 
   gscSavedVars.messages[#gscSavedVars.messages + 1] = message
   GSC_TrimSavedMessages()
 
   if gscSavedVars.debugChat then
-    GSC_Print(GSC_TimeString(message.timestamp) .. " " .. message.sender .. ": " .. message.text)
+    GSC_Print(
+      "["
+        .. channel
+        .. "] "
+        .. GSC_TimeString(message.timestamp)
+        .. " "
+        .. message.sender
+        .. ": "
+        .. message.text
+    )
   end
 end
 
@@ -164,7 +195,7 @@ local function GSC_Status()
   local guildId, slot, guildName = GSC_FindTargetGuild()
 
   if guildId then
-    GSC_Print("Saving " .. tostring(guildName) .. " guild chat from guild slot " .. tostring(slot) .. ".")
+    GSC_Print("Saving " .. tostring(guildName) .. " guild and officer chat from guild slot " .. tostring(slot) .. ".")
   else
     GSC_Print("Guild not found: " .. TARGET_GUILD_NAME .. ". Nothing is being captured.")
     GSC_PrintSlots()
@@ -176,7 +207,14 @@ local function GSC_Status()
   local last = messages[#messages]
 
   if last then
-    GSC_Print("Last message: " .. tostring(last.sender) .. " at " .. GSC_TimeString(last.timestamp) .. ".")
+    GSC_Print(
+      "Last message: "
+        .. tostring(last.sender)
+        .. (last.channel == CHANNEL_OFFICER and " (officer)" or "")
+        .. " at "
+        .. GSC_TimeString(last.timestamp)
+        .. "."
+    )
   end
 end
 
@@ -237,7 +275,7 @@ local function OnAddonLoaded(eventCode, addonName)
   local guildId, slot, guildName = GSC_FindTargetGuild()
 
   if guildId then
-    GSC_Print("GuildSyncChat loaded. Saving " .. tostring(guildName) .. " guild chat from guild slot " .. tostring(slot) .. ".")
+    GSC_Print("GuildSyncChat loaded. Saving " .. tostring(guildName) .. " guild and officer chat from guild slot " .. tostring(slot) .. ".")
   else
     GSC_Print("GuildSyncChat loaded, but " .. TARGET_GUILD_NAME .. " is not in a guild slot yet.")
     GSC_PrintSlots()
