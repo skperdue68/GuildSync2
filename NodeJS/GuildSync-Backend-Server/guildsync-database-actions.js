@@ -5730,7 +5730,6 @@ export async function getMemberLinkOptions(applicationDB, payload = {}) {
     const names = source ? getDiscordNameCandidates(source) : [];
     return rosterRows
       .filter((row) => !isMemberLinkPairLinked(maps, row.account_name, discordUserId))
-      .filter((row) => !isMemberLinkPairBlocked(maps, row.account_name, discordUserId))
       .map((row) => {
         let best = { confidence: 0, matchField: '' };
         for (const name of names) {
@@ -5752,7 +5751,6 @@ export async function getMemberLinkOptions(applicationDB, payload = {}) {
   const sourceEso = accountName;
   return discordRows
     .filter((row) => !isMemberLinkPairLinked(maps, sourceEso, row.discord_id))
-    .filter((row) => !isMemberLinkPairBlocked(maps, sourceEso, row.discord_id))
     .map((row) => {
       let best = { confidence: 0, matchField: '' };
       for (const name of getDiscordNameCandidates(row)) {

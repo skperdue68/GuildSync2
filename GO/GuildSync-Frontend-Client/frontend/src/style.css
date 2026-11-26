@@ -6953,3 +6953,40 @@ body {
   color: #E5E7EB;
   font-weight: 700;
 }
+
+
+/* Member link cards must keep their content height inside the scrolling dialog. */
+.member-link-dialog-body > .member-link-dialog-section {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow-wrap: anywhere;
+}
+.member-link-dialog-body > .member-link-current-section {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #0b1429;
+  max-height: 40%;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.member-link-dialog-body .member-link-reminder-history,
+.member-link-dialog-body .member-link-reminder-opt-out {
+  line-height: 1.6;
+}
+.member-link-dialog-body .member-link-reminder-help {
+  margin: 8px 0 0;
+}
+.member-link-dialog-body .member-link-option-list {
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: min(34vh, 320px);
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .member-link-dialog {
+    height: calc(100dvh - 24px) !important;
+    max-height: calc(100dvh - 24px) !important;
+  }
+}
