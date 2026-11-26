@@ -138,6 +138,18 @@ test('the footer centres MOST RECENT DATA and right-aligns LAST SCREEN REFRESH',
   assert.match(ruleBody('.last-update'), /font-weight:\s*700/);
   assert.match(ruleBody('.footer-right'), /justify-content:\s*flex-end/);
 
+  // Both stamps are styled the same; only their placement differs.
+  assert.match(ruleBody('.latest-data'), /font-weight:\s*700/);
+  assert.match(ruleBody('.latest-data'), /color:\s*#e0f2fe/i);
+  for (const property of ['font-variant-numeric', 'text-transform', 'letter-spacing', 'white-space', 'font-weight', 'color']) {
+    const value = new RegExp(`${property}:\\s*([^;]+);`);
+    assert.equal(
+      ruleBody('.latest-data').match(value)?.[1],
+      ruleBody('.last-update').match(value)?.[1],
+      `${property} must match the refresh stamp`
+    );
+  }
+
   // Every load and every insert restamps the screen refresh.
   assert.match(client, /LAST SCREEN REFRESH: \$\{formatLocalDate\(new Date\(\)\)\}/);
   assert.match(client, /markLatest\(payload\.latest\);\n\n    if \(append\)|\n    markUpdated\(\);/);

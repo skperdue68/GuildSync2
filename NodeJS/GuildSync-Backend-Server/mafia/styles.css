@@ -440,8 +440,8 @@ input:focus-visible {
   left: 50%;
   transform: translateX(-50%);
   text-align: center;
-  color: #cbd5e1;
-  font-weight: 600;
+  color: #e0f2fe;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   text-transform: uppercase;
   letter-spacing: 0.3px;
