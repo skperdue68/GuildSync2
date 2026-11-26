@@ -67,6 +67,7 @@ import {
 import * as AppBridge from '../bindings/GuildSync/app.js';
 import {Browser, Events} from '@wailsio/runtime';
 import {createEventsOn} from './desktop-events.mjs';
+import {uploadGuildChatAndMaybeClear} from './chat-upload.js';
 const EventsOn = createEventsOn(Events);
 const BrowserOpenURL = url => Browser.OpenURL(url);
 
@@ -10591,39 +10592,28 @@ async function sendGuildSyncChatUpload(chatPayload) {
     throw new Error('GuildSync websocket is not connected. Guild chat was not cleared.');
   }
 
-  const response = await emitSocketWithAck('guildsync:sending-chat-data', chatPayload, 30000);
+  // The upload always happens; clearing GuildSyncChat.lua waits for ESO to close.
+  const outcome = await uploadGuildChatAndMaybeClear({
+    esoRunning: Boolean(esoRunningStatus.running),
+    upload: async () => {
+      const response = await emitSocketWithAck('guildsync:sending-chat-data', chatPayload, 30000);
 
-  if (!response?.ok) {
-    throw new Error(response?.message || response?.error || 'Backend rejected the guild chat payload. Messages were not cleared.');
-  }
+      if (!response?.ok) {
+        throw new Error(response?.message || response?.error || 'Backend rejected the guild chat payload. Messages were not cleared.');
+      }
 
-  if (nativeGeneration !== sessionGeneration || userSwitchTransition || guildSyncSession.user?.user_switch?.active) throw new Error('Account session changed before native commit.');
+      if (nativeGeneration !== sessionGeneration || userSwitchTransition || guildSyncSession.user?.user_switch?.active) throw new Error('Account session changed before native commit.');
 
-  // While ESO runs the add-on owns the file, so the messages stay in it and are
-  // uploaded (deduplicated by the backend) until ESO closes and they are cleared.
-  if (esoRunningStatus.running) {
-    addSystemMessage('chat-data-sent', (response.message || 'Guild chat sent to GuildSync backend.') +
-      ' GuildSyncChat.lua keeps the messages until ESO closes, then clears them.', {
-      ttlMs: TRANSIENT_MESSAGE_TTL_MS
-    });
-
-    return response;
-  }
-
-  const commitResult = await CommitGuildSyncChatData(
-    chatPayload.file_path || '',
-    chatPayload.file_name || ''
-  );
-
-  if (!commitResult?.ok) {
-    throw new Error(commitResult?.message || 'Backend confirmed guild chat, but the SavedVariables messages could not be cleared.');
-  }
-
-  addSystemMessage('chat-data-sent', response.message || 'Guild chat sent to GuildSync backend.', {
-    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      return response;
+    },
+    clear: () => CommitGuildSyncChatData(
+      chatPayload.file_path || '',
+      chatPayload.file_name || ''
+    ),
+    notify: (messageId, message) => addSystemMessage(messageId, message, {ttlMs: TRANSIENT_MESSAGE_TTL_MS})
   });
 
-  return response;
+  return outcome.response;
 }
 
 // ESO writes the add-on's delivery results (mailAck) only when it saves

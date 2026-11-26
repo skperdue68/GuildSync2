@@ -73,37 +73,39 @@ export function guildChatMessageHash({ guild, channel = 'guild', sender, text })
     .digest('hex');
 }
 
-// null until the column is known to exist, true once it does, false when the
-// database refuses the change. A failed ALTER must never lose an upload, so the
-// insert falls back to the guild-chat default instead.
-let guildChatChannelColumn = null;
+// Databases whose table already has the officer chat column. The startup schema
+// pass is the only place the column is added, so an upload never runs DDL.
+const guildChatChannelReady = new WeakSet();
 
-export async function ensureGuildChatSchema(db) {
+export async function ensureGuildChatSchema(db, {log = () => {}} = {}) {
+  if (guildChatChannelReady.has(db)) return;
+
   await db.query(GUILD_CHAT_SCHEMA);
-  if (guildChatChannelColumn === true) return;
 
   try {
     await db.query(GUILD_CHAT_CHANNEL_MIGRATION);
-    guildChatChannelColumn = true;
   } catch (error) {
-    // 1060 is MariaDB/MySQL's "duplicate column": the migration already ran.
+    // 1060 is MariaDB/MySQL's "duplicate column": the column is already there.
     if (Number(error?.errno) === 1060 || /duplicate column/i.test(String(error?.message || ''))) {
-      guildChatChannelColumn = true;
+      guildChatChannelReady.add(db);
       return;
     }
 
-    guildChatChannelColumn = false;
+    const detail = String(error?.message || error || 'unknown database error');
+    const code = error?.code ? ` [${error.code}]` : '';
+    const message = `Guild chat schema migration failed: the officer chat column could not be added${code} (${detail}). Fix the database permissions or table, then restart GuildSync.`;
+
+    log(message);
+    throw new Error(message);
   }
+
+  guildChatChannelReady.add(db);
 }
 
 // Looks up and inserts every report inside one transaction, so two clients
 // uploading at the same second cannot both pass the duplicate check.
 export async function ingestGuildChatMessages(db, payload = {}) {
   const entries = Array.isArray(payload?.entries) ? payload.entries : [];
-
-  if (entries.length > 0) {
-    await ensureGuildChatSchema(db);
-  }
 
   const guild = guildChatGuildKey(payload);
   const uploadedBy = Array.from(String(payload?.uploadedBy || '').trim()).slice(0, 255).join('');
@@ -115,9 +117,6 @@ export async function ingestGuildChatMessages(db, payload = {}) {
     chat_messages_inserted: 0,
     chat_messages_duplicates: 0,
     chat_messages_skipped: 0,
-    // False when the database refused the officer-chat column, so the caller can
-    // say why an officer line was stored as guild chat.
-    chat_channel_supported: guildChatChannelColumn !== false,
     // Ids of the rows this report created, so the live site can be handed the
     // exact records instead of re-reading the table.
     inserted_ids: []
@@ -160,10 +159,8 @@ export async function ingestGuildChatMessages(db, payload = {}) {
         continue;
       }
 
-      const storeChannel = guildChatChannelColumn !== false;
       const [insertResult] = await connection.execute(
-        storeChannel
-          ? `INSERT INTO guildsync_guild_chat_messages (
+        `INSERT INTO guildsync_guild_chat_messages (
           message_hash,
           guild,
           channel,
@@ -174,21 +171,8 @@ export async function ingestGuildChatMessages(db, payload = {}) {
           data_source,
           uploaded_by
         )
-        VALUES (?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`
-          : `INSERT INTO guildsync_guild_chat_messages (
-          message_hash,
-          guild,
-          sender,
-          message_text,
-          message_timestamp,
-          event_datetime,
-          data_source,
-          uploaded_by
-        )
-        VALUES (?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`,
-        storeChannel
-          ? [messageHash, guild, channel, sender, text, messageTimestamp, messageTimestamp, dataSource, uploadedBy]
-          : [messageHash, guild, sender, text, messageTimestamp, messageTimestamp, dataSource, uploadedBy]
+        VALUES (?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`,
+        [messageHash, guild, channel, sender, text, messageTimestamp, messageTimestamp, dataSource, uploadedBy]
       );
 
       result.chat_messages_inserted += 1;

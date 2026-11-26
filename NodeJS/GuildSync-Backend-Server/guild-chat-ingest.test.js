@@ -6,6 +6,7 @@ process.env.MARIADB_USER ||= 'test';
 process.env.MARIADB_PASSWORD ||= 'test';
 
 import {
+  ensureGuildChatSchema,
   normalizeGuildChatSender,
   normalizeGuildChatText,
   guildChatMessageHash,
@@ -149,9 +150,46 @@ test('guild chat ingestion dedupes reporters within 30 seconds but keeps a later
   });
   assert.equal(invalid.chat_messages_skipped, 3);
   assert.equal(invalid.chat_messages_inserted, 0);
+  assert.equal(db.schema.length, 0, 'an upload never runs schema changes');
+});
+
+test('the officer chat column is added at startup and a failure is loud', async () => {
+  const db = memoryDB();
+  const logs = [];
+
+  await ensureGuildChatSchema(db, {log: (message) => logs.push(message)});
+
+  assert.equal(db.schema.length, 2);
   assert.ok(db.schema[0].includes('CREATE TABLE IF NOT EXISTS guildsync_guild_chat_messages'));
-  assert.ok(db.schema[0].includes('channel VARCHAR(16) NOT NULL DEFAULT \'guild\''));
-  assert.ok(db.schema.some(sql => sql.includes('ADD COLUMN channel')));
+  assert.ok(db.schema[0].includes("channel VARCHAR(16) NOT NULL DEFAULT 'guild'"));
+  assert.ok(db.schema[1].includes('ADD COLUMN channel'));
+  assert.deepEqual(logs, [], 'a successful migration is quiet');
+
+  // The startup pass is once per database, not once per upload.
+  await ensureGuildChatSchema(db, {log: (message) => logs.push(message)});
+  assert.equal(db.schema.length, 2);
+
+  // A duplicate column means the migration already ran on an existing table.
+  const duplicate = {
+    async query(sql) {
+      if (sql.includes('ADD COLUMN')) throw Object.assign(new Error("Duplicate column name 'channel'"), {errno: 1060});
+    }
+  };
+  await ensureGuildChatSchema(duplicate);
+
+  const failing = {
+    async query(sql) {
+      if (sql.includes('ADD COLUMN')) {
+        throw Object.assign(new Error('ALTER command denied to user'), {code: 'ER_TABLEACCESS_DENIED_ERROR'});
+      }
+    }
+  };
+
+  await assert.rejects(
+    ensureGuildChatSchema(failing, {log: (message) => logs.push(message)}),
+    /Guild chat schema migration failed: the officer chat column could not be added \[ER_TABLEACCESS_DENIED_ERROR\] \(ALTER command denied to user\)/
+  );
+  assert.ok(logs.some((message) => /officer chat column could not be added/.test(message)), 'the failure is logged, not swallowed');
 });
 
 test('officer chat is stored as officer chat and never deduped against guild chat', async () => {

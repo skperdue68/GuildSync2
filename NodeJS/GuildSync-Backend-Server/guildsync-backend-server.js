@@ -962,8 +962,7 @@ function registerGuildSyncConnection(socket) {
           ok: true,
           kind: 'chat',
           file_name: fileName,
-          message: `GuildSyncChat.lua uploaded and processed. Entries: ${chatResult.chat_messages_received}, new: ${chatResult.chat_messages_inserted}, duplicate: ${chatResult.chat_messages_duplicates}.` +
-            (chatResult.chat_channel_supported === false ? ' Officer chat markers were stored as guild chat because the database column could not be added.' : ''),
+          message: `GuildSyncChat.lua uploaded and processed. Entries: ${chatResult.chat_messages_received}, new: ${chatResult.chat_messages_inserted}, duplicate: ${chatResult.chat_messages_duplicates}.`,
           ...chatResult
         });
         return;
