@@ -246,6 +246,23 @@ test('the card reports the kick outcome and any nickname change',()=>{
  const blocked=cardOf(membershipReplyMessage({eventId:'9',userId:'10',name:'Member',choice:'eso',at:100,result:{status:'review',nickname:{status:'skipped',reason:'Another member already uses that name.'}}},{guildName:'Guild'}));
  assert.equal(blocked.fields['Server nickname'],'Not changed — Another member already uses that name.');
  assert.equal(cardOf(membershipReplyMessage({eventId:'10',userId:'10',name:'Member',choice:'eso',at:100,result:{status:'linked',accountName:'A'}},{guildName:'Guild'})).fields['Server nickname'],undefined);
+ const notFound=cardOf(membershipReplyMessage({eventId:'11',userId:'10',name:'Member',choice:'eso',at:100,result:{status:'review',rosterMatch:'missing'}},{guildName:'Guild'}));
+ assert.equal(notFound.fields.Outcome,'Name not found on the current ESO roster — officer review needed');
+ assert.equal(notFound.embed.description,'**ESO account submitted for officer review**');
+ const ambiguous=cardOf(membershipReplyMessage({eventId:'12',userId:'10',name:'Member',choice:'eso',at:100,result:{status:'review',rosterMatch:'ambiguous'}},{guildName:'Guild'}));
+ assert.equal(ambiguous.fields.Outcome,'Name matches more than one roster member — officer review needed');
+});
+
+test('an ESO name the roster does not have is answered with an officer-review promise',async()=>{
+ let reply;
+ const {worker,nicknames}=fixture(async action=>action==='response'?{status:'review',rosterMatch:'missing',
+  message:'I cannot find that member name in Alphabet Mafia currently, but I will have an officer review your reply.',
+  rename:{allowed:false,reason:'That name is not on the current ESO roster.'}}:{ok:true});
+ await worker.interaction({customId:`gs-membership-rename:${job.id}:eso:NotOnRoster`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1100',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(nicknames,[],'a name that is not on the roster is never set as a nickname');
+ assert.match(reply,/cannot find that member name in Alphabet Mafia currently/);
+ assert.match(reply,/officer review/);
 });
 
 test('forwarding renders the approved embed card, names the server and member, and attaches a long reply',async()=>{

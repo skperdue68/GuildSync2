@@ -8,7 +8,8 @@ function responseHistoryText(choice,text,result={}) {
   const account=result.accountName?`@${String(result.accountName).trim().replace(/^@+/,'')}`:'';
   if(choice==='eso')return result.status==='linked'
     ?`Linked ESO account ${account}`
-    :`ESO account ${account||String(text||'').trim()} submitted for officer review`;
+    :`ESO account ${account||String(text||'').trim()}${result.rosterMatch==='missing'
+      ?' was not found on the current roster; officer review needed':' submitted for officer review'}`;
   if(choice==='community')return 'Still plays ESO but is not in the ESO guild; staying on Discord — account reminders stopped';
   if(choice==='not_playing')return 'Does not play ESO; staying on Discord — account reminders stopped';
   if(choice==='remove')return 'Asked to be removed from the Discord server — membership DMs stopped';
@@ -34,6 +35,21 @@ const OUTCOME_GRACE_SECONDS=45;
 const REMOVAL_STATUSES=new Set(['kicked','gone','failed','declined']);
 const NICKNAME_STATUSES=new Set(['set','skipped','failed','declined']);
 const outcomeText=value=>String(value??'').trim().slice(0,300);
+
+// The roster normally stores the bare account name, but a member may type the @ they
+// see in game and an older snapshot can keep one. Both spellings are compared against
+// both stored spellings, so an answer finds the same current member either way.
+const ROSTER_LOOKUP=`SELECT account_name FROM guildsync_roster_members WHERE in_roster=1 AND (
+  LOWER(TRIM(LEADING '@' FROM TRIM(account_name))) IN (?,?)
+  OR LOWER(TRIM(account_name)) IN (?,?))`;
+const rosterLookupArgs=value=>{
+  const bare=esoAccountKey(value);
+  return bare?[bare,'@'+bare,bare,'@'+bare]:null;
+};
+// Saying the name was not found is more useful than a generic review notice: the
+// member learns an officer will still look, instead of guessing whether it saved.
+const ROSTER_NOT_FOUND='I cannot find that member name in Alphabet Mafia currently, but I will have an officer review your reply.';
+const ROSTER_AMBIGUOUS='That name matches more than one current Alphabet Mafia member, so an officer will review your reply.';
 
 // The bot reports what Discord did; only known outcomes and bounded text are kept,
 // and a removal can never be attached to an ESO answer or the other way round.
@@ -351,10 +367,11 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
     return rows.map(row=>({...row,suggestedEsoAccountName:String(row.suggested_eso_account_name||'').trim()}));
   }
   async function autoLink(connection,userId,value) {
-    const name=esoAccountKey(value);
-    if(!name||name.length>64||/[\s@]/.test(name))return {status:'review',message:'That ESO account name needs officer review.'};
-    const [rows]=await connection.execute("SELECT account_name FROM guildsync_roster_members WHERE in_roster=1 AND LOWER(TRIM(LEADING '@' FROM TRIM(account_name)))=?",[name]);
-    if(rows.length!==1)return {status:'review',message:'No unique active roster match was found. Officers will review your reply.'};
+    const name=esoAccountKey(value),args=rosterLookupArgs(value);
+    if(!name||name.length>64||/[\s@]/.test(name)||!args)return {status:'review',message:'That ESO account name needs officer review.'};
+    const [rows]=await connection.execute(ROSTER_LOOKUP,args);
+    if(!rows.length)return {status:'review',rosterMatch:'missing',message:ROSTER_NOT_FOUND};
+    if(rows.length!==1)return {status:'review',rosterMatch:'ambiguous',message:ROSTER_AMBIGUOUS};
     const [links]=await connection.execute("SELECT * FROM guildsync_member_links WHERE LOWER(TRIM(LEADING '@' FROM TRIM(eso_account_name)))=? OR discord_user_id=?",[name,userId]);
     const same=links.find(l=>l.link_status==='linked'&&esoAccountKey(l.eso_account_name)===name&&l.discord_user_id===userId);
     if(same)return {status:'linked',accountName:rows[0].account_name,message:'Your accounts are already linked.'};
@@ -380,10 +397,11 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
   // when it is a unique active roster account and is not already linked to another
   // Discord member. The bot does the rename and reports the outcome back here.
   async function renameDecision(connection,userId,text) {
-    const name=esoAccountKey(text);
-    if(!name||name.length>32||/[\s@]/.test(name))return {allowed:false,reason:'That is not a usable ESO account name.'};
-    const [rows]=await connection.execute("SELECT account_name FROM guildsync_roster_members WHERE in_roster=1 AND LOWER(TRIM(LEADING '@' FROM TRIM(account_name)))=?",[name]);
-    if(rows.length!==1)return {allowed:false,reason:'No unique active roster match was found.'};
+    const name=esoAccountKey(text),args=rosterLookupArgs(text);
+    if(!name||name.length>32||/[\s@]/.test(name)||!args)return {allowed:false,reason:'That is not a usable ESO account name.'};
+    const [rows]=await connection.execute(ROSTER_LOOKUP,args);
+    if(!rows.length)return {allowed:false,reason:'That name is not on the current ESO roster.'};
+    if(rows.length!==1)return {allowed:false,reason:'That name matches more than one current roster member.'};
     const canonical=String(rows[0].account_name||'').trim().replace(/^@+/,'');
     const [links]=await connection.execute("SELECT * FROM guildsync_member_links WHERE LOWER(TRIM(LEADING '@' FROM TRIM(eso_account_name)))=? OR discord_user_id=?",[name,userId]);
     const sameName=links.filter(link=>esoAccountKey(link.eso_account_name)===name);
