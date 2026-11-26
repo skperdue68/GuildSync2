@@ -9792,6 +9792,7 @@ function openProfileMenu() {
   menu.classList.add('open');
   menu.setAttribute('aria-hidden', 'false');
   profileMenuOpen = true;
+  fitProfileMenuToSurface();
   void loadUserSwitchOptions();
 
   refreshProfileFileWatcherStatus();
@@ -9799,7 +9800,27 @@ function openProfileMenu() {
   setTimeout(() => {
     window.addEventListener('click', closeProfileMenuOnOutsideClick);
     window.addEventListener('keydown', closeProfileMenuOnEscape);
+    window.addEventListener('resize', fitProfileMenuToSurface);
   }, 0);
+}
+
+// The menu sits inside .main-surface, which clips overflow. A viewport-sized
+// max-height could leave the last options past the clipped edge where no
+// scrollbar appears, so size the menu to the space actually on screen.
+function fitProfileMenuToSurface() {
+  const menu = document.querySelector('#discordProfileMenu');
+  if (!menu || !profileMenuOpen) {
+    return;
+  }
+
+  const surface = menu.closest('.main-surface');
+  const bottom = Math.min(
+    window.innerHeight,
+    surface ? surface.getBoundingClientRect().bottom : window.innerHeight
+  );
+  const top = menu.getBoundingClientRect().top;
+
+  menu.style.maxHeight = `${Math.max(180, Math.floor(bottom - top - 16))}px`;
 }
 
 function closeProfileMenu(removeListeners = true) {
@@ -9814,6 +9835,7 @@ function closeProfileMenu(removeListeners = true) {
   if (removeListeners) {
     window.removeEventListener('click', closeProfileMenuOnOutsideClick);
     window.removeEventListener('keydown', closeProfileMenuOnEscape);
+    window.removeEventListener('resize', fitProfileMenuToSurface);
   }
 }
 
