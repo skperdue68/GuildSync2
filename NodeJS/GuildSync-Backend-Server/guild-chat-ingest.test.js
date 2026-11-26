@@ -299,6 +299,76 @@ test('a dropped GuildSyncChat file parses every message and channel', async () =
   assert.equal(data.entries[1].text, 'Yall are being waay too talkative tonight :)');
 });
 
+test('the reported 16 message GuildSyncChat file ingests with two officer messages', async () => {
+  const {parseGuildSyncChatSavedVarsLua} = await import('./guildsync-database-actions.js');
+  const db = memoryDB();
+
+  const data = parseGuildSyncChatSavedVarsLua(`GuildSyncChat =
+{
+    ["Default"] =
+    {
+        ["@evainefaye"] =
+        {
+            ["$AccountWide"] =
+            {
+                ["NA Megaserver"] =
+                {
+                    ["version"] = 1,
+                    ["debugChat"] = false,
+                    ["messages"] =
+                    {
+                        [1] = { ["text"] = "now that i set my steam deck to default controls, every time i press (A) button, i risk opening some screen-filling web page...", ["timestamp"] = 1795650771, ["sender"] = "@lesidhe", ["guild"] = "alphabet_mafia" },
+                        [2] = { ["text"] = "can you disable that function in the setting?", ["timestamp"] = 1795652137, ["sender"] = "@amyrain", ["guild"] = "alphabet_mafia" },
+                        [3] = { ["text"] = "Yall are being waay too talkative tonight :) ", ["timestamp"] = 1795652978, ["sender"] = "@evainefaye", ["channel"] = "officer" },
+                        [4] = { ["text"] = "Hi hello :3", ["timestamp"] = 1795653002, ["sender"] = "@RainStarlight", ["channel"] = "guild" },
+                        [5] = { ["text"] = "Hey Rain :)", ["timestamp"] = 1795653006, ["sender"] = "@evainefaye", ["channel"] = "guild" },
+                        [6] = { ["text"] = "awoooooooooo", ["timestamp"] = 1795653009, ["sender"] = "@Vatrys", ["channel"] = "guild" },
+                        [7] = { ["text"] = "hey was busy reading up HoF trial for tonight :P", ["timestamp"] = 1795653019, ["sender"] = "@Merlin6990", ["channel"] = "guild" },
+                        [8] = { ["text"] = "good evening mafia!", ["timestamp"] = 1795653024, ["sender"] = "@goatsoap", ["channel"] = "guild" },
+                        [9] = { ["text"] = "Looks like we are down two dps for tonights beginner friendly trial its a good chaance to slide in there and put your name ont he roster :)", ["timestamp"] = 1795653062, ["sender"] = "@evainefaye", ["channel"] = "officer" },
+                        [10] = { ["text"] = "dlc trial? if so i couldnt", ["timestamp"] = 1795653077, ["sender"] = "@Vatrys", ["channel"] = "guild" },
+                        [11] = { ["text"] = "So I'm actually remote, I'm using Steam link to play", ["timestamp"] = 1795653089, ["sender"] = "@RainStarlight", ["channel"] = "guild" },
+                        [12] = { ["text"] = "im looking forward to the trial tonight", ["timestamp"] = 1795653092, ["sender"] = "@amyrain", ["channel"] = "guild" },
+                        [13] = { ["text"] = "I think we re in Halls of Fabrication tongiht.", ["timestamp"] = 1795653103, ["sender"] = "@evainefaye", ["channel"] = "guild" },
+                        [14] = { ["text"] = "And I've got a little latency, but I promise to try to do a good trial job tonight :3", ["timestamp"] = 1795653123, ["sender"] = "@RainStarlight", ["channel"] = "guild" },
+                        [15] = { ["text"] = "Which I think is considered base game these days,, I can't keep track", ["timestamp"] = 1795653135, ["sender"] = "@evainefaye", ["channel"] = "guild" },
+                        [16] = { ["text"] = "brb", ["timestamp"] = 1795653139, ["sender"] = "@evainefaye", ["channel"] = "guild" },
+                    },
+                },
+            },
+        },
+    },
+}
+`);
+
+  assert.equal(data.entries_count, 16);
+
+  const result = await ingestGuildChatMessages(db, {
+    guildId: '761817',
+    uploadedBy: 'evainefaye',
+    source: 'web-drag-drop',
+    entries: data.entries
+  });
+
+  assert.equal(result.chat_messages_received, 16);
+  assert.equal(result.chat_messages_inserted, 16);
+  assert.equal(result.chat_messages_skipped, 0);
+  assert.equal(result.chat_messages_duplicates, 0);
+  assert.equal(db.rows.length, 16);
+
+  const officer = db.rows.filter((row) => row.channel === 'officer');
+  assert.equal(officer.length, 2);
+  assert.deepEqual(officer.map((row) => row.sender), ['@evainefaye', '@evainefaye']);
+  assert.deepEqual(officer.map((row) => row.text), [
+    'Yall are being waay too talkative tonight :)',
+    'Looks like we are down two dps for tonights beginner friendly trial its a good chaance to slide in there and put your name ont he roster :)'
+  ]);
+
+  assert.equal(db.rows.filter((row) => row.channel === 'guild').length, 14);
+  assert.equal(db.rows[0].sender, '@lesidhe', 'the oldest message is stored first');
+  assert.equal(db.rows[15].text, 'brb');
+});
+
 test('a dropped reminder file parses its delivery results', async () => {
   const {parseGuildSyncDiscordReminderSavedVarsLua} = await import('./guildsync-database-actions.js');
 
