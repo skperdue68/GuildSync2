@@ -4,9 +4,9 @@ import {createMembershipDMService,registerMembershipDMSocket,registerMembershipD
 import {dmConfig} from './membership-dm-config.js';
 import {createMembershipDMWorker} from '../GuildSync-Discord-Bot/src/membership-dms.js';
 
-function fixture({legacy}={}) {
+function fixture({legacy,roster:seedRoster}={}) {
  let time=1800000000,json=JSON.stringify(legacy||{preferences:{},events:[]}),snapshot;
- let links=[],roster=[{account_name:'ESOName'}],upserts=0,roleId='';
+ let links=[],roster=seedRoster||[{account_name:'ESOName'}],upserts=0,roleId='';
  const memberHistory=[];
  const responses=new Map(),results=new Map();
  const members=[{id:'10',name:'Alice'},{id:'20',name:'Zebra'}];
@@ -28,7 +28,11 @@ function fixture({legacy}={}) {
     return [{affectedRows:1}];
    }
    if(sql.includes('SELECT d.discord_id AS id'))return [members.filter(m=>!links.some(l=>l.discord_user_id===m.id&&l.link_status==='linked'))];
-   if(sql.startsWith('SELECT account_name FROM guildsync_roster_members'))return [roster.filter(r=>r.account_name.toLowerCase()===args[0])];
+   if(sql.startsWith('SELECT account_name FROM guildsync_roster_members')){
+    const keys=new Set(args.map(value=>String(value).toLowerCase()));
+    return [roster.filter(r=>{const stored=String(r.account_name).trim();
+     return keys.has(stored.toLowerCase())||keys.has(stored.replace(/^@+/,'').toLowerCase());})];
+   }
    if(sql.startsWith('SELECT * FROM guildsync_member_links'))return [links.filter(l=>l.eso_account_name.toLowerCase()===args[0]||l.discord_user_id===args[1])];
    if(sql.startsWith('DELETE FROM guildsync_member_links')){
     const before=links.length;
@@ -215,6 +219,36 @@ test('a submitted ESO name becomes a rename only when the roster and links allow
  const nobody=await unknown.request('response',{deliveryId:unknown.result('10').delivery_id,userId:'10',eventId:'422',choice:'eso',text:'@Nobody'});
  assert.equal(nobody.rename.allowed,false);
  assert.match(nobody.rename.reason,/roster/);
+});
+
+test('an ESO name missing from the current Alphabet Mafia roster is reported for officer review',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ const result=await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'450',choice:'eso',text:'@NotOnRoster'});
+ assert.equal(result.status,'review');assert.equal(result.rosterMatch,'missing');
+ assert.match(result.message,/cannot find that member name in Alphabet Mafia currently, but I will have an officer review your reply/);
+ assert.equal(f.upserts(),0,'a name that is not on the roster never links');
+ assert.equal(f.responses().length,1,'the answer is still kept for the officers');
+ assert.match(f.history().filter(args=>args[4]==='membership_dm_response').at(-1)[7],/was not found on the current roster/);
+ await f.worker.forwardOne();
+ const fields=Object.fromEntries(f.forwards[0].embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(fields.Outcome,'Name not found on the current ESO roster — officer review needed');
+ assert.match(fields['Member response'],/@NotOnRoster/);
+});
+
+test('the roster check matches a current member typed with or without @, including a stored @',async()=>{
+ for(const [stored,typed] of [['ESOName','@ESOName'],['ESOName','ESOName'],['@ESOName','ESOName']]) {
+  const f=fixture({roster:[{account_name:stored}]});
+  await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+  const result=await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'460',choice:'eso',text:typed});
+  assert.equal(result.status,'linked',`${stored} stored, ${typed} typed`);
+  assert.equal(f.upserts(),1,`${stored} stored, ${typed} typed`);
+ }
+ const duplicate=fixture({roster:[{account_name:'Alex'},{account_name:'@Alex'}]});
+ await duplicate.service.command('1','officer','start');duplicate.advance(600);await duplicate.worker.sendNext();
+ const ambiguous=await duplicate.request('response',{deliveryId:duplicate.result('10').delivery_id,userId:'10',eventId:'461',choice:'eso',text:'@Alex'});
+ assert.equal(ambiguous.status,'review');assert.equal(ambiguous.rosterMatch,'ambiguous');
+ assert.match(ambiguous.message,/more than one current Alphabet Mafia member/);
+ assert.equal(duplicate.upserts(),0,'an ambiguous name is never linked');
 });
 
 test('another recipient cannot submit a form; existing account ownership routes the answer to review',async()=>{

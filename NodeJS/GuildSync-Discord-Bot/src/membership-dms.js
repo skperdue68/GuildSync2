@@ -81,9 +81,14 @@ function replyFacts(event,guildName) {
  if(event.choice==='eso'){
   const account=String(event.result?.accountName||'').trim().replace(/^@+/,'')||typed.replace(/^@+/,'');
   const login=account?`I'm in ${safeText(guildName)} — my ESO login is @${fenceText(account)}`:'';
-  return event.result?.status==='linked'
-    ?{summary:`Linked ESO account${account?` @${safeText(account)}`:''}`,outcome:`Linked to${account?` @${safeText(account)}`:' the ESO account'}`,box:login}
-    :{summary:'ESO account submitted for officer review',outcome:'ESO account submitted for officer review',box:login};
+  if(event.result?.status==='linked')return {summary:`Linked ESO account${account?` @${safeText(account)}`:''}`,outcome:`Linked to${account?` @${safeText(account)}`:' the ESO account'}`,box:login};
+  // The backend separates "no such current member" from "more than one match", so
+  // officers know why this answer needs them instead of a generic review notice.
+  const roster=event.result?.rosterMatch;
+  return {summary:'ESO account submitted for officer review',
+    outcome:roster==='missing'?'Name not found on the current ESO roster — officer review needed'
+      :roster==='ambiguous'?'Name matches more than one roster member — officer review needed'
+      :'ESO account submitted for officer review',box:login};
  }
  if(event.choice==='community')return {summary:`Still plays ESO, not in ${safeText(guildName)}`,outcome:'Preference saved — membership DMs stopped',box:''};
  if(event.choice==='not_playing')return {summary:'No longer plays ESO — staying on Discord',outcome:'Preference saved — membership DMs stopped',box:''};
