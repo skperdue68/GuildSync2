@@ -5,7 +5,7 @@ export const DEFAULT_MEMBERSHIP_DM=[
  '',
  'You’re welcome to remain here even if you aren’t an {guild} guild member, no longer play ESO, or aren’t active on this server. Some areas may be reserved for current guild members in the future.',
  '',
- 'If you currently belong to {guild} in ESO, please provide your ESO account name, including @, or update your server nickname to match it so we can link your accounts.{suggested_link}',
+ 'If you currently belong to {guild} in ESO, please provide your ESO account name, including @, so we can link your accounts. We recommend matching your Discord nickname to it and can offer to do that for you, but it is not required.{suggested_link}',
  '',
  'Otherwise, choose the option below that best describes your situation, and we’ll stop sending membership reminders. If you’d prefer to leave this Discord, select “Request removal” and an officer will handle your request.',
  '',

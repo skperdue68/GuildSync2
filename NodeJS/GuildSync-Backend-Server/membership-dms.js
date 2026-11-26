@@ -31,7 +31,7 @@ export {dmConfig};
 // answer is stored. The officer card waits out this grace period so it reports what
 // actually happened instead of claiming an officer still has to act.
 const OUTCOME_GRACE_SECONDS=45;
-const REMOVAL_STATUSES=new Set(['kicked','gone','failed']);
+const REMOVAL_STATUSES=new Set(['kicked','gone','failed','declined']);
 const NICKNAME_STATUSES=new Set(['set','skipped','failed','declined']);
 const outcomeText=value=>String(value??'').trim().slice(0,300);
 
@@ -588,7 +588,9 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         // Pressing Request removal twice must not queue two kicks or two cards; the
         // first removal answer wins and the second press is told it was recorded.
         if(!job.isTest&&choice==='remove'){
-          const previousRemoval=state.events.find(entry=>!entry.isTest&&entry.choice==='remove'&&entry.deliveryId===deliveryId&&String(entry.userId)===String(userId));
+          const previousRemoval=state.events.find(entry=>!entry.isTest&&entry.choice==='remove'
+            &&entry.result?.removal?.status!=='declined'
+            &&entry.deliveryId===deliveryId&&String(entry.userId)===String(userId));
           if(previousRemoval)return {...previousRemoval.result,duplicate:true};
         }
         let result={status:'received',message:'Thank you. Your response will be forwarded to the guild officers.'};
@@ -640,6 +642,42 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
           roleAction:result.status==='linked'?'remove':'add',
           roleStatus:!job.isTest&&config.communityRoleId&&(['community','not_playing'].includes(choice)||result.status==='linked')?'pending':'sent',
           forwardStatus:'pending',retryAt:now()+(awaitingDiscordOutcome?OUTCOME_GRACE_SECONDS:0)});
+        pruneMembershipState(state);
+        return result;
+      });
+    },
+    // A member can change their mind at the confirmation. Nothing is kicked and no
+    // preference or link changes; officers get a card saying the request was declined.
+    async removalDeclined(guildId,{userId,deliveryId,eventId}={}) {
+      const stale=message=>Object.assign(Error(message),{code:'STALE_OUTCOME'});
+      if(!/^\d+$/.test(String(eventId)))throw stale('Invalid removal response.');
+      return atomic(guildId,async(state,connection,config)=>{
+        const testJob=state.testDeliveries?.[deliveryId];
+        const [recordUserId,record]=Object.entries(state.results||{}).find(([,row])=>row.deliveryId===deliveryId)||[];
+        const job=testJob||(record?{id:deliveryId,userId:recordUserId,name:record.name,status:record.status,isTest:false,deliveryId}:null);
+        if(!job||String(job.userId)!==String(userId)||!['sent','uncertain','sending'].includes(job.status))
+          throw Object.assign(Error('No membership DM for this user was found.'),{code:'NO_MEMBERSHIP_DM'});
+        if(job.isTest)throw stale('Test responses never change the Discord server.');
+        const existing=state.events.find(entry=>entry.eventId===eventId);
+        if(existing)return existing.result;
+        const result={status:'removal declined',removal:{status:'declined'},
+          message:'You are still on the server. Officers will see that you asked to be removed and then chose to stay.'};
+        await connection.execute(`INSERT INTO guildsync_membership_dm_responses(guild_id,discord_user_id,display_name,eso_account_name,choice,response_text,responded_at)
+          VALUES(?,?,?,?,?,?,?)
+          ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),choice=VALUES(choice),
+          response_text=VALUES(response_text),responded_at=VALUES(responded_at)`,
+          [guildId,String(userId),String(job.name||'').slice(0,255),null,'remove','',new Date(now()*1000)]);
+        await saveResponseOutcome(connection,guildId,userId,{removal:{status:'declined',
+          reason:'The member asked to be removed, then declined the confirmation.'}});
+        try{
+          await recordDiscordMemberHistoryEvent(connection,{discordId:userId,eventType:'membership_dm_response',
+            fieldName:'membership_dm_response',newValue:'Asked to be removed, then declined the confirmation — not removed',
+            source:'discord',at:new Date(now()*1000)});
+        }catch{}
+        state.events.push({eventId,deliveryId,userId:String(userId),name:job.name,choice:'remove',text:'',at:now(),result,
+          isTest:false,destinationType:config.destinationId?config.destinationType:job.destinationType,
+          destinationId:config.destinationId||job.destinationId,roleId:'',roleAction:'add',roleStatus:'sent',
+          forwardStatus:'pending',retryAt:now()});
         pruneMembershipState(state);
         return result;
       });
@@ -708,6 +746,7 @@ export function registerMembershipDMSocket(socket,service,{guildId,onLinked=asyn
       if(result.status==='linked'||['community','not_playing','remove'].includes(p.choice))await onLinksChanged();
       return result;
     },    outcome:p=>service.outcome(guildId,p),
+    'removal-declined':p=>service.removalDeclined(guildId,p),
     'claim-forward':()=>service.claimForward(guildId),
     'finish-forward':p=>service.finishForward(guildId,p.eventId,p.token,p.success,p.roleSuccess)};
   socket.on('guildsync:membership-dm',async(payload={},callback)=>{

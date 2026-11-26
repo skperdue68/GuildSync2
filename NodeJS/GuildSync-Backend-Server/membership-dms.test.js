@@ -59,7 +59,8 @@ test('the default membership DM explains the status check, the no-removal promis
  assert.match(template,/updating our membership records/);
  assert.match(template,/Some areas may be reserved for current guild members/);
  assert.match(template,/provide your ESO account name, including @/);
- assert.match(template,/update your server nickname/);
+ assert.match(template,/matching your Discord nickname/i);
+ assert.match(template,/not required/);
  assert.match(template,/Your responses will be forwarded to guild officers\./);
  assert.match(template,/--\{guild\} Consigliere/);
  assert.match(template,/\{suggested_link\}/);

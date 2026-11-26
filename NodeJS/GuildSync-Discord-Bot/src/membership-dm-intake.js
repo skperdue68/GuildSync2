@@ -5,7 +5,7 @@ import {randomUUID} from 'node:crypto';
 // A saved answer and the Discord outcome it produced share the same Discord event
 // ID, so the outcome gets its own key instead of overwriting the answer.
 export function membershipIntakeKey(event) {
-  return String(event?.payload?.eventId??'')+(event?.kind==='outcome'?'-outcome':'');
+  return String(event?.payload?.eventId??'')+(event?.kind?'-'+event.kind:'');
 }
 
 export function createMemoryDMIntake() {
@@ -17,7 +17,7 @@ export function createMemoryDMIntake() {
 // not lose replies already received by the bot; server event IDs deduplicate replay.
 export function createFileDMIntake(directory) {
   const root=path.resolve(directory);
-  const file=id=>{if(!/^\d+(-outcome)?$/.test(String(id)))throw Error('Invalid Discord intake event ID.');return path.join(root,String(id)+'.json');};
+  const file=id=>{if(!/^\d+(-outcome|-removal-declined)?$/.test(String(id)))throw Error('Invalid Discord intake event ID.');return path.join(root,String(id)+'.json');};
   return {
     async put(event){
       await fs.mkdir(root,{recursive:true,mode:0o700});
@@ -33,7 +33,7 @@ export function createFileDMIntake(directory) {
       let names;
       try{names=await fs.readdir(root);}catch(error){if(error.code==='ENOENT')return [];throw error;}
       const events=[];
-      for(const name of names.filter(name=>/^\d+(-outcome)?\.json$/.test(name)).sort().slice(0,250))events.push(JSON.parse(await fs.readFile(path.join(root,name),'utf8')));
+      for(const name of names.filter(name=>/^\d+(-outcome|-removal-declined)?\.json$/.test(name)).sort().slice(0,250))events.push(JSON.parse(await fs.readFile(path.join(root,name),'utf8')));
       return events;
     },
     async remove(id){await fs.unlink(file(id)).catch(error=>{if(error.code!=='ENOENT')throw error;});}

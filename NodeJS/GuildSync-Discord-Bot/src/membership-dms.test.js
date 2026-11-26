@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {membershipDMMessage,membershipReplyMessage,createMembershipDMWorker,formatMembershipStatus} from './membership-dms.js';
-import {createMemoryDMIntake} from './membership-dm-intake.js';
+import {createMemoryDMIntake,membershipIntakeKey} from './membership-dm-intake.js';
 const cardOf=payload=>{const embed=payload.embeds[0].toJSON();return {embed,fields:Object.fromEntries(embed.fields.map(field=>[field.name,field.value]))};};
 
 const job={id:'12345678-1234-1234-1234-123456789abc',userId:'10',name:'Member',token:'claim'};
@@ -121,13 +121,57 @@ test('a removal request asks for confirmation before anything is recorded or kic
   [`gs-membership-confirm:${job.id}:remove`,'Yes, remove me',4],
   [`gs-membership-cancel:${job.id}:remove`,'Keep me on the server',2]]);
 });
-test('declining the confirmation leaves the member on the server untouched',async()=>{
+test('declining the confirmation keeps the member and tells the officers',async()=>{
  const calls=[];let reply;
- const {worker,kicks}=fixture(async(action)=>{calls.push(action);return {};});
+ const {worker,kicks}=fixture(async(action,payload)=>{calls.push([action,payload]);return {};});
  await worker.interaction({customId:`gs-membership-cancel:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
-  reply:async value=>{reply=value;}});
- assert.deepEqual(calls,[]);assert.deepEqual(kicks,[]);
- assert.match(reply.content,/still on the server/);
+  user:{id:'10'},id:'1007',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,[]);
+ assert.deepEqual(calls.map(([action])=>action),['removal-declined']);
+ assert.deepEqual([calls[0][1].deliveryId,calls[0][1].userId,calls[0][1].eventId],[job.id,'10','1007']);
+ assert.match(reply,/still on the server/);assert.match(reply,/asked to be removed/);
+});
+test('a declined removal is queued when the backend is unreachable and replayed later',async()=>{
+ let offline=true;const replayed=[];
+ const {worker,intake,kicks}=fixture(async(action,payload)=>{
+  if(action==='removal-declined'){
+   if(offline)throw Object.assign(Error('Backend disconnected'),{code:'ECONNREFUSED'});
+   replayed.push(payload);return {};
+  }
+  return {};
+ });
+ let reply;
+ await worker.interaction({customId:`gs-membership-cancel:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1008',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,[]);
+ assert.match(reply,/saved for retry/);
+ const pending=await intake.list();
+ assert.equal(pending[0].kind,'removal-declined');assert.equal(pending[0].payload.eventId,'1008');
+ offline=false;
+ await worker.retryIntake();
+ assert.deepEqual(replayed,[{deliveryId:job.id,userId:'10',eventId:'1008'}]);
+ assert.deepEqual(await intake.list(),[]);
+});
+test('a confirmed removal still kicks with User Request while the backend is down',async()=>{
+ const {worker,kicks,intake}=fixture(async()=>{throw Object.assign(Error('Backend disconnected'),{code:'ECONNREFUSED'});});
+ let reply;
+ await worker.interaction({customId:`gs-membership-confirm:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1006',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,['User Request'],'the confirmation is enough to kick');
+ const pending=(await intake.list()).map(membershipIntakeKey).sort();
+ assert.deepEqual(pending,['1006','1006-outcome']);
+ const outcome=(await intake.list()).find(event=>event.kind==='outcome');
+ assert.deepEqual(outcome.payload,{eventId:'1006',removal:{status:'kicked'}});
+ assert.match(reply,/removed from the server at your request/);
+});
+test('a test delivery never kicks even when the backend cannot confirm it is a test',async()=>{
+ const {worker,kicks,intake}=fixture(async()=>{throw Object.assign(Error('Backend disconnected'),{code:'ECONNREFUSED'});});
+ let reply;
+ await worker.interaction({customId:`gs-membership-confirm:test:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1009',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,[]);
+ assert.equal((await intake.list()).filter(event=>event.kind==='outcome').length,0);
+ assert.match(reply,/saved and will be forwarded/);
 });
 test('confirming removal kicks with the User Request reason and records the outcome',async()=>{
  const calls=[];let reply;
@@ -191,6 +235,8 @@ test('a nickname another member already uses is never applied',async()=>{
 test('the card reports the kick outcome and any nickname change',()=>{
  const kicked=cardOf(membershipReplyMessage({eventId:'5',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal requested',removal:{status:'kicked'}}},{guildName:'Guild'}));
  assert.equal(kicked.fields.Outcome,'Removed from the server (reason: User Request)');
+ const declined=cardOf(membershipReplyMessage({eventId:'7',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal declined',removal:{status:'declined'}}},{guildName:'Guild'}));
+ assert.equal(declined.fields.Outcome,'Not removed — the member declined the confirmation. Officers decide any follow-up.');
  const failed=cardOf(membershipReplyMessage({eventId:'6',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal requested',removal:{status:'failed',reason:'Missing Kick Members permission.'}}},{guildName:'Guild'}));
  assert.match(failed.fields.Outcome,/could not remove them: Missing Kick Members permission\. Officer action needed\./);
  const pending=cardOf(membershipReplyMessage({eventId:'7',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal requested',removal:{status:'pending'}}},{guildName:'Guild'}));

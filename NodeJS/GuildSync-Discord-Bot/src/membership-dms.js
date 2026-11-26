@@ -12,12 +12,13 @@ export function membershipDMMessage(job,config,{name,guildName}={}) {
   const forwardNotice='Your responses will be forwarded to guild officers.';
   const footer=(config.template.includes(forwardNotice)?'':'\n\n'+forwardNotice)
     +(job.isTest?'\n\nThis is a test; replies will not change account links, preferences or roles.':'');
+  const marker=job.isTest?':test':'';
   const content=(job.isTest?'[TEST] ':'')+config.template.replace('{suggested_link}',suggestionLine)
     .replace(/\{(name|guild)\}/g,(_,key)=>safeText(key==='name'?name:guildName))+footer;
   if(content.length>2000)throw Error('Rendered membership DM exceeds Discord’s message limit.');
   return {content,allowedMentions:{parse:[]},nonce:nonce(job.id),enforceNonce:true,
     components:[new ActionRowBuilder().addComponents(choices.map(([choice,label])=>new ButtonBuilder()
-      .setCustomId(`gs-membership:${job.id}:${choice}`).setLabel(label).setStyle(choice==='eso'?ButtonStyle.Primary:ButtonStyle.Secondary)))]};
+      .setCustomId(`gs-membership${marker}:${job.id}:${choice}`).setLabel(label).setStyle(choice==='eso'?ButtonStyle.Primary:ButtonStyle.Secondary)))]};
 }
 
 export function membershipDMRequest(socket,guildId,action,payload={}) {
@@ -73,6 +74,7 @@ const fenceText=value=>String(value||'').replace(/```/g,"'''");
 // The embed's left bar carries the result, so an officer reads the outcome at a glance.
 const replyColors={linked:0x57f287,saved:0x5865f2,removal:0xed4245,review:0xfee75c,test:0x99aab5};
 const replyTone=event=>event.isTest?'test':event.result?.status==='linked'?'linked'
+ :event.result?.removal?.status==='declined'?'review'
  :event.choice==='remove'?'removal':['community','not_playing'].includes(event.choice)?'saved':'review';
 function replyFacts(event,guildName) {
  const typed=String(event.text||'').trim();
@@ -88,6 +90,9 @@ function replyFacts(event,guildName) {
  if(event.choice==='remove'){
   // The card reports the kick the bot actually attempted, not just the request.
   const removal=event.result?.removal||null;
+  // Declining is a decision to stay, so the officers are told and nothing is removed.
+  if(removal?.status==='declined')return {summary:'Asked to be removed, then chose to stay',
+    outcome:'Not removed — the member declined the confirmation. Officers decide any follow-up.',box:''};
   const outcome=removal?.status==='kicked'?'Removed from the server (reason: User Request)'
    :removal?.status==='gone'?'Already left the server'
    :removal?.status==='failed'?`Removal recorded — the bot could not remove them: ${safeText(removal.reason||'unknown reason').replace(/\.+$/,'')}. Officer action needed.`
@@ -212,18 +217,19 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
     }catch(error){
       if(error.code==='NO_MEMBERSHIP_DM'){await intake.remove(payload.eventId);throw error;}
       log('Membership reply saved locally for retry: '+error.message);
-      return {message:'Your response is saved and will be forwarded when GuildSync reconnects.'};
+      return {queued:true,message:'Your response is saved and will be forwarded when GuildSync reconnects.'};
     }
   }
   async function retryIntake() {
     // An answer is replayed before the Discord outcome it belongs to, so the outcome
     // attaches to the queued event in the same pass and the officer card is correct.
+    const order=event=>event.kind==='outcome'?1:0;
     const events=(await intake.list()).filter(event=>event.guildId===guildId)
-      .sort((a,b)=>Number(a.kind==='outcome')-Number(b.kind==='outcome'));
+      .sort((a,b)=>order(a)-order(b));
     for(const event of events){
+      const action=event.kind==='outcome'?'outcome':event.kind==='removal-declined'?'removal-declined':'response';
       try{
-        if(event.kind==='outcome')await request('outcome',event.payload);
-        else await request('response',event.payload);
+        await request(action,event.payload);
       }catch(error){
         if(error.code==='NO_MEMBERSHIP_DM'||error.code==='STALE_OUTCOME'){
           await intake.remove(membershipIntakeKey(event));continue;
@@ -241,14 +247,16 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
     return destination.send(membershipReplyMessage(response,{guildName:guild?.name||String(guildId),repostedBy:officerName,
       nonceKey:`repost-${response.userId}-${response.at}-${Date.now()}`}));
   }
-  const removeConfirmRow=deliveryId=>new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`gs-membership-confirm:${deliveryId}:remove`).setLabel('Yes, remove me').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId(`gs-membership-cancel:${deliveryId}:remove`).setLabel('Keep me on the server').setStyle(ButtonStyle.Secondary));
+  // Test deliveries carry a marker in every button, so the bot knows a confirmation
+  // came from a test DM even when the backend cannot be reached to say so.
+  const removeConfirmRow=(deliveryId,marker='')=>new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`gs-membership-confirm${marker}:${deliveryId}:remove`).setLabel('Yes, remove me').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`gs-membership-cancel${marker}:${deliveryId}:remove`).setLabel('Keep me on the server').setStyle(ButtonStyle.Secondary));
   // A nickname is the member's own identity, so it is offered as a choice. Declining
   // still records the ESO answer and link.
-  const nameConsentRow=(deliveryId,name)=>new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`gs-membership-rename:${deliveryId}:eso:${name}`).setLabel('Yes, change my nickname').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`gs-membership-keepname:${deliveryId}:eso:${name}`).setLabel('No, keep my name').setStyle(ButtonStyle.Secondary));
+  const nameConsentRow=(deliveryId,name,marker='')=>new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`gs-membership-rename${marker}:${deliveryId}:eso:${name}`).setLabel('Yes, change my nickname').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`gs-membership-keepname${marker}:${deliveryId}:eso:${name}`).setLabel('No, keep my name').setStyle(ButtonStyle.Secondary));
   // The requested audit reason is the only text a moderator sees in Discord's audit log.
   async function kickForRemoval(userId) {
     try {
@@ -302,20 +310,35 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       }
     }
   }
+  // A declined removal is still worth telling the officers about, so it is queued too.
+  async function declineRemoval(payload) {
+    const message='You are still on the server. Officers will see that you asked to be removed and then chose to stay.';
+    try { await request('removal-declined',payload); return message; }
+    catch(error) {
+      if(error.code==='NO_MEMBERSHIP_DM'||error.code==='STALE_OUTCOME')return 'You are still on the server.';
+      try { await intake.put({kind:'removal-declined',payload,guildId}); return message+' Your answer is saved for retry.'; }
+      catch(storeError) { log('Membership removal decline could not be saved: '+storeError.message);return 'You are still on the server.'; }
+    }
+  }
   async function interaction(interaction) {
-    const match=/^gs-membership(-confirm|-cancel|-rename|-keepname)?:([0-9a-f-]{36}):(eso|community|not_playing|remove|other)(?::([A-Za-z0-9_-]{1,32}))?$/i.exec(interaction.customId||'');
+    const match=/^gs-membership(-confirm|-cancel|-rename|-keepname)?(?::(test))?:([0-9a-f-]{36}):(eso|community|not_playing|remove|other)(?::([A-Za-z0-9_-]{1,32}))?$/i.exec(interaction.customId||'');
     if(!match||interaction.inGuild?.())return false;
-    const [,step,deliveryId,choice,consentName]=match;
+    const [,step,marker,deliveryId,choice,consentName]=match,isTest=marker==='test',markerSuffix=isTest?':test':'';
     try{
       // Removal is the only irreversible answer, so it asks once more before the bot
       // kicks anyone. Nothing is recorded or changed until the member confirms.
       if(interaction.isButton()&&step==='-cancel'){
-        await interaction.reply({content:'No changes were made. You are still on the server.',allowedMentions:{parse:[]}});
+        if(isTest){
+          await interaction.reply({content:'No changes were made. You are still on the server; test answers are not recorded.',allowedMentions:{parse:[]}});
+          return true;
+        }
+        await interaction.deferReply();
+        await interaction.editReply(await declineRemoval({deliveryId,userId:interaction.user.id,eventId:interaction.id}));
         return true;
       }
       if(interaction.isButton()&&!step&&choice==='remove'){
         await interaction.reply({content:'This removes you from the Discord server and cannot be undone here. Confirm only if you want to leave.',
-          components:[removeConfirmRow(deliveryId)],allowedMentions:{parse:[]}});
+          components:[removeConfirmRow(deliveryId,markerSuffix)],allowedMentions:{parse:[]}});
         return true;
       }
       // The typed ESO name is offered as a nickname choice before anything is saved,
@@ -324,8 +347,8 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
         const typed=String(interaction.fields.getTextInputValue('response')||'').trim().replace(/^@+/,'');
         const name=typed.replace(/[^A-Za-z0-9_-]/g,'').slice(0,32);
         if(name){
-          await interaction.reply({content:`We can also set your Discord server nickname to @${name}. Your ESO answer is sent to the officers either way.`,
-            components:[nameConsentRow(deliveryId,name)],allowedMentions:{parse:[]}});
+          await interaction.reply({content:`Your ESO answer is sent to the officers either way. We recommend matching your Discord nickname to ${name} so members recognize you, but it is not required. Shall we set it for you?`,
+            components:[nameConsentRow(deliveryId,name,markerSuffix)],allowedMentions:{parse:[]}});
           return true;
         }
       }
@@ -343,8 +366,10 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
         text:consent===undefined?(interaction.isModalSubmit()?interaction.fields.getTextInputValue('response'):''):consentName,
         ...(consent===undefined?{}:{nicknameConsent:consent})});
       let note='';
-      // Only a real delivery is acted on: test responses must never kick or rename.
-      if(step==='-confirm'&&choice==='remove'&&result?.status==='removal requested'&&!result.duplicate){
+      // Test deliveries are known from the button itself, so a confirmed removal still
+      // kicks while the backend is unreachable; the report is queued for replay.
+      if(step==='-confirm'&&choice==='remove'&&!isTest&&!result?.duplicate
+        &&(result?.status==='removal requested'||result?.queued)){
         const removal=await kickForRemoval(interaction.user.id);
         await reportOutcome(interaction.id,{removal});
         note=removal.status==='kicked'?' You have been removed from the server at your request.'

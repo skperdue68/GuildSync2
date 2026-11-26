@@ -143,6 +143,29 @@ test('the officer card reports the kick the bot performed, and mismatched outcom
  const note=f.history().filter(args=>args[4]==='membership_dm_outcome').at(-1);
  assert.deepEqual([note[0],note[7]],['10','Removed from the Discord server (reason: User Request)']);
 });
+test('a member who declines the removal confirmation stays, and officers are told',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ f.link();
+ const result=await f.request('removal-declined',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'420'});
+ assert.equal(result.status,'removal declined');
+ assert.equal(f.state().preferences['10'],undefined,'declining never opts the member out');
+ assert.deepEqual(f.links(),['10'],'the ESO link is untouched');
+ const event=f.state().events.at(-1);
+ assert.deepEqual([event.choice,event.result.removal.status],['remove','declined']);
+ assert.ok(event.retryAt<=1800000601,'the card is forwarded without waiting for a Discord action');
+ f.advance(1);await f.worker.forwardOne();assert.equal(f.forwards.length,1);
+ const fields=Object.fromEntries(f.forwards[0].embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(fields.Outcome,'Not removed — the member declined the confirmation. Officers decide any follow-up.');
+ assert.match(f.history().filter(args=>args[4]==='membership_dm_response').at(-1)[7],/declined the confirmation/);
+ const repost=await f.request('repost',{actorId:'officer',userId:'10'});
+ assert.equal(repost.response.result.removal.status,'declined');
+ // Changing their mind later is a fresh, real removal request.
+ const confirm=await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'421',choice:'remove'});
+ assert.equal(confirm.status,'removal requested');assert.equal(confirm.duplicate,undefined);
+ // A test delivery cannot record a decline for the officers either.
+ const work=await f.request('test',{actorId:'officer',targetId:'20'});
+ await assert.rejects(()=>f.request('removal-declined',{deliveryId:work.job.id,userId:'20',eventId:'422'}),/Test responses/);
+});
 test('a declined nickname change still links the account and is kept for repost',async()=>{
  const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
  const result=await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'430',choice:'eso',text:'@ESOName',nicknameConsent:false});
