@@ -98,6 +98,25 @@ test('the range covers whole days and has no clock controls', () => {
   assert.match(client, /params\.set\('end', String\(state\.end\)\)/);
 });
 
+test('the to date can never be earlier than the from date', () => {
+  assert.match(client, /function syncRangeBounds\(\) \{/);
+  assert.match(client, /elements\.rangeEnd\.min = start;/);
+  assert.match(client, /if \(start && end && end < start\) elements\.rangeEnd\.value = start;/);
+  assert.match(client, /elements\.rangeEnd\.removeAttribute\('min'\)/);
+
+  // Both date fields clamp the to date before the range is read.
+  const handler = client.slice(client.indexOf("for (const input of [elements.rangeStart, elements.rangeEnd])"), client.indexOf("elements.rangeClear.addEventListener"));
+  assert.match(handler, /syncRangeBounds\(\);/);
+  assert.ok(handler.indexOf('syncRangeBounds();') < handler.indexOf('readRange()'));
+
+  // A single day is a whole day: 00:00:00 to 23:59:59.
+  assert.match(client, /dayBoundary\(startValue, false\)/);
+  assert.match(client, /dayBoundary\(endValue, true\)/);
+
+  // The from date may still move later; only the to date is bounded.
+  assert.doesNotMatch(html, /id="range-start"[^>]*min=|id="range-start"[^>]*max=/);
+});
+
 test('the range label is centred and the buttons read CLEAR and REFRESH', () => {
   assert.match(ruleBody('.range-field'), /align-items:\s*center/);
   assert.match(html, />CLEAR</);

@@ -159,6 +159,18 @@ function clearUpdateBanner() {
   elements.refresh.classList.remove('refresh-button-attention');
 }
 
+// The to date may equal the from date (that day still runs to 23:59:59) but it
+// may never be earlier. Moving the from date past the to date pulls the end
+// date onto it instead of leaving an impossible range behind.
+function syncRangeBounds() {
+  const start = elements.rangeStart.value.trim();
+  const end = elements.rangeEnd.value.trim();
+
+  elements.rangeEnd.min = start;
+
+  if (start && end && end < start) elements.rangeEnd.value = start;
+}
+
 function readRange() {
   const startValue = elements.rangeStart.value.trim();
   const endValue = elements.rangeEnd.value.trim();
@@ -673,6 +685,8 @@ elements.search.addEventListener('input', () => {
 
 for (const input of [elements.rangeStart, elements.rangeEnd]) {
   input.addEventListener('change', () => {
+    syncRangeBounds();
+
     if (readRange()) {
       hidePill();
       loadPage({offset: 0});
@@ -683,6 +697,7 @@ for (const input of [elements.rangeStart, elements.rangeEnd]) {
 elements.rangeClear.addEventListener('click', () => {
   elements.rangeStart.value = '';
   elements.rangeEnd.value = '';
+  elements.rangeEnd.removeAttribute('min');
   state.start = null;
   state.end = null;
   setError('');
@@ -739,9 +754,11 @@ if (focusId != null) {
   elements.rangeEnd.value = '';
   state.start = null;
   state.end = null;
+  elements.rangeEnd.removeAttribute('min');
 } else {
   applyDefaultRange();
   readRange();
+  syncRangeBounds();
 }
 
 connectLiveFeed();
