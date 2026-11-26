@@ -1,3 +1,4 @@
+import {renderDiscordNames} from './web/src/member-discovery.js';
 import {canUseUserSwitch} from './web/src/user-switch-controls.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +23,7 @@ for(const file of ['./web/src/main.js','../../GO/GuildSync-Frontend-Client/front
   ctx.canManageGuildSyncLinks=()=>true;assert.match(vm.runInContext('renderMemberLinksRows()',ctx),/data-accept-member-candidate/);
  });
  test(`${file}: Viewer can read notes and linked identities without editing forms`,()=>{
-  const ctx=context({canEditGuildSyncData:()=>false,rosterNotesDialogAccountName:'@Test',rosterNotesDialogError:'',renderRosterNotesRows:()=>'<tr><td>Existing note</td></tr>',renderRosterNotesForm:()=>'<textarea id="editNote"></textarea>',getMemberLinkMatchedField:()=>'',renderMemberLinkCurrentStatus:()=> 'Linked',formatMemberLinkMethodForDisplay:String});
+  const ctx=context({canEditGuildSyncData:()=>false,rosterNotesDialogAccountName:'@Test',rosterNotesDialogError:'',renderRosterNotesRows:()=>'<tr><td>Existing note</td></tr>',renderRosterNotesForm:()=>'<textarea id="editNote"></textarea>',renderDiscordNames,getMemberLinkMatchedField:()=>'',renderMemberLinkCurrentStatus:()=> 'Linked',formatMemberLinkMethodForDisplay:String});
   vm.runInContext(functions(['renderRosterNotesDialog','renderMemberLinkCurrentCard','renderMemberLinkDialogOptions']),ctx);
   const notes=vm.runInContext('renderRosterNotesDialog()',ctx);assert.match(notes,/Existing note/);assert.doesNotMatch(notes,/editNote/);
   const link=vm.runInContext('renderMemberLinkCurrentCard({eso_account_name:"@Test",discord_username:"Member",link_status:"linked"})',ctx);assert.match(link,/@Test|Member/);assert.doesNotMatch(link,/data-unlink-dialog/);assert.equal(vm.runInContext('renderMemberLinkDialogOptions()',ctx),'');
