@@ -85,10 +85,25 @@ function replyFacts(event,guildName) {
  }
  if(event.choice==='community')return {summary:`Still plays ESO, not in ${safeText(guildName)}`,outcome:'Preference saved — membership DMs stopped',box:''};
  if(event.choice==='not_playing')return {summary:'No longer plays ESO — staying on Discord',outcome:'Preference saved — membership DMs stopped',box:''};
- if(event.choice==='remove')return {summary:'Asked to be removed from the Discord server',outcome:'Removal requested — an officer still needs to remove them',box:''};
+ if(event.choice==='remove'){
+  // The card reports the kick the bot actually attempted, not just the request.
+  const removal=event.result?.removal||null;
+  const outcome=removal?.status==='kicked'?'Removed from the server (reason: User Request)'
+   :removal?.status==='gone'?'Already left the server'
+   :removal?.status==='failed'?`Removal recorded — the bot could not remove them: ${safeText(removal.reason||'unknown reason').replace(/\.+$/,'')}. Officer action needed.`
+   :'Removal requested — an officer still needs to remove them';
+  return {summary:'Asked to be removed from the Discord server',outcome,box:''};
+ }
  return {summary:'Sent another response',outcome:'Response forwarded',box:typed};
 }
 const FIELD_LIMIT=1024;
+// The nickname is set by the bot from a submitted ESO name when the roster match is
+// unique and the name is not linked elsewhere. The card says exactly what happened.
+function nicknameSummary(nickname) {
+ if(!nickname)return '';
+ if(nickname.status==='set')return `Set to @${safeText(nickname.name||'')}`;
+ return `Not changed — ${safeText(nickname.reason||'the name could not be verified')}`;
+}
 // The officer-facing embed card: the member's display name is the title, a bold
 // summary opens the description, and the routing facts are fields. The same
 // renderer serves live forwarding and an on-demand repost of a stored reply.
@@ -112,6 +127,7 @@ export function membershipReplyMessage(event,{guildName='Guild',repostedBy='',no
  }
  embed.addFields({name:'Outcome',value:(event.isTest?'Test response — nothing changed':outcome).slice(0,FIELD_LIMIT),inline:false});
  if(event.roleNote)embed.addFields({name:'Community role',value:String(event.roleNote).replace(/^\n+/,'').slice(0,FIELD_LIMIT),inline:false});
+ if(event.result?.nickname)embed.addFields({name:'Server nickname',value:nicknameSummary(event.result.nickname).slice(0,FIELD_LIMIT),inline:false});
  if(repostedBy)embed.addFields({name:'Reposted by',value:safeText(repostedBy).slice(0,FIELD_LIMIT),inline:false});
  return payload;
 }
@@ -214,11 +230,67 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
     return destination.send(membershipReplyMessage(response,{guildName:guild?.name||String(guildId),repostedBy:officerName,
       nonceKey:`repost-${response.userId}-${response.at}-${Date.now()}`}));
   }
+  const removeConfirmRow=deliveryId=>new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`gs-membership-confirm:${deliveryId}:remove`).setLabel('Yes, remove me').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`gs-membership-cancel:${deliveryId}:remove`).setLabel('Keep me on the server').setStyle(ButtonStyle.Secondary));
+  // The requested audit reason is the only text a moderator sees in Discord's audit log.
+  async function kickForRemoval(userId) {
+    try {
+      const guild=await client.guilds.fetch(guildId);
+      const member=await guild.members.fetch(userId);
+      await member.kick('User Request');
+      return {status:'kicked'};
+    } catch(error) {
+      if(error?.code===10007)return {status:'gone'};
+      if(error?.code===50013)return {status:'failed',reason:'The bot needs Kick Members and a role above this member.'};
+      return {status:'failed',reason:String(error?.message||'The kick failed.').slice(0,300)};
+    }
+  }
+  // Discord allows duplicate nicknames, so the guild itself has to be checked before
+  // renaming: no other member may already use the submitted name.
+  async function nicknameIsTaken(guild,userId,name) {
+    const wanted=String(name||'').trim().replace(/^@+/,'').toLowerCase();
+    if(!wanted)return true;
+    let members=guild.members.cache;
+    if(!members?.size)members=await guild.members.fetch();
+    return [...members.values()].some(member=>String(member.id)!==String(userId)
+      &&[member.nickname,member.displayName,member.user?.username,member.user?.globalName]
+        .some(value=>String(value||'').trim().replace(/^@+/,'').toLowerCase()===wanted));
+  }
+  async function setNicknameForEso(userId,name) {
+    try {
+      const guild=await client.guilds.fetch(guildId);
+      const member=await guild.members.fetch(userId);
+      if(guild.ownerId&&String(guild.ownerId)===String(userId))return {status:'skipped',reason:'The server owner’s nickname cannot be changed.'};
+      if(await nicknameIsTaken(guild,userId,name))return {status:'skipped',reason:'Another member already uses that name.'};
+      await member.setNickname(name,'GuildSync membership DM: ESO account name');
+      return {status:'set',name};
+    } catch(error) {
+      if(error?.code===10007)return {status:'skipped',reason:'No longer in the Discord server.'};
+      if(error?.code===50013)return {status:'failed',reason:'The bot needs Manage Nicknames and a role above this member.'};
+      return {status:'failed',reason:String(error?.message||'The nickname could not be set.').slice(0,300)};
+    }
+  }
+  async function reportOutcome(eventId,outcome) {
+    try { await request('outcome',{eventId,...outcome}); }
+    catch(error) { log('Membership Discord outcome could not be recorded: '+error.message); }
+  }
   async function interaction(interaction) {
-    const match=/^gs-membership:([0-9a-f-]{36}):(eso|community|not_playing|remove|other)$/i.exec(interaction.customId||'');
+    const match=/^gs-membership(-confirm|-cancel)?:([0-9a-f-]{36}):(eso|community|not_playing|remove|other)$/i.exec(interaction.customId||'');
     if(!match||interaction.inGuild?.())return false;
-    const [,deliveryId,choice]=match;
+    const [,step,deliveryId,choice]=match;
     try{
+      // Removal is the only irreversible answer, so it asks once more before the bot
+      // kicks anyone. Nothing is recorded or changed until the member confirms.
+      if(interaction.isButton()&&step==='-cancel'){
+        await interaction.reply({content:'No changes were made. You are still on the server.',allowedMentions:{parse:[]}});
+        return true;
+      }
+      if(interaction.isButton()&&!step&&choice==='remove'){
+        await interaction.reply({content:'This removes you from the Discord server and cannot be undone here. Confirm only if you want to leave.',
+          components:[removeConfirmRow(deliveryId)],allowedMentions:{parse:[]}});
+        return true;
+      }
       if(interaction.isButton()&&(choice==='eso'||choice==='other')){
         const input=new TextInputBuilder().setCustomId('response').setLabel(choice==='eso'?'Your ESO login (include @)':'Your response')
           .setStyle(choice==='eso'?TextInputStyle.Short:TextInputStyle.Paragraph).setRequired(true).setMaxLength(choice==='eso'?64:4000);
@@ -230,7 +302,27 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       await interaction.deferReply();
       const result=await saveResponse({deliveryId,choice,userId:interaction.user.id,eventId:interaction.id,
         text:interaction.isModalSubmit()?interaction.fields.getTextInputValue('response'):''});
-      await interaction.editReply(result.message);
+      let note='';
+      // Only a real delivery is acted on: test responses must never kick or rename.
+      if(step==='-confirm'&&choice==='remove'&&result?.status==='removal requested'&&!result.duplicate){
+        const removal=await kickForRemoval(interaction.user.id);
+        await reportOutcome(interaction.id,{removal});
+        note=removal.status==='kicked'?' You have been removed from the server at your request.'
+          :removal.status==='gone'?' You were already no longer in the server.'
+          :' Your request was recorded; an officer will finish the removal.';
+      }
+      if(choice==='eso'&&!step){
+        const rename=result?.rename;
+        if(rename?.allowed){
+          const nickname=await setNicknameForEso(interaction.user.id,rename.name);
+          await reportOutcome(interaction.id,{nickname});
+          note=nickname.status==='set'?` Your server nickname is now @${nickname.name}.`
+            :` Your nickname was not changed: ${nickname.reason}`;
+        } else if(rename&&!rename.allowed){
+          note=` Your nickname was not changed: ${rename.reason}`;
+        }
+      }
+      await interaction.editReply(`${result?.message||'Your response has been sent to the guild officers.'}${note}`);
       return true;
     }catch(error){
       const content='Could not save this response: '+error.message;

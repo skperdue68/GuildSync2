@@ -27,6 +27,26 @@ function preferenceHistoryText(value) {
 import {dmConfig} from './membership-dm-config.js';
 export {dmConfig};
 
+// A removal request and an ESO nickname are carried out in Discord seconds after the
+// answer is stored. The officer card waits out this grace period so it reports what
+// actually happened instead of claiming an officer still has to act.
+const OUTCOME_GRACE_SECONDS=45;
+const REMOVAL_STATUSES=new Set(['kicked','gone','failed']);
+const NICKNAME_STATUSES=new Set(['set','skipped','failed']);
+const outcomeText=value=>String(value??'').trim().slice(0,300);
+
+// The bot reports what Discord did; only known outcomes and bounded text are kept,
+// and a removal can never be attached to an ESO answer or the other way round.
+export function cleanMembershipOutcome(value) {
+  if(!value||typeof value!=='object')return null;
+  const removal=value.removal&&REMOVAL_STATUSES.has(String(value.removal.status))
+    ?{status:String(value.removal.status),reason:outcomeText(value.removal.reason)||null}:null;
+  const nickname=value.nickname&&NICKNAME_STATUSES.has(String(value.nickname.status))
+    ?{status:String(value.nickname.status),name:outcomeText(value.nickname.name)||null,
+      reason:outcomeText(value.nickname.reason)||null}:null;
+  return removal||nickname?{removal,nickname}:null;
+}
+
 // One row per member keeps the per-guild JSON small: send dates, the last
 // delivery outcome and its reason live in guildsync_membership_dm_results, so
 // the document no longer grows with every attempt.
@@ -348,6 +368,22 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
   // ESO account, so an existing pair is removed whenever that answer is recorded.
   // An officer's block or manual unlink is a decision, not a match result, so an
   // unavailable answer removes matches without overruling that officer.
+  // A submitted ESO name may also become the member's server nickname, but only
+  // when it is a unique active roster account and is not already linked to another
+  // Discord member. The bot does the rename and reports the outcome back here.
+  async function renameDecision(connection,userId,text) {
+    const name=esoAccountKey(text);
+    if(!name||name.length>32||/[\s@]/.test(name))return {allowed:false,reason:'That is not a usable ESO account name.'};
+    const [rows]=await connection.execute("SELECT account_name FROM guildsync_roster_members WHERE in_roster=1 AND LOWER(TRIM(LEADING '@' FROM TRIM(account_name)))=?",[name]);
+    if(rows.length!==1)return {allowed:false,reason:'No unique active roster match was found.'};
+    const canonical=String(rows[0].account_name||'').trim().replace(/^@+/,'');
+    const [links]=await connection.execute("SELECT * FROM guildsync_member_links WHERE LOWER(TRIM(LEADING '@' FROM TRIM(eso_account_name)))=? OR discord_user_id=?",[name,userId]);
+    const sameName=links.filter(link=>esoAccountKey(link.eso_account_name)===name);
+    if(sameName.some(link=>Number(link.auto_link_blocked)))return {allowed:false,reason:'An officer restriction blocks that ESO account.'};
+    if(sameName.some(link=>link.link_status==='linked'&&String(link.discord_user_id)!==String(userId)))
+      return {allowed:false,reason:'That ESO account is already linked to another Discord member.'};
+    return {allowed:true,name:canonical};
+  }
   async function removeMemberLinks(connection,userId) {
     const [result]=await connection.execute("DELETE FROM guildsync_member_links WHERE discord_user_id=? AND auto_link_blocked=0 AND COALESCE(link_method,'')<>'manual_unlink' AND link_status NOT IN ('blocked','unlinked')",[String(userId)]);
     return Number(result?.affectedRows||0);
@@ -528,10 +564,20 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         if(!job||job.userId!==userId||!['sent','uncertain','sending'].includes(job.status))throw Object.assign(Error('No membership DM for this user was found.'),{code:'NO_MEMBERSHIP_DM'});
         const existing=state.events.find(e=>e.eventId===eventId);
         if(existing)return existing.result;
+        // Pressing Request removal twice must not queue two kicks or two cards; the
+        // first removal answer wins and the second press is told it was recorded.
+        if(!job.isTest&&choice==='remove'){
+          const previousRemoval=state.events.find(entry=>!entry.isTest&&entry.choice==='remove'&&entry.deliveryId===deliveryId&&String(entry.userId)===String(userId));
+          if(previousRemoval)return {...previousRemoval.result,duplicate:true};
+        }
         let result={status:'received',message:'Thank you. Your response will be forwarded to the guild officers.'};
         if(job.isTest)result={status:'test',message:'Test response received. No account link, preference or role was changed. Officers will receive this test response.'};
         else {
-          if(choice==='eso'){result=await autoLink(connection,userId,text);if(result.status==='linked')delete state.preferences[userId];}
+          if(choice==='eso'){
+            result=await autoLink(connection,userId,text);
+            if(result.status==='linked')delete state.preferences[userId];
+            result.rename=await renameDecision(connection,userId,text);
+          }
           if(choice==='community'||choice==='not_playing'){
             state.preferences[userId]=choice;
             result={status:choice,message:'Thank you. You can remain on Discord, and these account reminders will stop.',
@@ -542,7 +588,7 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
           if(choice==='remove'){
             state.preferences[userId]='opt_out';
             result={status:'removal requested',message:'Your request to be removed from the Discord server has been sent to the guild officers.',
-              linksRemoved:await removeMemberLinks(connection,userId)};
+              removal:{status:'pending'},linksRemoved:await removeMemberLinks(connection,userId)};
           }
         }
         if(!job.isTest&&(['community','not_playing','remove'].includes(choice)||result.status==='linked')){
@@ -558,14 +604,43 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
             fieldName:'membership_dm_response',newValue:responseHistoryText(choice,text,result)
               +(result.linksRemoved?' — existing ESO/Discord link removed':''),source:'discord',at:new Date(now()*1000)});
         }catch{}
+        // The kick and the nickname are carried out by the bot immediately after
+        // this call returns, so their events wait briefly for the reported outcome.
+        const awaitingDiscordOutcome=!job.isTest&&(choice==='remove'||(choice==='eso'&&Boolean(result.rename?.allowed)));
         state.events.push({eventId,deliveryId,userId,name:job.name,choice,text:String(text),at:now(),result,
           isTest:Boolean(job.isTest),destinationType:config.destinationId?config.destinationType:job.destinationType,destinationId:config.destinationId||job.destinationId,
           roleId:!job.isTest&&(['community','not_playing'].includes(choice)||result.status==='linked')?config.communityRoleId:'',
           roleAction:result.status==='linked'?'remove':'add',
           roleStatus:!job.isTest&&config.communityRoleId&&(['community','not_playing'].includes(choice)||result.status==='linked')?'pending':'sent',
-          forwardStatus:'pending',retryAt:now()});
+          forwardStatus:'pending',retryAt:now()+(awaitingDiscordOutcome?OUTCOME_GRACE_SECONDS:0)});
         pruneMembershipState(state);
         return result;
+      });
+    },
+    // The bot reports what Discord actually did for a queued answer: the kick for a
+    // removal request, or the nickname it set from a submitted ESO account name.
+    async outcome(guildId,{eventId,removal,nickname}={}) {
+      const clean=cleanMembershipOutcome({removal,nickname});
+      if(!clean||!/^\d+$/.test(String(eventId)))throw Error('Invalid membership response outcome.');
+      return atomic(guildId,async(state,connection)=>{
+        const event=state.events.find(entry=>String(entry.eventId)===String(eventId));
+        if(!event)throw Error('That membership response is no longer queued.');
+        if(event.isTest)throw Error('Test responses never change the Discord server.');
+        if(clean.removal&&event.choice!=='remove')throw Error('Removal outcomes only apply to removal requests.');
+        if(clean.nickname&&event.choice!=='eso')throw Error('Nickname outcomes only apply to ESO account answers.');
+        event.result={...event.result,...(clean.removal?{removal:clean.removal}:{}),...(clean.nickname?{nickname:clean.nickname}:{})};
+        event.retryAt=now();
+        const note=clean.removal
+          ?clean.removal.status==='kicked'?'Removed from the Discord server (reason: User Request)'
+            :clean.removal.status==='gone'?'Already left the Discord server'
+            :'Removal could not be completed by the bot: '+(clean.removal.reason||'unknown reason')
+          :clean.nickname.status==='set'?`Server nickname set to @${clean.nickname.name||'the submitted name'}`
+            :`Server nickname not changed: ${clean.nickname.reason||'unknown reason'}`;
+        try{
+          await recordDiscordMemberHistoryEvent(connection,{discordId:event.userId,eventType:'membership_dm_outcome',
+            fieldName:'membership_dm_outcome',newValue:note,source:'guildsync',at:new Date(now()*1000)});
+        }catch{}
+        return {ok:true,message:note};
       });
     },
     async claimForward(guildId){return atomic(guildId,(state,_connection,config)=>{
@@ -601,7 +676,8 @@ export function registerMembershipDMSocket(socket,service,{guildId,onLinked=asyn
       // Linking and marking a member unavailable both change the link lists.
       if(result.status==='linked'||['community','not_playing','remove'].includes(p.choice))await onLinksChanged();
       return result;
-    },'claim-forward':()=>service.claimForward(guildId),
+    },    outcome:p=>service.outcome(guildId,p),
+    'claim-forward':()=>service.claimForward(guildId),
     'finish-forward':p=>service.finishForward(guildId,p.eventId,p.token,p.success,p.roleSuccess)};
   socket.on('guildsync:membership-dm',async(payload={},callback)=>{
     try{
