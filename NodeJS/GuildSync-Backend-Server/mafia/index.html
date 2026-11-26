@@ -30,28 +30,18 @@
     <section class="toolbar" aria-label="Chat filters">
       <label class="search-field">
         <span class="field-label">Search</span>
-                  <input id="search-input" type="search" placeholder="Message text…" autocomplete="off" spellcheck="false">
+        <input id="search-input" type="search" placeholder="Message text…" autocomplete="off" spellcheck="false">
       </label>
       <div class="range-field">
-        <span class="field-label">Date range <span class="field-hint">24-hour</span></span>
+        <span class="field-label">Date range <span class="field-hint">whole days</span></span>
         <div class="range-inputs">
           <label class="range-input">
             <span>From</span>
             <input id="range-start" type="date">
-            <span class="time-selects">
-              <select id="range-start-hour" class="time-select" aria-label="From hour, 24-hour" disabled></select>
-              <span class="time-separator" aria-hidden="true">:</span>
-              <select id="range-start-minute" class="time-select" aria-label="From minutes" disabled></select>
-            </span>
           </label>
           <label class="range-input">
             <span>To</span>
             <input id="range-end" type="date">
-            <span class="time-selects">
-              <select id="range-end-hour" class="time-select" aria-label="To hour, 24-hour" disabled></select>
-              <span class="time-separator" aria-hidden="true">:</span>
-              <select id="range-end-minute" class="time-select" aria-label="To minutes" disabled></select>
-            </span>
           </label>
           <button id="range-clear" class="clear-button" type="button">Clear</button>
         </div>
@@ -59,6 +49,7 @@
     </section>
 
     <section class="table-card">
+      <button id="new-messages-pill" class="new-pill" type="button" hidden></button>
       <div class="table-scroll" id="table-scroll">
         <table class="chat-table">
           <thead>
@@ -78,11 +69,14 @@
         </table>
       </div>
       <div class="table-footer">
-        <span id="table-summary">Loading…</span>
-        <span id="table-error" class="table-error" role="alert" hidden></span>
-        <span class="footer-times">
-          <span id="latest-data" class="latest-data">Most recent data: —</span>
-          <span id="last-update" class="last-update">Last update: —</span>
+        <span class="footer-left">
+          <span id="table-summary">Loading…</span>
+          <button id="load-older" class="pager-button" type="button" hidden>Load older</button>
+        </span>
+        <span id="latest-data" class="latest-data">MOST RECENT DATA: —</span>
+        <span class="footer-right">
+          <span id="table-error" class="table-error" role="alert" hidden></span>
+          <span id="last-update" class="last-update">LAST SCREEN REFRESH: —</span>
         </span>
       </div>
     </section>

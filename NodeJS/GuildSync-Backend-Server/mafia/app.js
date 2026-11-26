@@ -5,8 +5,9 @@ const SORT_LABELS = {
   sender: 'Sender',
   message: 'Message'
 };
-const PAGE_LIMIT = 500;
-const DEFAULT_CLOCK = '00';
+const PAGE_SIZE = 500;
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+const HASH_MESSAGE = /^#msg-(\d{1,15})$/;
 
 const state = {
   sort: 'time',
@@ -16,6 +17,9 @@ const state = {
   end: null,
   total: 0,
   latest: 0,
+  offset: 0,
+  loaded: 0,
+  pendingAbove: 0,
   ids: new Set()
 };
 
@@ -28,12 +32,10 @@ const elements = {
   tableScroll: document.getElementById('table-scroll'),
   search: document.getElementById('search-input'),
   rangeStart: document.getElementById('range-start'),
-  rangeStartHour: document.getElementById('range-start-hour'),
-  rangeStartMinute: document.getElementById('range-start-minute'),
   rangeEnd: document.getElementById('range-end'),
-  rangeEndHour: document.getElementById('range-end-hour'),
-  rangeEndMinute: document.getElementById('range-end-minute'),
   rangeClear: document.getElementById('range-clear'),
+  loadOlder: document.getElementById('load-older'),
+  pill: document.getElementById('new-messages-pill'),
   refresh: document.getElementById('refresh-button'),
   banner: document.getElementById('update-banner'),
   bannerText: document.getElementById('update-banner-text'),
@@ -76,52 +78,26 @@ function dateInputValue(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-// The clock is a picker, not a typed field: 00-23 hours and 00-59 minutes, so it
-// can never fall back to the reader's locale AM/PM rendering.
-function fillTimeOptions() {
-  const hours = Array.from({length: 24}, (_value, index) => pad(index));
-  const minutes = Array.from({length: 60}, (_value, index) => pad(index));
-
-  for (const select of [elements.rangeStartHour, elements.rangeEndHour]) {
-    select.replaceChildren(...hours.map(value => new Option(value, value)));
-  }
-
-  for (const select of [elements.rangeStartMinute, elements.rangeEndMinute]) {
-    select.replaceChildren(...minutes.map(value => new Option(value, value)));
-  }
-}
-
-// The page opens on today's messages: from today 00:00 to tomorrow 00:00.
+// The page opens on today's messages, starting at midnight.
 function applyDefaultRange() {
   const today = new Date();
   const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
 
   elements.rangeStart.value = dateInputValue(today);
   elements.rangeEnd.value = dateInputValue(tomorrow);
-  elements.rangeStartHour.value = DEFAULT_CLOCK;
-  elements.rangeStartMinute.value = DEFAULT_CLOCK;
-  elements.rangeEndHour.value = DEFAULT_CLOCK;
-  elements.rangeEndMinute.value = DEFAULT_CLOCK;
 }
 
-// Each clock belongs to its own date: without a date there is nothing for a time
-// to refer to, so the pickers are disabled and reset to 00:00.
-function syncClockState() {
-  const sides = [
-    [elements.rangeStart, elements.rangeStartHour, elements.rangeStartMinute],
-    [elements.rangeEnd, elements.rangeEndHour, elements.rangeEndMinute]
-  ];
+// A date alone means the whole day: 00:00:00 on the from date and 23:59:59 on
+// the to date, in the reader's own time zone.
+function dayBoundary(dateValue, endOfDay) {
+  const [year, month, day] = String(dateValue).split('-').map(Number);
+  if (!year || !month || !day) return null;
 
-  for (const [dateInput, hourSelect, minuteSelect] of sides) {
-    const hasDate = Boolean(dateInput.value.trim());
-    hourSelect.disabled = !hasDate;
-    minuteSelect.disabled = !hasDate;
+  const date = endOfDay
+    ? new Date(year, month - 1, day, 23, 59, 59)
+    : new Date(year, month - 1, day, 0, 0, 0);
 
-    if (!hasDate) {
-      hourSelect.value = DEFAULT_CLOCK;
-      minuteSelect.value = DEFAULT_CLOCK;
-    }
-  }
+  return Number.isNaN(date.getTime()) ? null : Math.floor(date.getTime() / 1000);
 }
 
 function setConnection(stateName, label) {
@@ -135,21 +111,43 @@ function setError(message) {
 }
 
 function markUpdated() {
-  elements.lastUpdate.textContent = `Last update: ${formatLocalDate(new Date())}`;
+  elements.lastUpdate.textContent = `LAST SCREEN REFRESH: ${formatLocalDate(new Date())}`;
 }
 
-// The newest message stored in the archive, independent of the filters on screen.
+function ageingLabel(milliseconds) {
+  const hours = Math.floor(milliseconds / 3600000);
+  return hours < 48 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
+}
+
+// The newest message stored in the archive, independent of the filters on
+// screen. It turns amber once nothing new has arrived for a day.
+function refreshLatestText() {
+  if (!state.latest) {
+    elements.latestData.textContent = 'MOST RECENT DATA: —';
+    elements.latestData.dataset.stale = 'false';
+    return;
+  }
+
+  const age = Date.now() - state.latest * 1000;
+  const stale = age > STALE_AFTER_MS;
+  elements.latestData.dataset.stale = stale ? 'true' : 'false';
+  elements.latestData.textContent =
+    `MOST RECENT DATA: ${formatLocalTimestamp(state.latest)}` +
+    (stale ? ` · no new data for ${ageingLabel(age)}` : '');
+}
+
 function markLatest(timestamp) {
   const value = Number(timestamp);
   if (!Number.isFinite(value) || value <= 0 || value <= state.latest) return;
 
   state.latest = value;
-  elements.latestData.textContent = `Most recent data: ${formatLocalTimestamp(value)}`;
+  refreshLatestText();
 }
 
-function showUpdateBanner(message) {
+function showUpdateBanner(message, {action = true} = {}) {
   elements.bannerText.textContent = message;
   elements.banner.hidden = false;
+  elements.bannerRefresh.hidden = !action;
   elements.refresh.classList.add('refresh-button-attention');
 
   clearTimeout(bannerTimer);
@@ -162,51 +160,35 @@ function clearUpdateBanner() {
   elements.refresh.classList.remove('refresh-button-attention');
 }
 
-// A date plus an hour and a minute picked from the 24-hour clock, read in the
-// reader's own time zone.
-function parseBoundary(dateInput, hourSelect, minuteSelect) {
-  const dateValue = dateInput.value.trim();
-  if (!dateValue) return {seconds: null};
-
-  const [year, month, day] = dateValue.split('-').map(Number);
-  const hour = Number(hourSelect.value || DEFAULT_CLOCK);
-  const minute = Number(minuteSelect.value || DEFAULT_CLOCK);
-  const parsed = new Date(year, month - 1, day, hour, minute, 0);
-
-  if (Number.isNaN(parsed.getTime())) return {error: 'The date range is not a valid date.'};
-
-  return {seconds: Math.floor(parsed.getTime() / 1000)};
-}
-
 function readRange() {
-  const start = parseBoundary(elements.rangeStart, elements.rangeStartHour, elements.rangeStartMinute);
-  const end = parseBoundary(elements.rangeEnd, elements.rangeEndHour, elements.rangeEndMinute);
+  const startValue = elements.rangeStart.value.trim();
+  const endValue = elements.rangeEnd.value.trim();
 
-  if (start.error || end.error) {
-    setError(start.error || end.error);
-    return false;
-  }
+  state.start = startValue ? dayBoundary(startValue, false) : null;
+  state.end = endValue ? dayBoundary(endValue, true) : null;
 
-  if (start.seconds != null && end.seconds != null && start.seconds > end.seconds) {
+  if (state.start != null && state.end != null && state.start > state.end) {
     setError('The start of the range must be before the end.');
     return false;
   }
 
-  state.start = start.seconds;
-  state.end = end.seconds;
   return true;
 }
 
-function renderSummary(loaded) {
+function updateSummary() {
   const total = Number(state.total) || 0;
-  const noun = total === 1 ? 'message' : 'messages';
-  const parts = [`${total.toLocaleString()} ${noun}`];
+  const loaded = state.loaded;
 
-  if (total > loaded) {
-    parts.push(`showing ${loaded.toLocaleString()} — narrow the date range to see the rest`);
+  if (total === 0) {
+    elements.summary.textContent = 'No messages';
+  } else {
+    const noun = total === 1 ? 'message' : 'messages';
+    const parts = [`${total.toLocaleString()} ${noun}`];
+    if (loaded < total) parts.push(`showing ${loaded.toLocaleString()}`);
+    elements.summary.textContent = parts.join(' · ');
   }
 
-  elements.summary.textContent = parts.join(' · ');
+  elements.loadOlder.hidden = total === 0 || loaded >= total;
 }
 
 function renderEmpty(message) {
@@ -218,7 +200,8 @@ function renderEmpty(message) {
   row.append(cell);
   elements.body.replaceChildren(row);
   state.ids = new Set();
-  elements.summary.textContent = 'No messages';
+  state.loaded = 0;
+  updateSummary();
 }
 
 function cell(className, text) {
@@ -233,27 +216,20 @@ function cell(className, text) {
 function buildRow(message) {
   const row = document.createElement('tr');
   row.className = 'chat-row';
+  row.id = `msg-${message.id}`;
   row.dataset.id = String(message.id ?? '');
   row.dataset.time = String(Number(message.message_timestamp) || 0);
   row.dataset.sender = String(message.sender ?? '');
   row.dataset.message = String(message.message_text ?? '');
   row.dataset.receivedAt = message.received_at || '';
   row.dataset.uploadedBy = message.uploaded_by || '';
+  row.title = 'Click to copy a link to this message';
 
   row.append(cell('cell-time', formatLocalTimestamp(message.message_timestamp)));
   row.append(cell('cell-sender', message.sender || 'unknown'));
   row.append(cell('cell-message', message.message_text || ''));
 
   return row;
-}
-
-function rowMessage(row) {
-  return {
-    id: row.dataset.id,
-    message_timestamp: Number(row.dataset.time) || 0,
-    sender: row.dataset.sender || '',
-    message_text: row.dataset.message || ''
-  };
 }
 
 function renderMessages(messages) {
@@ -270,25 +246,27 @@ function renderMessages(messages) {
   });
 
   elements.body.replaceChildren(...rows);
-  renderSummary(messages.length);
+  state.loaded = rows.length;
+  updateSummary();
 }
 
-// The column the table is sorted by, compared the way the server orders it:
-// text is case-insensitive and ties fall back to the id, in the same direction.
-function compareText(a, b) {
-  return String(a ?? '').localeCompare(String(b ?? ''), undefined, {sensitivity: 'base'});
-}
+function appendMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return;
 
-function compareMessage(a, b) {
-  const direction = state.dir === 'asc' ? 1 : -1;
-  let order;
+  const rows = messages
+    .filter(message => !state.ids.has(String(message.id)))
+    .map(message => {
+      const row = buildRow(message);
+      state.ids.add(row.dataset.id);
+      return row;
+    });
 
-  if (state.sort === 'time') order = Number(a.message_timestamp) - Number(b.message_timestamp);
-  else if (state.sort === 'sender') order = compareText(a.sender, b.sender);
-  else order = compareText(a.message_text, b.message_text);
+  if (rows.length === 0) return;
 
-  if (order === 0) order = Number(a.id) - Number(b.id);
-  return order * direction;
+  elements.body.querySelector('tr.empty-row')?.remove();
+  elements.body.append(...rows);
+  state.loaded = visibleRows().length;
+  updateSummary();
 }
 
 function visibleRows() {
@@ -308,27 +286,6 @@ function matchesFilters(message) {
   }
 
   return true;
-}
-
-function insertMessage(message) {
-  const id = String(message.id ?? '');
-  if (!id || state.ids.has(id) || !matchesFilters(message)) return false;
-
-  const row = buildRow(message);
-  const before = visibleRows().find(existing => compareMessage(rowMessage(existing), message) > 0);
-
-  elements.body.querySelector('tr.empty-row')?.remove();
-
-  if (before) elements.body.insertBefore(row, before);
-  else elements.body.append(row);
-
-  state.ids.add(id);
-  return true;
-}
-
-function trimRows() {
-  const rows = visibleRows();
-  for (let index = rows.length - 1; index >= PAGE_LIMIT; index -= 1) rows[index].remove();
 }
 
 // Scrolling stays where the reader left it: rows inserted above the viewport
@@ -354,33 +311,135 @@ function restoreScrollAnchor(anchor) {
   if (offset !== anchor.offset) elements.tableScroll.scrollTop += offset - anchor.offset;
 }
 
-// Applies the rows the socket delivered and reports how many became visible.
-function applyLiveMessages(messages) {
-  if (!Array.isArray(messages) || messages.length === 0) return 0;
+// The server owns the collation, so it says how many matching rows sort before
+// each pushed row. That keeps live inserts exactly where a reload would put
+// them, whatever column the table is sorted by.
+async function fetchPositions(messages) {
+  const params = new URLSearchParams({
+    ids: messages.map(message => String(message.id)).join(','),
+    sort: state.sort,
+    dir: state.dir
+  });
 
-  const anchor = captureScrollAnchor();
-  let inserted = 0;
+  if (state.search) params.set('q', state.search);
+  if (state.start != null) params.set('start', String(state.start));
+  if (state.end != null) params.set('end', String(state.end));
 
-  for (const message of messages) {
-    if (insertMessage(message)) inserted += 1;
+  const response = await fetch(`/api/mafia/chat/position?${params}`, {
+    headers: {Accept: 'application/json'}
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok || !payload.ok) throw new Error(payload.error || 'Position lookup failed.');
+  return Array.isArray(payload.positions) ? payload.positions : [];
+}
+
+// Applies pushed rows that belong inside the page on screen. Rows that sort
+// onto another page are left alone; they arrive when that page is loaded.
+async function applyLiveMessages(messages) {
+  const fresh = messages.filter(message => {
+    const id = String(message.id ?? '');
+    return id && !state.ids.has(id) && matchesFilters(message);
+  });
+
+  if (fresh.length === 0) return 0;
+
+  let positions;
+  try {
+    positions = await fetchPositions(fresh);
+  } catch {
+    showPill(`${fresh.length} new message${fresh.length === 1 ? '' : 's'} — refresh`, 'refresh');
+    return 0;
   }
 
-  if (inserted > 0) {
-    trimRows();
-    restoreScrollAnchor(anchor);
-    state.total += inserted;
-    renderSummary(visibleRows().length);
+  const beforeById = new Map(positions.map(position => [String(position.id), position.before]));
+  const windowStart = state.offset;
+  const atEndOfResults = state.offset + state.loaded >= state.total;
+  const anchor = captureScrollAnchor();
+  const anchorIndex = anchor ? visibleRows().indexOf(anchor.row) : -1;
+
+  const candidates = [];
+  let matched = 0;
+
+  for (const message of fresh) {
+    const before = beforeById.get(String(message.id));
+    if (before == null) continue;
+    matched += 1;
+
+    const index = before - windowStart;
+    if (index < 0) continue;
+    if (index > state.loaded) continue;
+    if (index === state.loaded && !atEndOfResults) continue;
+
+    candidates.push({message, index});
+  }
+
+  candidates.sort((a, b) => a.index - b.index || Number(a.message.id) - Number(b.message.id));
+
+  const aboveViewport = anchorIndex >= 0 && candidates.some(candidate => candidate.index <= anchorIndex);
+
+  let inserted = 0;
+  for (const {message, index} of candidates) {
+    const rows = visibleRows();
+    const target = rows[index + inserted];
+    const row = buildRow(message);
+
+    elements.body.querySelector('tr.empty-row')?.remove();
+
+    if (target) elements.body.insertBefore(row, target);
+    else elements.body.append(row);
+
+    state.ids.add(String(message.id));
+    inserted += 1;
+  }
+
+  if (matched > 0) {
+    state.total += matched;
+    state.loaded = visibleRows().length;
+    updateSummary();
+  }
+
+  if (inserted === 0) return 0;
+
+  state.loaded = visibleRows().length;
+  restoreScrollAnchor(anchor);
+  updateSummary();
+
+  if (aboveViewport) {
+    state.pendingAbove += inserted;
+    showPill(`${state.pendingAbove} new message${state.pendingAbove === 1 ? '' : 's'} ↑`, 'scroll');
   }
 
   return inserted;
 }
 
+function showPill(text, mode) {
+  elements.pill.textContent = text;
+  elements.pill.dataset.mode = mode;
+  elements.pill.hidden = false;
+}
+
+function hidePill() {
+  elements.pill.hidden = true;
+  state.pendingAbove = 0;
+}
+
 function setLoading(loading) {
   elements.refresh.disabled = loading;
+  elements.loadOlder.disabled = loading;
   if (loading) elements.summary.textContent = 'Loading…';
 }
 
-async function loadMessages() {
+function revealFocusedRow(id) {
+  const row = elements.body.querySelector(`tr.chat-row[data-id="${id}"]`);
+  if (!row) return;
+
+  row.classList.add('row-flash');
+  row.scrollIntoView({block: 'center'});
+  setTimeout(() => row.classList.remove('row-flash'), 2400);
+}
+
+async function loadPage({offset = 0, append = false, focus = null} = {}) {
   const sequence = ++requestSequence;
   if (requestController) requestController.abort();
   requestController = new AbortController();
@@ -388,15 +447,17 @@ async function loadMessages() {
   const params = new URLSearchParams({
     sort: state.sort,
     dir: state.dir,
-    limit: String(PAGE_LIMIT)
+    limit: String(PAGE_SIZE),
+    offset: String(offset)
   });
 
   if (state.search) params.set('q', state.search);
   if (state.start != null) params.set('start', String(state.start));
   if (state.end != null) params.set('end', String(state.end));
+  if (focus != null) params.set('focus', String(focus));
 
   setLoading(true);
-  setError('');
+  if (!append) setError('');
 
   try {
     const response = await fetch(`/api/mafia/chat/messages?${params}`, {
@@ -412,21 +473,31 @@ async function loadMessages() {
     }
 
     state.total = Number(payload.total) || 0;
-    renderMessages(payload.messages);
+    state.offset = Number(payload.offset) || 0;
     markLatest(payload.latest);
+
+    if (append) appendMessages(payload.messages);
+    else renderMessages(payload.messages);
+
     markUpdated();
+
+    if (focus != null && payload.messages?.[0]) revealFocusedRow(payload.messages[0].id);
   } catch (error) {
     if (error.name === 'AbortError' || sequence !== requestSequence) return;
-    renderEmpty('Guild chat messages could not be loaded.');
-    setError(error.message || 'Guild chat messages could not be loaded.');
+    if (!append) {
+      renderEmpty('Guild chat messages could not be loaded.');
+      setError(error.message || 'Guild chat messages could not be loaded.');
+    }
   } finally {
     if (sequence === requestSequence) setLoading(false);
   }
 }
 
-async function refreshMessages() {
+async function refreshAll() {
+  hidePill();
   clearUpdateBanner();
-  await loadMessages();
+  await loadPage({offset: 0});
+  elements.tableScroll.scrollTop = 0;
 }
 
 function updateSortHeaders() {
@@ -456,7 +527,8 @@ function applySort(key) {
   }
 
   updateSortHeaders();
-  loadMessages();
+  hidePill();
+  loadPage({offset: 0});
 }
 
 function hideTooltip() {
@@ -500,6 +572,34 @@ function showTooltip(row, x, y) {
   placeTooltip(x, y);
 }
 
+async function copyMessageLink(row) {
+  const link = `${location.origin}${location.pathname}#msg-${row.dataset.id}`;
+
+  try {
+    await navigator.clipboard.writeText(link);
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = link;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+
+    try {
+      document.execCommand('copy');
+    } finally {
+      area.remove();
+    }
+  }
+
+  showUpdateBanner(`Link copied: ${link}`, {action: false});
+}
+
+function hashFocusId() {
+  const match = HASH_MESSAGE.exec(String(location.hash || ''));
+  return match ? Number(match[1]) : null;
+}
+
 function connectLiveFeed() {
   if (!window.io) {
     setConnection('offline', 'Live updates unavailable');
@@ -512,9 +612,8 @@ function connectLiveFeed() {
   socket.on('connect', () => {
     setConnection('live', 'Live');
     if (connectedBefore) {
-      // Rows saved while the socket was down were never delivered, so pull the
-      // page again; the refresh itself keeps the columns in the same order.
-      refreshMessages();
+      // Rows saved while the socket was down were never delivered.
+      showPill('Reconnected — refresh for missed messages', 'refresh');
     }
     connectedBefore = true;
   });
@@ -523,15 +622,24 @@ function connectLiveFeed() {
 
   socket.on('connect_error', () => setConnection('offline', 'Live updates unavailable'));
 
-  // The server sends the stored rows themselves. Each one is placed where the
-  // current sort puts it, and the reader's scroll position is preserved.
-  socket.on('chat-updated', detail => {
+  socket.on('chat-updated', async detail => {
     const messages = Array.isArray(detail?.messages) ? detail.messages : [];
-    const inserted = applyLiveMessages(messages);
 
     if (messages.length > 0) {
       markLatest(Math.max(...messages.map(message => Number(message.message_timestamp) || 0)));
     }
+
+    // A bulk upload only announces its size; the page reloads on request.
+    if (detail?.bulk) {
+      const count = Number(detail.inserted) || messages.length;
+      showPill(`${count} new message${count === 1 ? '' : 's'} — refresh`, 'refresh');
+      showUpdateBanner(`${count} messages were saved. Refresh to show them.`);
+      return;
+    }
+
+    if (messages.length === 0) return;
+
+    const inserted = await applyLiveMessages(messages);
 
     if (inserted > 0) {
       markUpdated();
@@ -544,40 +652,46 @@ elements.search.addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     state.search = elements.search.value.trim();
-    loadMessages();
+    hidePill();
+    loadPage({offset: 0});
   }, 150);
 });
 
-for (const input of [
-  elements.rangeStart,
-  elements.rangeStartHour,
-  elements.rangeStartMinute,
-  elements.rangeEnd,
-  elements.rangeEndHour,
-  elements.rangeEndMinute
-]) {
+for (const input of [elements.rangeStart, elements.rangeEnd]) {
   input.addEventListener('change', () => {
-    syncClockState();
-    if (readRange()) loadMessages();
+    if (readRange()) {
+      hidePill();
+      loadPage({offset: 0});
+    }
   });
 }
 
 elements.rangeClear.addEventListener('click', () => {
   elements.rangeStart.value = '';
   elements.rangeEnd.value = '';
-  elements.rangeStartHour.value = DEFAULT_CLOCK;
-  elements.rangeStartMinute.value = DEFAULT_CLOCK;
-  elements.rangeEndHour.value = DEFAULT_CLOCK;
-  elements.rangeEndMinute.value = DEFAULT_CLOCK;
-  syncClockState();
   state.start = null;
   state.end = null;
   setError('');
-  loadMessages();
+  hidePill();
+  loadPage({offset: 0});
 });
 
-elements.refresh.addEventListener('click', refreshMessages);
-elements.bannerRefresh.addEventListener('click', refreshMessages);
+elements.loadOlder.addEventListener('click', () => {
+  loadPage({offset: state.offset + state.loaded, append: true});
+});
+
+elements.pill.addEventListener('click', () => {
+  if (elements.pill.dataset.mode === 'refresh') {
+    refreshAll();
+    return;
+  }
+
+  elements.tableScroll.scrollTop = 0;
+  hidePill();
+});
+
+elements.refresh.addEventListener('click', refreshAll);
+elements.bannerRefresh.addEventListener('click', refreshAll);
 
 document.querySelectorAll('.chat-table thead th[data-sort]').forEach(header => {
   header.addEventListener('click', () => applySort(header.dataset.sort));
@@ -601,10 +715,29 @@ elements.body.addEventListener('mousemove', event => {
 elements.body.addEventListener('mouseleave', hideTooltip);
 elements.tableScroll.addEventListener('scroll', hideTooltip, {passive: true});
 
+// Clicking a row copies a permalink to that message.
+elements.body.addEventListener('click', event => {
+  const row = event.target.closest('tr.chat-row');
+  if (!row) return;
+  if (String(window.getSelection() || '').trim()) return;
+  copyMessageLink(row);
+});
+
 updateSortHeaders();
-fillTimeOptions();
-applyDefaultRange();
-syncClockState();
-readRange();
+refreshLatestText();
+
+const focusId = hashFocusId();
+if (focusId != null) {
+  // A permalink is about that message, not today's range, so show the archive.
+  elements.rangeStart.value = '';
+  elements.rangeEnd.value = '';
+  state.start = null;
+  state.end = null;
+} else {
+  applyDefaultRange();
+  readRange();
+}
+
 connectLiveFeed();
-loadMessages();
+loadPage({focus: focusId});
+setInterval(refreshLatestText, 60000);

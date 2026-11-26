@@ -156,9 +156,10 @@ body {
 
 .refresh-button:focus-visible,
 .clear-button:focus-visible,
+.pager-button:focus-visible,
+.new-pill:focus-visible,
 .sort-button:focus-visible,
-input:focus-visible,
-select:focus-visible {
+input:focus-visible {
   outline: 2px solid #93c5fd;
   outline-offset: 2px;
 }
@@ -291,36 +292,6 @@ select:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.time-selects {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.time-select {
-  padding: 7px 4px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  border-radius: 8px;
-  background: rgba(7, 12, 24, 0.65);
-  color: #e5e7eb;
-  font-family: inherit;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  color-scheme: dark;
-  cursor: pointer;
-}
-
-.time-separator {
-  color: #94a3b8;
-  font-weight: 600;
-}
-
-/* A clock without a date has nothing to refer to, so it stays inert. */
-.time-select:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 .field-hint {
   margin-left: 6px;
   font-weight: 400;
@@ -332,6 +303,7 @@ select:focus-visible {
 /* Table */
 
 .table-card {
+  position: relative;
   border: 1px solid rgba(147, 197, 253, 0.18);
   border-radius: 14px;
   overflow: hidden;
@@ -478,6 +450,7 @@ th[aria-sort="descending"] .sort-indicator::after {
 }
 
 .table-footer {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -490,24 +463,110 @@ th[aria-sort="descending"] .sort-indicator::after {
   color: #94a3b8;
 }
 
-.footer-times {
+.footer-left {
   display: flex;
   align-items: center;
-  gap: 18px;
-  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 0;
   margin-left: auto;
 }
 
 .latest-data {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
   color: #cbd5e1;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.latest-data[data-stale="true"] {
+  color: #fbbf24;
 }
 
 .last-update {
   color: #e0f2fe;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.pager-button {
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  border-radius: 7px;
+  padding: 3px 10px;
+  background: rgba(15, 23, 42, 0.6);
+  color: #cbd5e1;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pager-button:hover {
+  border-color: rgba(147, 197, 253, 0.6);
+  color: #f8fafc;
+}
+
+.pager-button[disabled] {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+/* Jump back to the newest rows when live inserts landed above the viewport. */
+.new-pill {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 4;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border: 1px solid rgba(147, 197, 253, 0.55);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  color: #f8fafc;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(2, 8, 23, 0.45);
+}
+
+.new-pill[hidden] {
+  display: none;
+}
+
+.new-pill:hover {
+  filter: brightness(1.08);
+}
+
+@keyframes row-flash {
+  0%,
+  100% {
+    background: transparent;
+  }
+
+  20% {
+    background: rgba(250, 204, 21, 0.3);
+  }
+}
+
+.chat-row.row-flash td {
+  animation: row-flash 2.4s ease;
 }
 
 .table-error {
@@ -551,6 +610,24 @@ th[aria-sort="descending"] .sort-indicator::after {
 
   .chat-table {
     min-width: 720px;
+  }
+
+  .table-footer {
+    justify-content: flex-start;
+    gap: 8px;
+    padding-bottom: 34px;
+  }
+
+  .latest-data {
+    left: 16px;
+    bottom: 10px;
+    transform: none;
+    text-align: left;
+  }
+
+  .footer-right {
+    justify-content: flex-start;
+    margin-left: 0;
   }
 }
 

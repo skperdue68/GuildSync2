@@ -16,9 +16,16 @@ export const MAFIA_CHAT_SORT_COLUMNS = Object.freeze({
 // themselves so the page can place each one without reloading.
 export const MAFIA_CHAT_UPDATED_EVENT = 'chat-updated';
 
+// A first upload can insert thousands of rows at once. Above this many, the
+// socket only announces the count and every open page reloads on request
+// instead of receiving the whole batch.
+export const MAFIA_CHAT_BULK_LIMIT = 100;
+
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 1000;
 const MAX_SEARCH_LENGTH = 200;
+const MAX_POSITION_IDS = 50;
+const ID_PATTERN = /^\d{1,15}$/;
 const LIKE_ESCAPE_PATTERN = /([\\%_])/g;
 
 function badRequest(message) {
@@ -31,7 +38,7 @@ function parseBoundary(value, label) {
   const raw = String(value ?? '').trim();
   if (!raw) return null;
 
-  if (/^\d{1,15}$/.test(raw)) return Number(raw);
+  if (ID_PATTERN.test(raw)) return Number(raw);
 
   const parsed = Date.parse(raw);
   if (!Number.isFinite(parsed)) {
@@ -39,6 +46,13 @@ function parseBoundary(value, label) {
   }
 
   return Math.floor(parsed / 1000);
+}
+
+function parseOptionalId(value, label) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  if (!ID_PATTERN.test(raw)) throw badRequest(`The ${label} message id is not valid.`);
+  return Number(raw);
 }
 
 function clampInteger(value, fallback, maximum) {
@@ -74,6 +88,7 @@ export function parseMafiaChatQuery(query = {}) {
     search,
     start,
     end,
+    focus: parseOptionalId(query.focus, 'focus'),
     limit: clampInteger(query.limit, DEFAULT_LIMIT, MAX_LIMIT),
     offset: clampInteger(query.offset, 0, Number.MAX_SAFE_INTEGER)
   };
@@ -106,6 +121,36 @@ export function buildMafiaChatWhere(options = {}) {
   return {clause: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params};
 }
 
+// Rows that sort before the given value/id pair, using the database collation
+// for text columns so a live insert lands exactly where a reload would put it.
+function comparisonClause(column, dirSQL) {
+  const operator = dirSQL === 'ASC' ? '<' : '>';
+  return `(${column} ${operator} ? OR (${column} = ? AND id ${operator} ?))`;
+}
+
+async function countRowsBefore(db, options, sortValue, id) {
+  const {clause, params} = buildMafiaChatWhere(options);
+  const comparison = comparisonClause(options.column, options.dirSQL);
+  const where = clause ? `${clause} AND ${comparison}` : `WHERE ${comparison}`;
+
+  const [rows] = await db.execute(
+    `SELECT COUNT(*) AS before_count FROM guildsync_guild_chat_messages ${where}`,
+    [...params, sortValue, sortValue, id]
+  );
+
+  return Number(rows?.[0]?.before_count ?? 0);
+}
+
+async function findSortValue(db, column, id) {
+  const [rows] = await db.execute(
+    `SELECT ${column} AS sort_value FROM guildsync_guild_chat_messages WHERE id = ?`,
+    [id]
+  );
+
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return row && row.sort_value != null ? {sortValue: row.sort_value} : null;
+}
+
 function toIsoString(value) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -124,8 +169,46 @@ export function mapMafiaChatRow(row = {}) {
   };
 }
 
-// One page of rows plus the total for the same filters, so the page can say
-// how many messages exist without asking for all of them.
+// Where each pushed row belongs in the current sort, as a count of the matching
+// rows that come before it. The page turns that into an index in its own window.
+export async function resolveMafiaChatPositions(db, options, ids) {
+  const positions = [];
+
+  for (const id of ids) {
+    const found = await findSortValue(db, options.column, id);
+
+    if (!found) {
+      positions.push({id: String(id), before: null});
+      continue;
+    }
+
+    positions.push({id: String(id), before: await countRowsBefore(db, options, found.sortValue, id)});
+  }
+
+  return positions;
+}
+
+export function parseMafiaChatPositionQuery(query = {}) {
+  const options = parseMafiaChatQuery(query);
+  const ids = String(query.ids ?? '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
+
+  if (ids.length === 0 || ids.length > MAX_POSITION_IDS) {
+    throw badRequest(`Provide between 1 and ${MAX_POSITION_IDS} message ids.`);
+  }
+
+  for (const id of ids) {
+    if (!ID_PATTERN.test(id)) throw badRequest(`Unknown message id: ${id}.`);
+  }
+
+  return {options, ids: ids.map(Number)};
+}
+
+// One page of rows plus the totals for the same filters, so the page can say
+// how many messages exist without asking for all of them. A focus id lands the
+// page on the message itself, wherever it sorts.
 export async function queryMafiaChatMessages(db, options) {
   const {clause, params} = buildMafiaChatWhere(options);
 
@@ -143,38 +226,33 @@ export async function queryMafiaChatMessages(db, options) {
   const latestSeconds = Number(latestRows?.[0]?.latest ?? 0);
   const latest = Number.isFinite(latestSeconds) && latestSeconds > 0 ? latestSeconds : null;
 
+  let offset = options.offset;
+
+  if (options.focus != null) {
+    const focused = await findSortValue(db, options.column, options.focus);
+    if (focused) offset = await countRowsBefore(db, options, focused.sortValue, options.focus);
+  }
+
   const [rows] = await db.execute(
     `SELECT id, sender, message_text, message_timestamp, data_source, uploaded_by, received_at
      FROM guildsync_guild_chat_messages
      ${clause}
      ORDER BY ${options.column} ${options.dirSQL}, id ${options.dirSQL}
      LIMIT ? OFFSET ?`,
-    [...params, options.limit, options.offset]
+    [...params, options.limit, offset]
   );
 
-  return {total, latest, messages: (Array.isArray(rows) ? rows : []).map(mapMafiaChatRow)};
+  return {total, latest, offset, messages: (Array.isArray(rows) ? rows : []).map(mapMafiaChatRow)};
 }
 
 export function createMafiaChatRouter({getDb, log = () => {}} = {}) {
   const router = express.Router();
 
-  router.get('/messages', async (req, res) => {
+  async function answer(res, work) {
     try {
-      const options = parseMafiaChatQuery(req.query || {});
-      const db = await getDb();
-      const {total, latest, messages} = await queryMafiaChatMessages(db, options);
-
+      const payload = await work();
       res.set('Cache-Control', 'no-store');
-      res.json({
-        ok: true,
-        total,
-        latest,
-        limit: options.limit,
-        offset: options.offset,
-        sort: options.sort,
-        dir: options.dir,
-        messages
-      });
+      res.json({ok: true, ...payload});
     } catch (error) {
       const status = Number(error?.status) === 400 ? 400 : 500;
       if (status === 500) log('Mafia guild chat query failed:', error);
@@ -184,7 +262,31 @@ export function createMafiaChatRouter({getDb, log = () => {}} = {}) {
         error: status === 500 ? 'Could not load guild chat messages.' : error.message
       });
     }
-  });
+  }
+
+  router.get('/messages', (req, res) => answer(res, async () => {
+    const options = parseMafiaChatQuery(req.query || {});
+    const db = await getDb();
+    const {total, latest, offset, messages} = await queryMafiaChatMessages(db, options);
+
+    return {
+      total,
+      latest,
+      offset,
+      limit: options.limit,
+      sort: options.sort,
+      dir: options.dir,
+      messages
+    };
+  }));
+
+  router.get('/position', (req, res) => answer(res, async () => {
+    const {options, ids} = parseMafiaChatPositionQuery(req.query || {});
+    const db = await getDb();
+    const positions = await resolveMafiaChatPositions(db, options, ids);
+
+    return {sort: options.sort, dir: options.dir, positions};
+  }));
 
   return router;
 }

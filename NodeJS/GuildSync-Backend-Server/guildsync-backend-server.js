@@ -29,7 +29,7 @@ import cors from 'cors';
 import http from 'node:http';
 import {createDesktopVersionPolicy} from './desktop-version-policy.js';
 import {ingestGuildChatMessages} from './guild-chat-ingest.js';
-import {createMafiaChatRouter, mapMafiaChatRow, MAFIA_CHAT_UPDATED_EVENT} from './mafia-chat-api.js';
+import {createMafiaChatRouter, mapMafiaChatRow, MAFIA_CHAT_BULK_LIMIT, MAFIA_CHAT_UPDATED_EVENT} from './mafia-chat-api.js';
 import {releaseExpiredDepositMailCheckouts} from './deposit-mail-lease.js';
 import {startDepositMailSweep} from './deposit-mail-sweep.js';
 import fs from 'node:fs';
@@ -237,6 +237,18 @@ async function broadcastMafiaChatUpdate(detail = {}) {
       .filter(id => Number.isInteger(id) && id > 0);
     const {ids: _ids, ...notice} = detail;
     let messages = [];
+
+    // A first upload can insert thousands of rows at once; every open page only
+    // needs to know to reload, not to receive the whole batch.
+    if (ids.length > MAFIA_CHAT_BULK_LIMIT) {
+      mafiaChatNamespace.emit(MAFIA_CHAT_UPDATED_EVENT, {
+        ...notice,
+        bulk: true,
+        messages: [],
+        at: new Date().toISOString()
+      });
+      return;
+    }
 
     if (ids.length > 0) {
       const placeholders = ids.map(() => '?').join(', ');
