@@ -41,7 +41,19 @@ function fixture({legacy}={}) {
     responses.set(key,{guild_id:guild,discord_user_id:user,display_name:displayName,eso_account_name:eso??previous?.eso_account_name??null,choice,response_text:text,responded_at:at});
     return [{affectedRows:1}];
    }
-   if(sql.startsWith('SELECT display_name,eso_account_name,choice,response_text,responded_at'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
+   if(sql.startsWith('UPDATE guildsync_membership_dm_responses')){
+    const [removalStatus,removalReason,nicknameStatus,nicknameName,nicknameReason,guild,user]=args;
+    const row=responses.get(guild+':'+user);
+    if(row){
+     if(removalStatus!=null)row.removal_status=removalStatus;
+     if(removalReason!=null)row.removal_reason=removalReason;
+     if(nicknameStatus!=null)row.nickname_status=nicknameStatus;
+     if(nicknameName!=null)row.nickname_name=nicknameName;
+     if(nicknameReason!=null)row.nickname_reason=nicknameReason;
+    }
+    return [{affectedRows:row?1:0}];
+   }
+   if(sql.startsWith('SELECT * FROM guildsync_membership_dm_responses'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
    if(sql.startsWith('SELECT link_status FROM guildsync_member_links'))return [links.filter(l=>String(l.discord_user_id)===String(args[0])&&l.eso_account_name.toLowerCase()===String(args[1]).toLowerCase())];
    if(sql.startsWith('SELECT choice,eso_account_name,responded_at FROM guildsync_membership_dm_responses'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
    if(sql.startsWith('SELECT username,global_name,server_nickname FROM discord_members'))return [[{username:'Alice',global_name:'Alice G',server_nickname:null}]];
@@ -85,6 +97,7 @@ test('bot → authenticated backend → persisted send date → modal auto-link 
  assert.deepEqual([responseNote[0],responseNote[7],responseNote[10]],['10','Linked ESO account @ESOName','discord']);
  await f.request('response',{deliveryId:delivery,userId:'10',eventId:'300',choice:'eso',text:'@ESOName'});
  assert.equal(f.upserts(),1,'event replay never relinks');
+ f.advance(46);
  await f.worker.forwardOne();assert.equal(f.forwards.length,1);assert.equal(f.state().events[0].forwardStatus,'sent');
  const status=await f.restart().command('1','officer','status','10');
  assert.equal(status.member.history.sentAt,1800000600);assert.equal(status.campaign.lastSent.userId,'10');
@@ -110,9 +123,98 @@ test('a removal request stops contact, removes the link and forwards the request
  assert.deepEqual([removal.choice,removal.roleId,removal.roleStatus],['remove','','sent']);
  const note=f.history().filter(args=>args[4]==='membership_dm_response').at(-1);
  assert.match(note[7],/^Asked to be removed from the Discord server — membership DMs stopped/);
- await f.worker.forwardOne();
- assert.match(f.forwards[0].embeds[0].toJSON().description,/Asked to be removed from the Discord server/);
- assert.match(f.forwards[0].embeds[0].toJSON().fields.find(field=>field.name==='Outcome').value,/Removal requested — an officer still needs to remove them/);
+ assert.equal(removal.result.removal.status,'pending');
+ assert.ok(removal.retryAt>1800000600,'the card waits for the kick the bot performs');
+ assert.equal((await f.service.claimForward('1')).event,null,'the card is not forwarded before the kick outcome');
+});
+test('the officer card reports the kick the bot performed, and mismatched outcomes are refused',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'410',choice:'remove'});
+ await assert.rejects(()=>f.request('outcome',{eventId:'410',removal:{status:'maybe'}}),/Invalid membership response outcome/);
+ await assert.rejects(()=>f.request('outcome',{eventId:'999',removal:{status:'kicked'}}),/no longer queued/);
+ await assert.rejects(()=>f.request('outcome',{eventId:'410',nickname:{status:'set',name:'X'}}),/ESO account answers/);
+ const repeat=await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'412',choice:'remove'});
+ assert.equal(repeat.duplicate,true,'a second confirm never queues another kick or card');
+ assert.equal(f.state().events.filter(event=>event.choice==='remove').length,1);
+ await f.request('outcome',{eventId:'410',removal:{status:'kicked'}});
+ f.advance(1);await f.worker.forwardOne();
+ const fields=Object.fromEntries(f.forwards[0].embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(fields.Outcome,'Removed from the server (reason: User Request)');
+ const note=f.history().filter(args=>args[4]==='membership_dm_outcome').at(-1);
+ assert.deepEqual([note[0],note[7]],['10','Removed from the Discord server (reason: User Request)']);
+});
+test('a member who declines the removal confirmation stays, and officers are told',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ f.link();
+ const result=await f.request('removal-declined',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'420'});
+ assert.equal(result.status,'removal declined');
+ assert.equal(f.state().preferences['10'],undefined,'declining never opts the member out');
+ assert.deepEqual(f.links(),['10'],'the ESO link is untouched');
+ const event=f.state().events.at(-1);
+ assert.deepEqual([event.choice,event.result.removal.status],['remove','declined']);
+ assert.ok(event.retryAt<=1800000601,'the card is forwarded without waiting for a Discord action');
+ f.advance(1);await f.worker.forwardOne();assert.equal(f.forwards.length,1);
+ const fields=Object.fromEntries(f.forwards[0].embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(fields.Outcome,'Not removed — the member declined the confirmation. Officers decide any follow-up.');
+ assert.match(f.history().filter(args=>args[4]==='membership_dm_response').at(-1)[7],/declined the confirmation/);
+ const repost=await f.request('repost',{actorId:'officer',userId:'10'});
+ assert.equal(repost.response.result.removal.status,'declined');
+ // Changing their mind later is a fresh, real removal request.
+ const confirm=await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'421',choice:'remove'});
+ assert.equal(confirm.status,'removal requested');assert.equal(confirm.duplicate,undefined);
+ // A test delivery cannot record a decline for the officers either.
+ const work=await f.request('test',{actorId:'officer',targetId:'20'});
+ await assert.rejects(()=>f.request('removal-declined',{deliveryId:work.job.id,userId:'20',eventId:'422'}),/Test responses/);
+});
+test('a declined nickname change still links the account and is kept for repost',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ const result=await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'430',choice:'eso',text:'@ESOName',nicknameConsent:false});
+ assert.equal(result.status,'linked');
+ assert.equal(f.upserts(),1,'declining the rename never blocks the link');
+ assert.equal(result.nickname.status,'declined');
+ const event=f.state().events.at(-1);
+ assert.ok(event.retryAt<=1800000600+1,'nothing waits for a Discord action');
+ const repost=await f.request('repost',{actorId:'officer',userId:'10'});
+ assert.equal(repost.response.result.status,'linked');
+ assert.deepEqual(repost.response.result.nickname,{status:'declined',name:null,reason:'The member chose to keep their current server nickname.'});
+ await f.worker.repost(repost,'Officer');
+ const fields=Object.fromEntries(f.forwards.at(-1).embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(fields['Server nickname'],'Not changed — The member chose to keep their current server nickname.');
+});
+test('reposts and cards keep the kick outcome after the event is forwarded',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'440',choice:'remove'});
+ await f.request('outcome',{eventId:'440',removal:{status:'kicked'}});
+ f.advance(1);await f.worker.forwardOne();
+ const repost=await f.request('repost',{actorId:'officer',userId:'10'});
+ assert.deepEqual(repost.response.result.removal,{status:'kicked',reason:null});
+ await f.worker.repost(repost,'Officer');
+ const fields=Object.fromEntries(f.forwards.at(-1).embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(fields.Outcome,'Removed from the server (reason: User Request)');
+});
+test('a submitted ESO name becomes a rename only when the roster and links allow it',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ const delivery=f.result('10').delivery_id;
+ const linked=await f.request('response',{deliveryId:delivery,userId:'10',eventId:'420',choice:'eso',text:'@ESOName'});
+ assert.deepEqual(linked.rename,{allowed:true,name:'ESOName'});
+ const event=f.state().events.at(-1);
+ assert.ok(event.retryAt>1800000600,'the card waits for the nickname the bot sets');
+ await f.request('outcome',{eventId:'420',nickname:{status:'set',name:'ESOName'}});
+ f.advance(1);await f.worker.forwardOne();
+ const fields=Object.fromEntries(f.forwards[0].embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(fields['Server nickname'],'Set to @ESOName');
+
+ const blocked=fixture();await blocked.service.command('1','officer','start');blocked.advance(600);await blocked.worker.sendNext();
+ blocked.block();
+ const review=await blocked.request('response',{deliveryId:blocked.result('10').delivery_id,userId:'10',eventId:'421',choice:'eso',text:'@ESOName'});
+ assert.equal(review.status,'review');
+ assert.equal(review.rename.allowed,false);
+ assert.match(review.rename.reason,/already linked to another Discord member/);
+
+ const unknown=fixture();await unknown.service.command('1','officer','start');unknown.advance(600);await unknown.worker.sendNext();
+ const nobody=await unknown.request('response',{deliveryId:unknown.result('10').delivery_id,userId:'10',eventId:'422',choice:'eso',text:'@Nobody'});
+ assert.equal(nobody.rename.allowed,false);
+ assert.match(nobody.rename.reason,/roster/);
 });
 
 test('another recipient cannot submit a form; existing account ownership routes the answer to review',async()=>{
@@ -131,6 +233,10 @@ test('test delivery and responses leave normal dates, preferences, links and cam
  const delivery=f.state().testHistory['10'].deliveryId;
  const result=await f.request('response',{deliveryId:delivery,userId:'10',eventId:'304',choice:'eso',text:'@ESOName'});
  assert.equal(result.status,'test');assert.equal(f.upserts(),0);assert.deepEqual(f.state().preferences,{});assert.equal(f.responses().length,0);
+ assert.equal(result.rename,undefined,'a test answer never proposes a nickname change');
+ const removal=await f.request('response',{deliveryId:delivery,userId:'10',eventId:'305',choice:'remove'});
+ assert.equal(removal.removal,undefined,'a test removal never queues a kick');
+ await assert.rejects(()=>f.request('outcome',{eventId:'304',removal:{status:'kicked'}}),/Test responses never change/);
 });
 test('a response must name the delivered membership DM it answers',async()=>{
  const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
@@ -186,6 +292,7 @@ test('a newer linked response supersedes a failed community role addition',async
  await f.service.finishForward('1',event.eventId,event.token,true,false);
  await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'311',choice:'eso',text:'@ESOName'});
  assert.equal(f.state().events[0].roleStatus,'superseded');
+ f.advance(46);
  const next=await f.service.claimForward('1');assert.equal(next.event.roleAction,'remove');
  await f.service.finishForward('1',next.event.eventId,next.event.token,true,true);
  f.advance(200);assert.equal((await f.service.claimForward('1')).event,null);

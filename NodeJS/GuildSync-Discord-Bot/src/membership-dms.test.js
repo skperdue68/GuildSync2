@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {membershipDMMessage,membershipReplyMessage,createMembershipDMWorker,formatMembershipStatus} from './membership-dms.js';
+import {createMemoryDMIntake,membershipIntakeKey} from './membership-dm-intake.js';
 const cardOf=payload=>{const embed=payload.embeds[0].toJSON();return {embed,fields:Object.fromEntries(embed.fields.map(field=>[field.name,field.value]))};};
 
 const job={id:'12345678-1234-1234-1234-123456789abc',userId:'10',name:'Member',token:'claim'};
@@ -26,11 +27,15 @@ test('the forwarding notice is never repeated and a suggested match is optional'
  assert.doesNotMatch(none.content,/\{suggested_link\}/);
 });
 function fixture(request) {
- const sends=[],forwards=[],roles=[];
- const member={user:{bot:false},displayName:'Member',send:async payload=>{sends.push(payload);return {id:'100'};},roles:{add:async id=>roles.push(['add',id]),remove:async id=>roles.push(['remove',id])}};
- const guild={id:'1',name:'Guild',members:{fetch:async()=>member}};
+ const sends=[],forwards=[],roles=[],kicks=[],nicknames=[];
+ const member={user:{bot:false},displayName:'Member',send:async payload=>{sends.push(payload);return {id:'100'};},
+  kick:async reason=>{kicks.push(reason);},setNickname:async(name,reason)=>{nicknames.push([name,reason]);},
+  roles:{add:async id=>roles.push(['add',id]),remove:async id=>roles.push(['remove',id])}};
+ const cache=new Map([['10',member]]);
+ const intake=createMemoryDMIntake();
+ const guild={id:'1',name:'Guild',members:{cache,fetch:async()=>member}};
  const client={user:{id:'bot'},isReady:()=>true,guilds:{fetch:async()=>guild},channels:{fetch:async()=>({guildId:'1',send:async payload=>{forwards.push(payload);return {id:'200'};}})}};
- return {worker:createMembershipDMWorker({client,guildId:'1',request,log:()=>{}}),sends,forwards,roles,member};
+ return {worker:createMembershipDMWorker({client,guildId:'1',request,log:()=>{},intake}),sends,forwards,roles,member,kicks,nicknames,cache,intake};
 }
 test('worker revalidates immediately before send and saves the confirmed message ID',async()=>{
  const calls=[];let claimed=false;
@@ -60,10 +65,189 @@ test('buttons open forms, and submitted responses are routed to the backend with
  const {worker}=fixture(async(action,payload)=>{calls.push([action,payload]);return {message:'Linked'};});
  await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,showModal:async value=>{modal=value;}});
  assert.equal(modal.toJSON().components[0].components[0].max_length,64);
+ let prompt;
+ await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>false,isModalSubmit:()=>true,inGuild:()=>false,user:{id:'10'},id:'123',fields:{getTextInputValue:()=>'@ESO'},reply:async value=>{prompt=value;}});
+ assert.deepEqual(calls,[],'nothing is saved before the nickname choice');
+ assert.deepEqual(prompt.components[0].toJSON().components.map(button=>button.custom_id),[
+  `gs-membership-rename:${job.id}:eso:ESO`,`gs-membership-keepname:${job.id}:eso:ESO`]);
  let reply;
- await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>false,isModalSubmit:()=>true,inGuild:()=>false,user:{id:'10'},id:'123',fields:{getTextInputValue:()=>'@ESO'},deferReply:async()=>{},editReply:async value=>{reply=value;}});
- assert.equal(calls[0][1].userId,'10');assert.equal(calls[0][1].text,'@ESO');assert.equal(reply,'Linked');
+ await worker.interaction({customId:`gs-membership-keepname:${job.id}:eso:ESO`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,user:{id:'10'},id:'124',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.equal(calls[0][1].userId,'10');assert.equal(calls[0][1].text,'ESO');assert.equal(calls[0][1].nicknameConsent,false);
+ assert.match(reply,/Linked/);assert.match(reply,/left unchanged/);
 });
+test('declining the nickname change still saves the ESO answer and skips the rename',async()=>{
+ const calls=[];let reply;
+ const {worker,nicknames}=fixture(async(action,payload)=>{calls.push([action,payload]);
+  return action==='response'?{status:'linked',message:'Linked.',nickname:{status:'declined',reason:'The member chose to keep their current server nickname.'}}:{ok:true};});
+ await worker.interaction({customId:`gs-membership-keepname:${job.id}:eso:ESOName`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1004',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(nicknames,[]);
+ assert.equal(calls[0][1].nicknameConsent,false);
+ assert.equal(calls.filter(([action])=>action==='outcome').length,0,'there is no Discord action to report');
+ assert.match(reply,/left unchanged/);
+});
+test('a Discord outcome survives a dropped backend and is replayed before the card',async()=>{
+ let offline=true;const replayed=[];
+ const {worker,member,intake,kicks}=fixture(async(action,payload)=>{
+  if(action==='response')return {status:'removal requested',message:'Sent to the officers.'};
+  if(action==='outcome'){
+   if(offline)throw Object.assign(Error('Backend disconnected'),{code:'ECONNREFUSED'});
+   replayed.push(payload);return {ok:true};
+  }
+  return {ok:true};
+ });
+ await worker.interaction({customId:`gs-membership-confirm:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1005',deferReply:async()=>{},editReply:async()=>{}});
+ assert.deepEqual(kicks,['User Request']);
+ const pending=await intake.list();
+ assert.equal(pending.length,1);
+ assert.equal(pending[0].kind,'outcome');
+ assert.deepEqual(pending[0].payload.removal,{status:'kicked'});
+ offline=false;
+ await worker.retryIntake();
+ assert.equal(replayed.length,1);
+ assert.deepEqual(replayed[0],{eventId:'1005',removal:{status:'kicked'}});
+ assert.deepEqual(await intake.list(),[]);
+});
+test('a removal request asks for confirmation before anything is recorded or kicked',async()=>{
+ const calls=[];let reply;
+ const {worker,kicks}=fixture(async(action)=>{calls.push(action);return {};});
+ await worker.interaction({customId:`gs-membership:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  reply:async value=>{reply=value;}});
+ assert.deepEqual(calls,[],'nothing reaches the backend before the member confirms');
+ assert.deepEqual(kicks,[],'nobody is kicked before the member confirms');
+ assert.match(reply.content,/cannot be undone/);
+ assert.deepEqual(reply.components[0].toJSON().components.map(button=>[button.custom_id,button.label,button.style]),[
+  [`gs-membership-confirm:${job.id}:remove`,'Yes, remove me',4],
+  [`gs-membership-cancel:${job.id}:remove`,'Keep me on the server',2]]);
+});
+test('declining the confirmation keeps the member and tells the officers',async()=>{
+ const calls=[];let reply;
+ const {worker,kicks}=fixture(async(action,payload)=>{calls.push([action,payload]);return {};});
+ await worker.interaction({customId:`gs-membership-cancel:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1007',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,[]);
+ assert.deepEqual(calls.map(([action])=>action),['removal-declined']);
+ assert.deepEqual([calls[0][1].deliveryId,calls[0][1].userId,calls[0][1].eventId],[job.id,'10','1007']);
+ assert.match(reply,/still on the server/);assert.match(reply,/asked to be removed/);
+});
+test('a declined removal is queued when the backend is unreachable and replayed later',async()=>{
+ let offline=true;const replayed=[];
+ const {worker,intake,kicks}=fixture(async(action,payload)=>{
+  if(action==='removal-declined'){
+   if(offline)throw Object.assign(Error('Backend disconnected'),{code:'ECONNREFUSED'});
+   replayed.push(payload);return {};
+  }
+  return {};
+ });
+ let reply;
+ await worker.interaction({customId:`gs-membership-cancel:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1008',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,[]);
+ assert.match(reply,/saved for retry/);
+ const pending=await intake.list();
+ assert.equal(pending[0].kind,'removal-declined');assert.equal(pending[0].payload.eventId,'1008');
+ offline=false;
+ await worker.retryIntake();
+ assert.deepEqual(replayed,[{deliveryId:job.id,userId:'10',eventId:'1008'}]);
+ assert.deepEqual(await intake.list(),[]);
+});
+test('a confirmed removal still kicks with User Request while the backend is down',async()=>{
+ const {worker,kicks,intake}=fixture(async()=>{throw Object.assign(Error('Backend disconnected'),{code:'ECONNREFUSED'});});
+ let reply;
+ await worker.interaction({customId:`gs-membership-confirm:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1006',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,['User Request'],'the confirmation is enough to kick');
+ const pending=(await intake.list()).map(membershipIntakeKey).sort();
+ assert.deepEqual(pending,['1006','1006-outcome']);
+ const outcome=(await intake.list()).find(event=>event.kind==='outcome');
+ assert.deepEqual(outcome.payload,{eventId:'1006',removal:{status:'kicked'}});
+ assert.match(reply,/removed from the server at your request/);
+});
+test('a test delivery never kicks even when the backend cannot confirm it is a test',async()=>{
+ const {worker,kicks,intake}=fixture(async()=>{throw Object.assign(Error('Backend disconnected'),{code:'ECONNREFUSED'});});
+ let reply;
+ await worker.interaction({customId:`gs-membership-confirm:test:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1009',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,[]);
+ assert.equal((await intake.list()).filter(event=>event.kind==='outcome').length,0);
+ assert.match(reply,/saved and will be forwarded/);
+});
+test('confirming removal kicks with the User Request reason and records the outcome',async()=>{
+ const calls=[];let reply;
+ const {worker,kicks,nicknames}=fixture(async(action,payload)=>{calls.push([action,payload]);
+  if(action==='response')return {status:'removal requested',message:'Your request was sent to the officers.'};
+  return {ok:true};});
+ await worker.interaction({customId:`gs-membership-confirm:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'999',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,['User Request']);
+ assert.deepEqual(nicknames,[]);
+ const outcome=calls.find(([action])=>action==='outcome')[1];
+ assert.deepEqual([outcome.eventId,outcome.removal.status],['999','kicked']);
+ assert.match(reply,/removed from the server at your request/);
+});
+test('a test delivery never kicks, and the member is told nothing changed',async()=>{
+ const calls=[];let reply;
+ const {worker,kicks}=fixture(async(action,payload)=>{calls.push([action,payload]);
+  return action==='response'?{status:'test',message:'Test response received. Nothing changed.'}:{ok:true};});
+ await worker.interaction({customId:`gs-membership-confirm:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1000',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(kicks,[]);
+ assert.equal(calls.filter(([action])=>action==='outcome').length,0);
+ assert.match(reply,/Nothing changed/);
+});
+test('a kick the bot cannot perform is reported to the member and on the card',async()=>{
+ let reply;const calls=[];
+ const {worker,member}=fixture(async(action,payload)=>{calls.push([action,payload]);
+  return action==='response'?{status:'removal requested',message:'Sent to the officers.'}:{ok:true};});
+ member.kick=async()=>{throw Object.assign(Error('Missing Permissions'),{code:50013});};
+ await worker.interaction({customId:`gs-membership-confirm:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1001',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ const outcome=calls.find(([action])=>action==='outcome')[1];
+ assert.equal(outcome.removal.status,'failed');
+ assert.match(outcome.removal.reason,/Kick Members/);
+ assert.match(reply,/officer will finish the removal/);
+});
+test('an ESO answer sets the server nickname once and reports it',async()=>{
+ const calls=[];let reply;
+ const {worker,nicknames}=fixture(async(action,payload)=>{calls.push([action,payload]);
+  return action==='response'?{status:'linked',message:'Linked.',rename:{allowed:true,name:'ESOName'}}:{ok:true};});
+ await worker.interaction({customId:`gs-membership-rename:${job.id}:eso:ESOName`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1002',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(nicknames,[['ESOName','GuildSync membership DM: ESO account name']]);
+ const outcome=calls.find(([action])=>action==='outcome')[1];
+ assert.deepEqual(outcome.nickname,{status:'set',name:'ESOName'});
+ assert.match(reply,/server nickname is now @ESOName/);
+});
+test('a nickname another member already uses is never applied',async()=>{
+ const calls=[];let reply;
+ const {worker,nicknames,cache}=fixture(async(action,payload)=>{calls.push([action,payload]);
+  return action==='response'?{status:'linked',message:'Linked.',rename:{allowed:true,name:'ESOName'}}:{ok:true};});
+ cache.set('20',{id:'20',displayName:'Other',nickname:'ESOName',user:{username:'other'}});
+ await worker.interaction({customId:`gs-membership-rename:${job.id}:eso:ESOName`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1003',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(nicknames,[]);
+ const outcome=calls.find(([action])=>action==='outcome')[1];
+ assert.equal(outcome.nickname.status,'skipped');
+ assert.match(outcome.nickname.reason,/already uses that name/);
+ assert.match(reply,/nickname was not changed/);
+});
+test('the card reports the kick outcome and any nickname change',()=>{
+ const kicked=cardOf(membershipReplyMessage({eventId:'5',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal requested',removal:{status:'kicked'}}},{guildName:'Guild'}));
+ assert.equal(kicked.fields.Outcome,'Removed from the server (reason: User Request)');
+ const declined=cardOf(membershipReplyMessage({eventId:'7',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal declined',removal:{status:'declined'}}},{guildName:'Guild'}));
+ assert.equal(declined.fields.Outcome,'Not removed — the member declined the confirmation. Officers decide any follow-up.');
+ const failed=cardOf(membershipReplyMessage({eventId:'6',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal requested',removal:{status:'failed',reason:'Missing Kick Members permission.'}}},{guildName:'Guild'}));
+ assert.match(failed.fields.Outcome,/could not remove them: Missing Kick Members permission\. Officer action needed\./);
+ const pending=cardOf(membershipReplyMessage({eventId:'7',userId:'10',name:'Member',choice:'remove',at:100,result:{status:'removal requested',removal:{status:'pending'}}},{guildName:'Guild'}));
+ assert.equal(pending.fields.Outcome,'Removal requested — an officer still needs to remove them');
+ const renamed=cardOf(membershipReplyMessage({eventId:'8',userId:'10',name:'Member',choice:'eso',at:100,result:{status:'linked',accountName:'ESOName',nickname:{status:'set',name:'ESOName'}}},{guildName:'Guild'}));
+ assert.equal(renamed.fields['Server nickname'],'Set to @ESOName');
+ const blocked=cardOf(membershipReplyMessage({eventId:'9',userId:'10',name:'Member',choice:'eso',at:100,result:{status:'review',nickname:{status:'skipped',reason:'Another member already uses that name.'}}},{guildName:'Guild'}));
+ assert.equal(blocked.fields['Server nickname'],'Not changed — Another member already uses that name.');
+ assert.equal(cardOf(membershipReplyMessage({eventId:'10',userId:'10',name:'Member',choice:'eso',at:100,result:{status:'linked',accountName:'A'}},{guildName:'Guild'})).fields['Server nickname'],undefined);
+});
+
 test('forwarding renders the approved embed card, names the server and member, and attaches a long reply',async()=>{
  const event={eventId:'123',userId:'10',name:'Member',choice:'other',text:'X'.repeat(4000),at:100,deliveryId:job.id,result:{status:'review'},destinationType:'channel',destinationId:'99',token:'token'};
  const calls=[];
