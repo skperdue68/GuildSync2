@@ -57,6 +57,16 @@ test('the time and sender columns right justify with their headers', () => {
   assert.match(html, /<th scope="col" class="align-right">Sender</);
 });
 
+test('officer chat rows are marked as officer chat', () => {
+  assert.match(client, /const channel = String\(message\.channel \|\| ''\)\.toLowerCase\(\) === 'officer' \? 'officer' : 'guild';/);
+  assert.match(client, /row\.classList\.toggle\('chat-row-officer', channel === 'officer'\)/);
+  assert.match(client, /tag\.textContent = 'OFFICER'/);
+  assert.match(ruleBody('.chat-table tbody tr.chat-row-officer td'), /background:/);
+  assert.match(ruleBody('.chat-table tbody tr.chat-row-officer td:first-child'), /inset 3px 0 0/);
+  assert.match(ruleBody('.officer-tag'), /letter-spacing:\s*0\.8px/);
+  assert.match(client, /tooltipLine\('Channel'/);
+});
+
 test('every row carries the provenance tooltip', () => {
   assert.match(client, /const row = event\.target\.closest\('tr'\)/);
   assert.match(client, /tooltipLine\('Received'/);

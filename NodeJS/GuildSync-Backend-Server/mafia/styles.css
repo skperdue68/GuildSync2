@@ -361,6 +361,29 @@ input:focus-visible {
   background: rgba(59, 130, 246, 0.065);
 }
 
+/* Officer chat is the same guild's private channel: tinted and edge-marked so
+   it reads as a different conversation without leaving chronological order. */
+.chat-table tbody tr.chat-row-officer td {
+  background: rgba(250, 204, 21, 0.09);
+}
+
+.chat-table tbody tr.chat-row-officer td:first-child {
+  box-shadow: inset 3px 0 0 #facc15;
+}
+
+.officer-tag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 6px;
+  border: 1px solid rgba(250, 204, 21, 0.55);
+  border-radius: 5px;
+  background: rgba(250, 204, 21, 0.16);
+  color: #fde68a;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+}
+
 .chat-table tbody tr {
   cursor: help;
 }

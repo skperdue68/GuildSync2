@@ -160,6 +160,9 @@ function toIsoString(value) {
 export function mapMafiaChatRow(row = {}) {
   return {
     id: String(row.id ?? ''),
+    // Officer chat is the same guild's private channel; the page marks those
+    // rows so a reader can tell the two conversations apart.
+    channel: String(row.channel ?? '').trim().toLowerCase() === 'officer' ? 'officer' : 'guild',
     sender: String(row.sender ?? ''),
     message_text: String(row.message_text ?? ''),
     message_timestamp: Number(row.message_timestamp ?? 0),
@@ -234,7 +237,7 @@ export async function queryMafiaChatMessages(db, options) {
   }
 
   const [rows] = await db.execute(
-    `SELECT id, sender, message_text, message_timestamp, data_source, uploaded_by, received_at
+    `SELECT id, channel, sender, message_text, message_timestamp, data_source, uploaded_by, received_at
      FROM guildsync_guild_chat_messages
      ${clause}
      ORDER BY ${options.column} ${options.dirSQL}, id ${options.dirSQL}

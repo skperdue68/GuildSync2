@@ -253,7 +253,7 @@ async function broadcastMafiaChatUpdate(detail = {}) {
     if (ids.length > 0) {
       const placeholders = ids.map(() => '?').join(', ');
       const [rows] = await applicationDB.execute(
-        `SELECT id, sender, message_text, message_timestamp, data_source, uploaded_by, received_at
+        `SELECT id, channel, sender, message_text, message_timestamp, data_source, uploaded_by, received_at
          FROM guildsync_guild_chat_messages
          WHERE id IN (${placeholders})`,
         ids

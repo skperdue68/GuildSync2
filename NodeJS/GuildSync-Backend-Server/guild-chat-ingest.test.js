@@ -29,11 +29,12 @@ function memoryDB() {
           id: rows.length + 1,
           hash: params[0],
           guild: params[1],
-          sender: params[2],
-          text: params[3],
-          timestamp: params[4],
-          source: params[6],
-          uploadedBy: params[7]
+          channel: params[2],
+          sender: params[3],
+          text: params[4],
+          timestamp: params[5],
+          source: params[7],
+          uploadedBy: params[8]
         });
         return [{ affectedRows: 1 }];
       }
@@ -47,6 +48,11 @@ function memoryDB() {
     schema,
     async query(sql) {
       schema.push(sql);
+    },
+    // The column probe runs before the table can be altered; reporting the
+    // column missing exercises the migration on every test run.
+    async execute() {
+      return [[{present: 0}]];
     },
     async getConnection() {
       return connection;
@@ -105,6 +111,7 @@ test('guild chat ingestion dedupes reporters within 30 seconds but keeps a later
   assert.equal(db.rows[0].uploadedBy, 'Eva', 'the submitting GuildSync user is recorded');
   assert.equal(db.rows[0].guild, '761817');
   assert.equal(db.rows[0].timestamp, 1795636949);
+  assert.equal(db.rows[0].channel, 'guild', 'a report without a channel is guild chat');
 
   const secondReport = await ingestGuildChatMessages(db, {
     guildId: '761817',
@@ -138,4 +145,25 @@ test('guild chat ingestion dedupes reporters within 30 seconds but keeps a later
   assert.equal(invalid.chat_messages_skipped, 3);
   assert.equal(invalid.chat_messages_inserted, 0);
   assert.ok(db.schema[0].includes('CREATE TABLE IF NOT EXISTS guildsync_guild_chat_messages'));
+  assert.ok(db.schema[0].includes('channel VARCHAR(16) NOT NULL DEFAULT \'guild\''));
+  assert.ok(db.schema.some(sql => sql.includes('ADD COLUMN channel')));
+});
+
+test('officer chat is stored as officer chat and never deduped against guild chat', async () => {
+  const db = memoryDB();
+
+  const officer = await ingestGuildChatMessages(db, {
+    guildId: '761817',
+    uploadedBy: 'Eva',
+    entries: [
+      { sender: '@Officer', timestamp: 1795637000, text: 'Raid at 8', channel: 'officer' },
+      { sender: '@Officer', timestamp: 1795637000, text: 'Raid at 8', channel: 'guild' },
+      { sender: '@Officer', timestamp: 1795637001, text: 'Officer only', channel: 'OFFICER' },
+      { sender: '@Officer', timestamp: 1795637002, text: 'Unknown channel', channel: 'whisper' }
+    ]
+  });
+
+  assert.equal(officer.chat_messages_inserted, 4, 'a channel change is a different message');
+  assert.deepEqual(db.rows.map(row => row.channel), ['officer', 'guild', 'officer', 'guild']);
+  assert.notEqual(db.rows[0].hash, db.rows[1].hash, 'the hash includes the channel');
 });

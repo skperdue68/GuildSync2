@@ -147,6 +147,30 @@ func TestGuildSyncChatEntriesOrderNumericallyAndDropInvalidRows(t *testing.T) {
 	}
 }
 
+func TestGuildSyncChatEntriesCarryTheChatChannel(t *testing.T) {
+	messages := map[string]interface{}{
+		"1": map[string]interface{}{"sender": "@Member", "timestamp": float64(1795636949), "text": "guild line"},
+		"2": map[string]interface{}{"sender": "@Officer", "timestamp": float64(1795636950), "text": "officer line", "channel": "officer"},
+		"3": map[string]interface{}{"sender": "@Member", "timestamp": float64(1795636951), "text": "odd channel", "channel": "whisper"},
+	}
+
+	entries := guildSyncChatEntries(messages)
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+
+	expected := []string{"guild", "officer", "guild"}
+	for index, entry := range entries {
+		value, ok := getLuaMap(entry)
+		if !ok {
+			t.Fatalf("entry %d is not an object", index)
+		}
+		if value["channel"] != expected[index] {
+			t.Fatalf("entry %d: expected channel %q, got %v", index, expected[index], value["channel"])
+		}
+	}
+}
+
 func writeChatSavedVarsFile(t *testing.T, text string) string {
 	t.Helper()
 

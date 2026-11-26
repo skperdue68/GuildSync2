@@ -221,9 +221,24 @@ function buildRow(message) {
   row.dataset.uploadedBy = message.uploaded_by || '';
   row.title = 'Click to copy a link to this message';
 
+  // Officer chat belongs to the same guild but is a private conversation, so
+  // the row is marked instead of being mixed in silently.
+  const channel = String(message.channel || '').toLowerCase() === 'officer' ? 'officer' : 'guild';
+  row.dataset.channel = channel;
+  row.classList.toggle('chat-row-officer', channel === 'officer');
+
+  const messageCell = cell('cell-message', message.message_text || '');
+
+  if (channel === 'officer') {
+    const tag = document.createElement('span');
+    tag.className = 'officer-tag';
+    tag.textContent = 'OFFICER';
+    messageCell.prepend(tag);
+  }
+
   row.append(cell('cell-time', formatLocalTimestamp(message.message_timestamp)));
   row.append(cell('cell-sender', message.sender || 'unknown'));
-  row.append(cell('cell-message', message.message_text || ''));
+  row.append(messageCell);
 
   return row;
 }
@@ -546,6 +561,7 @@ function tooltipLine(label, value) {
 
 function fillTooltip(row) {
   elements.tooltip.replaceChildren(
+    tooltipLine('Channel', row.dataset.channel === 'officer' ? 'Officer chat' : 'Guild chat'),
     tooltipLine('Received', formatLocalIso(row.dataset.receivedAt)),
     tooltipLine('Uploaded by', row.dataset.uploadedBy || 'unknown')
   );

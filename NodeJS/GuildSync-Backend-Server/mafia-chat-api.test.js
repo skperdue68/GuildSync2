@@ -122,6 +122,7 @@ test('the query orders by the whitelisted column and keeps the filters as parame
   assert.equal(messages.length, 1);
   assert.deepEqual(messages[0], {
     id: '12',
+    channel: 'guild',
     sender: '@evainefaye',
     message_text: 'Howdy Mafia!',
     message_timestamp: 1795636949,
@@ -200,6 +201,12 @@ test('rows without a usable received_at do not break the payload', () => {
   assert.equal(mapMafiaChatRow({id: 1, received_at: 'not a date'}).received_at, null);
 });
 
+test('rows carry the conversation they came from', () => {
+  assert.equal(mapMafiaChatRow({id: 1}).channel, 'guild', 'a row without a channel is guild chat');
+  assert.equal(mapMafiaChatRow({id: 1, channel: 'officer'}).channel, 'officer');
+  assert.equal(mapMafiaChatRow({id: 1, channel: ' OFFICER '}).channel, 'officer');
+});
+
 test('the messages route answers with the filtered page and its offset', async () => {
   const db = fakeDb({
     total: 1,
@@ -235,6 +242,8 @@ test('the messages route answers with the filtered page and its offset', async (
     assert.equal(payload.sort, 'sender');
     assert.equal(payload.dir, 'asc');
     assert.equal(payload.messages[0].sender, '@thelamb_sauce');
+    assert.equal(payload.messages[0].channel, 'guild');
+    assert.match(db.calls.at(-1).sql, /SELECT id, channel, sender, message_text/);
     assert.match(db.calls[0].sql, /message_timestamp >= \?/);
   } finally {
     await new Promise(done => server.close(done));

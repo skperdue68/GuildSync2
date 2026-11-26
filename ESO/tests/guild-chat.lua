@@ -11,6 +11,11 @@ CHAT_CHANNEL_GUILD_2 = 11
 CHAT_CHANNEL_GUILD_3 = 12
 CHAT_CHANNEL_GUILD_4 = 13
 CHAT_CHANNEL_GUILD_5 = 14
+CHAT_CHANNEL_OFFICER_1 = 20
+CHAT_CHANNEL_OFFICER_2 = 21
+CHAT_CHANNEL_OFFICER_3 = 22
+CHAT_CHANNEL_OFFICER_4 = 23
+CHAT_CHANNEL_OFFICER_5 = 24
 EVENT_MANAGER = {
   RegisterForEvent = function(_, name, event, callback) handlers[name .. event] = callback end,
   UnregisterForEvent = function(_, name, event) handlers[name .. event] = nil end,
@@ -60,14 +65,21 @@ equal(record.guild, nil, 'the filtered guild is not repeated in each saved messa
 equal(record.sender, '@Member', 'sender is the canonical account name')
 equal(record.timestamp, 1700000000, 'timestamp is the server epoch')
 equal(record.text, 'Hello guild', 'raw message text is kept')
+equal(record.channel, 'guild', 'guild chat is marked as guild chat')
 fire(EVENT_CHAT_MESSAGE_CHANNEL, CHAT_CHANNEL_GUILD_3, '@Legacy', 'No display name', false, nil)
 equal(data.messages[2].sender, '@Legacy', 'sender falls back to the raw name')
 equal(#data.messages, 2, 'each message is appended')
+fire(EVENT_CHAT_MESSAGE_CHANNEL, CHAT_CHANNEL_OFFICER_3, '@Officer', 'Officer line', false, '@Officer')
+equal(#data.messages, 3, 'target guild officer chat is captured')
+equal(data.messages[3].channel, 'officer', 'officer chat is marked as officer chat')
+equal(data.messages[3].sender, '@Officer', 'officer sender is the canonical account name')
+fire(EVENT_CHAT_MESSAGE_CHANNEL, CHAT_CHANNEL_OFFICER_1, '@OtherMember', 'Other guild officer line', false, '@OtherMember')
+equal(#data.messages, 3, 'officer chat from another guild is ignored')
 messages = {}
 SLASH_COMMANDS['/gsc']('status')
 local status = table.concat(messages, '\n')
-assert(status:find('Alphabet Mafia guild chat from guild slot 3', 1, true), 'status names the resolved guild and slot')
-assert(status:find('2 messages saved on NA Megaserver', 1, true), 'status reports the saved count and world')
+assert(status:find('Alphabet Mafia guild and officer chat from guild slot 3', 1, true), 'status names the resolved guild, channels and slot')
+assert(status:find('3 messages saved on NA Megaserver', 1, true), 'status reports the saved count and world')
 SLASH_COMMANDS['/gsc']('debug on')
 equal(data.debugChat, true, 'debug logging persists in SavedVariables')
 messages = {}
@@ -85,15 +97,15 @@ slots = {[1] = 101, [5] = 404}
 names[404] = 'Alphabet Mafia'
 names[303] = 'Former Guild'
 fire(EVENT_CHAT_MESSAGE_CHANNEL, CHAT_CHANNEL_GUILD_3, '@Old', 'Old slot message', false, '@Old')
-equal(#data.messages, 3, 'a slot the guild left is not captured')
+equal(#data.messages, 4, 'a slot the guild left is not captured')
 fire(EVENT_CHAT_MESSAGE_CHANNEL, CHAT_CHANNEL_GUILD_5, '@New', 'New slot message', false, '@New')
-equal(#data.messages, 4, 'the moved guild is captured on its new slot')
-equal(data.messages[4].text, 'New slot message', 'moved guild message is stored')
+equal(#data.messages, 5, 'the moved guild is captured on its new slot')
+equal(data.messages[5].text, 'New slot message', 'moved guild message is stored')
 -- Leaving the guild is picked up from the slots as well.
 slots = {[1] = 101}
 names[404] = 'Former Guild'
 fire(EVENT_CHAT_MESSAGE_CHANNEL, CHAT_CHANNEL_GUILD_5, '@Old', 'After leaving', false, '@Old')
-equal(#data.messages, 4, 'capture stops once the guild slot is gone')
+equal(#data.messages, 5, 'capture stops once the guild slot is gone')
 messages = {}
 SLASH_COMMANDS['/gsc']('status')
 local missing = table.concat(messages, '\n')
