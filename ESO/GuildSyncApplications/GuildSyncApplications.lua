@@ -3,7 +3,7 @@
 local GSA = {}
 
 GSA.name = "GuildSyncApplications"
-GSA.version = "2.1.3-beta"
+GSA.version = "2.1.4"
 
 local WELCOME_GUILD_NAME = "Alphabet Mafia"
 

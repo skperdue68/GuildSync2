@@ -71,7 +71,7 @@ import {uploadGuildChatAndMaybeClear} from './chat-upload.js';
 const EventsOn = createEventsOn(Events);
 const BrowserOpenURL = url => Browser.OpenURL(url);
 
-const GUILDSYNC_APP_VERSION = '2.1.3-beta';
+const GUILDSYNC_APP_VERSION = '2.1.4';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 const PENDING_TRADER_UPLOADS_STORAGE_KEY = 'guildsync-pending-trader-uploads';

@@ -59,7 +59,7 @@ import {
 
 import { EventsOn } from './web-events.js';
 
-const GUILDSYNC_APP_VERSION = '2.1.3-beta';
+const GUILDSYNC_APP_VERSION = '2.1.4';
 
 const GUILDSYNC_DESKTOP_CLIENT_PLATFORM_LABELS = {
   windows: { label: 'Windows detected', shortLabel: 'Windows' },
