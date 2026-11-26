@@ -1,3 +1,4 @@
+import {discordDisplayName,renderDiscordNames,createMemberHistoryFallback} from './member-discovery.js';
 import './discord-reminders.css';
 import {createDiscordReminderControls} from './discord-reminders.js';
 import './eso-account-rename.css';
@@ -179,7 +180,7 @@ let discordDataError = '';
 let discordSearchText = '';
 let discordSelectedRoleNames = new Set();
 let discordSelectedLinkStatuses = new Set();
-let discordSortColumn = 'username';
+let discordSortColumn = 'display_name';
 let discordSortDirection = 'asc';
 let discordSearchSelectionStart = null;
 let discordSearchSelectionEnd = null;
@@ -327,6 +328,12 @@ const GUILDSYNC_TABS = [
 ];
 
 let activeGuildSyncTab = GUILDSYNC_TABS[0].id;
+let bankingHistoryGeneration = 0;
+const memberHistoryFallback = createMemberHistoryFallback({
+  context: getMemberHistoryFallbackContext,
+  request: (kind, query) => emitSocketWithAck(kind === 'discord' ? 'guildsync:request-discord-member-history' : 'guildsync:request-roster-rank-history', { query }, 30000),
+  open: openMemberHistoryFallback
+});
 const pendingTabDataRefreshes = new Set();
 
 function showSplash() {
@@ -576,14 +583,14 @@ function renderGuildSyncTabContent() {
   `;
 }
 
-function isBlockingModalOpen() {
+function isBlockingModalOpen({ ignoreHistory = false } = {}) {
   return userAdministrationPanel.isOpen || guildSyncConfirmDialogOpen
-    || rosterHistoryDialogOpen
-    || discordHistoryDialogOpen
+    || (!ignoreHistory && rosterHistoryDialogOpen)
+    || (!ignoreHistory && discordHistoryDialogOpen)
     || manualBiweeklyTicketDialogOpen
     || bankingMoveDialogOpen
     || userSettingsDialogOpen
-    || bankingHistoryDialogOpen
+    || (!ignoreHistory && bankingHistoryDialogOpen)
     || memberLinkDialogOpen
     || rosterNotesDialogOpen
     || associateTicketReportDialogOpen
@@ -667,6 +674,7 @@ function handleGlobalModalEscape(event) {
 
 if (!window.guildSyncGlobalModalEscapeAttached) {
   window.addEventListener('keydown', handleGlobalModalEscape, true);
+  window.addEventListener('resize', updateHistoryNavigation);
   window.guildSyncGlobalModalEscapeAttached = true;
 }
 
@@ -807,21 +815,93 @@ function refreshPendingTabData(tab) {
   if (pendingTabDataRefreshes.has(tab)) refreshActiveTabData(tab);
 }
 
+function navigateGuildSyncTab(nextTab) {
+  if (!GUILDSYNC_TABS.some(tab => tab.id === nextTab) || isBlockingModalOpen({ ignoreHistory: true })) return;
+  const hadHistory = rosterHistoryDialogOpen || discordHistoryDialogOpen || bankingHistoryDialogOpen;
+  memberHistoryFallback.cancel();
+  if (hadHistory) closeHistoryDialogsForNavigation();
+  const changed = nextTab !== activeGuildSyncTab;
+  activeGuildSyncTab = nextTab;
+  refreshActiveTabData();
+  if (changed || hadHistory) renderGuildSyncTabLayout();
+}
+
+function closeHistoryDialogsForNavigation() {
+  clearTimeout(rosterHistorySearchTimer);
+  clearTimeout(discordHistorySearchTimer);
+  clearTimeout(bankingHistorySearchTimer);
+  rosterHistorySearchGeneration++;
+  rosterHistoryLoadGeneration++;
+  discordHistorySearchGeneration++;
+  discordHistoryLoadGeneration++;
+  bankingHistoryGeneration++;
+  rosterHistoryDialogOpen = discordHistoryDialogOpen = bankingHistoryDialogOpen = false;
+  rosterHistoryLoading = discordHistoryLoading = bankingHistoryLoading = false;
+  esoAccountRename.reset();
+}
+
+function updateHistoryNavigation() {
+  const nav = document.querySelector('.guildsync-tabs');
+  const historyOpen = rosterHistoryDialogOpen || discordHistoryDialogOpen || bankingHistoryDialogOpen;
+  if (isBlockingModalOpen()) memberHistoryFallback.cancel();
+  nav?.classList.toggle('guildsync-history-navigation', historyOpen && !isBlockingModalOpen({ ignoreHistory: true }));
+  if (nav && historyOpen) {
+    const rect = nav.getBoundingClientRect();
+    const atBottom = rect.top > window.innerHeight / 2;
+    document.documentElement.style.setProperty('--member-history-navigation-top', `${atBottom ? 0 : Math.max(0, rect.bottom + 8)}px`);
+    document.documentElement.style.setProperty('--member-history-navigation-bottom', `${atBottom ? Math.max(0, window.innerHeight - rect.top + 8) : 0}px`);
+  }
+}
+
+function getMemberHistoryFallbackContext(kind) {
+  const discord = kind === 'discord';
+  const tab = discord ? 'discord-members' : 'eso-members';
+  return {
+    query: String(discord ? discordSearchText : rosterSearchText).trim(),
+    tab: activeGuildSyncTab,
+    session: `${sessionGeneration}:${socket?.id || ''}`,
+    loading: discord ? discordDataLoading : rosterDataLoading,
+    eligible: activeGuildSyncTab === tab && Boolean(socket?.connected) && isAuthenticatedSession()
+
+      && !isBlockingModalOpen() && (discord ? getFilteredDiscordMembers() : getFilteredRosterMembers()).length === 0
+  };
+}
+
+function openMemberHistoryFallback(kind, {query, matches}) {
+  memberHistoryFallback.cancel();
+  if (kind === 'discord') {
+    discordHistorySearchGeneration++;
+    discordHistoryLoadGeneration++;
+    discordHistorySearchText = query;
+    discordHistoryMatches = normalizeDiscordHistoryMatches(matches);
+    discordHistoryActiveMatchIndex = 0;
+    discordHistorySelectedID = discordHistorySelectedName = '';
+    discordHistoryEvents = [];
+    discordHistoryError = '';
+    discordHistoryLoading = false;
+    discordHistoryDialogOpen = true;
+  } else {
+    rosterHistorySearchGeneration++;
+    rosterHistoryLoadGeneration++;
+    rosterHistorySearchText = query;
+    rosterHistoryMatches = normalizeRosterHistoryMatches(matches);
+    rosterHistoryActiveMatchIndex = 0;
+    rosterHistorySelectedAccount = '';
+    rosterHistoryApplications = [];
+    rosterHistoryApplicationsLoaded = false;
+    rosterHistoryEvents = [];
+    rosterHistoryError = '';
+    rosterHistoryLoading = false;
+    rosterHistoryDialogOpen = true;
+  }
+  renderGuildSyncTabLayout();
+  focusInputById(kind === 'discord' ? 'discordHistorySearchInput' : 'rosterHistorySearchInput');
+}
+
 function wireGuildSyncTabs() {
-  document.querySelectorAll('.guildsync-tab').forEach((tabButton) => {
-    tabButton.addEventListener('click', () => {
-      if (isBlockingModalOpen()) {
-        return;
-      }
-
-      const nextTab = tabButton.dataset.tabId;
-
-      if (!nextTab) return;
-      const changed = nextTab !== activeGuildSyncTab;
-      activeGuildSyncTab = nextTab;
-      refreshActiveTabData();
-      if (changed) renderGuildSyncTabLayout();
-    });
+  updateHistoryNavigation();
+  document.querySelectorAll('.guildsync-tab').forEach(tabButton => {
+    tabButton.addEventListener('click', () => navigateGuildSyncTab(tabButton.dataset.tabId));
   });
 }
 
@@ -1019,9 +1099,10 @@ function renderDiscordMemberDataPanel() {
         </div>
 
         <div class="discord-member-table-shell">
-          <table class="discord-member-table member-history-table">
+          <table class="discord-member-table member-history-table discord-members-current-table">
             <thead>
               <tr>
+                ${renderDiscordSortableHeader('display_name', 'Display Name')}
                 ${renderDiscordSortableHeader('username', 'Username')}
                 ${renderDiscordSortableHeader('global_name', 'Global Name')}
                 ${renderDiscordSortableHeader('server_nickname', 'Server Nickname')}
@@ -1579,7 +1660,7 @@ function memberLinkFilterSetMatches(filterSet, currentStatus) {
 
 function renderDiscordHistoryDialog() {
   return `
-    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="discordHistoryTitle">
+    <div class="roster-history-overlay member-history-navigation-overlay" role="dialog" aria-labelledby="discordHistoryTitle">
       <div class="roster-history-dialog roster-rank-history-dialog discord-member-history-dialog">
         <div class="roster-history-header">
           <div>
@@ -1708,7 +1789,7 @@ const esoAccountRename = createEsoAccountRename({
 
 function renderRosterHistoryDialog() {
   return `
-    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="rosterHistoryTitle">
+    <div class="roster-history-overlay member-history-navigation-overlay" role="dialog" aria-labelledby="rosterHistoryTitle">
       <div class="roster-history-dialog roster-rank-history-dialog">
         <div class="roster-history-header">
           <div>
@@ -3504,6 +3585,7 @@ function renderMemberLinkCurrentCard(link) {
       <div class="member-link-current-details">
         <div><span>ESO:</span> ${escapeHtml(link.eso_account_name || '')}</div>
         <div><span>Discord:</span> ${escapeHtml(discordName)}</div>
+        ${renderDiscordNames(link, {matchField: getMemberLinkMatchedField(link), fuzzy: isCandidate || link.link_method === 'fuzzy'})}
         <div><span>Status:</span> ${renderMemberLinkCurrentStatus(link)} · ${escapeHtml(formatMemberLinkMethodForDisplay(link.link_method))} · ${escapeHtml(String(link.match_confidence ?? ''))}% · ${escapeHtml(lockedText)}</div>
         ${getMemberLinkMatchedField(link) ? `<div><span>Matched:</span> Matched on ${escapeHtml(getMemberLinkMatchedField(link))}</div>` : ''}
       </div>
@@ -3587,8 +3669,12 @@ function renderMemberLinkDialogOption(option, options = {}) {
   const matchField = formatDiscordMatchFieldName(option.matchField || option.match_field || option.discordMatchField || option.discord_match_field);
   const baseSubLabel = mode === 'discord-to-eso'
     ? `Rank: ${option.rank || ''}`
-    : [option.username, option.global_name, option.server_nickname].filter(Boolean).join(' · ');
+    : '';
   const subLabel = [baseSubLabel, matchField ? `Matched on ${matchField}` : ''].filter(Boolean).join(' • ');
+  const discord = mode === 'discord-to-eso'
+    ? discordMembers.find(member => String(member.discord_id) === String(memberLinkDialogContext?.discordUserId)) || getMemberLinksForDialog()[0] || {}
+    : option;
+  const names = renderDiscordNames(discord, {matchField, fuzzy: Number(option.confidence || 0) > 0 && Number(option.confidence || 0) < 100});
   const value = mode === 'discord-to-eso' ? option.account_name : option.discord_id;
   const disabled = options.disabled === true;
 
@@ -3603,7 +3689,7 @@ function renderMemberLinkDialogOption(option, options = {}) {
   return `
     <button class="member-link-option-row" type="button" data-member-link-option-value="${escapeAttribute(value || '')}" data-member-link-option-search="${escapeAttribute(searchText)}" title="${escapeAttribute(fullDisplayText)}" ${disabled ? 'disabled' : ''}>
       <span class="member-link-option-name" title="${escapeAttribute(label || '')}">${escapeHtml(label || '')}</span>
-      <span class="member-link-option-subtitle" title="${escapeAttribute(subLabel || '')}">${escapeHtml(subLabel || '')}</span>
+      <span class="member-link-option-subtitle" title="${escapeAttribute(subLabel || '')}">${escapeHtml(subLabel || '')}${names}</span>
       <span class="member-link-option-confidence" title="${escapeAttribute(String(option.confidence ?? 0))}%">${escapeHtml(String(option.confidence ?? 0))}%</span>
     </button>
   `;
@@ -4827,6 +4913,7 @@ function wireEsoRosterPanel() {
       rosterSearchSelectionEnd = event.target.selectionEnd;
       rosterSearchActiveIndex = -1;
       renderGuildSyncTabLayout({ restoreRosterSearchFocus: true });
+      memberHistoryFallback.schedule('roster');
     });
 
     rosterSearchInput.addEventListener('keydown', handleRosterSearchKeydown);
@@ -5959,7 +6046,7 @@ function renderBankDepositsPanel() {
 
 function renderBankingHistoryDialog() {
   return `
-    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="bankingHistoryTitle">
+    <div class="roster-history-overlay member-history-navigation-overlay" role="dialog" aria-labelledby="bankingHistoryTitle">
       <div class="roster-history-dialog banking-history-dialog">
         <div class="roster-history-header banking-history-header">
           <div>
@@ -6547,6 +6634,7 @@ function openBankingHistoryDialog() {
 }
 
 function closeBankingHistoryDialog() {
+  bankingHistoryGeneration++;
   bankingHistoryDialogOpen = false;
   bankingHistoryLoading = false;
   bankingHistoryError = '';
@@ -6617,6 +6705,7 @@ function wireBankingHistoryDialog() {
 }
 
 async function searchBankingHistoryMatches(options = {}) {
+  const generation = ++bankingHistoryGeneration;
   const query = bankingHistorySearchText.trim();
 
   if (!query) {
@@ -6645,6 +6734,7 @@ async function searchBankingHistoryMatches(options = {}) {
   try {
     const response = await emitSocketWithAck('guildsync:request-banking-history-matches', { query }, 30000);
 
+    if (generation !== bankingHistoryGeneration || !bankingHistoryDialogOpen) return;
     if (!response?.ok) {
       throw new Error(response?.message || response?.error || 'Failed to search banking history.');
     }
@@ -6652,8 +6742,10 @@ async function searchBankingHistoryMatches(options = {}) {
     bankingHistoryMatches = normalizeBankingHistoryMatches(response.matches);
     bankingHistoryActiveMatchIndex = bankingHistoryMatches.length > 0 ? 0 : -1;
   } catch (error) {
+    if (generation !== bankingHistoryGeneration || !bankingHistoryDialogOpen) return;
     bankingHistoryError = formatError(error);
   } finally {
+    if (generation !== bankingHistoryGeneration || !bankingHistoryDialogOpen) return;
     bankingHistoryLoading = false;
     renderGuildSyncTabLayout();
     if (options.keepFocus) {
@@ -6663,6 +6755,7 @@ async function searchBankingHistoryMatches(options = {}) {
 }
 
 async function loadBankingHistoryRecords(accountName) {
+  const generation = ++bankingHistoryGeneration;
   const cleanAccountName = String(accountName || '').trim();
 
   if (!cleanAccountName) {
@@ -6681,14 +6774,17 @@ async function loadBankingHistoryRecords(accountName) {
   try {
     const response = await emitSocketWithAck('guildsync:request-banking-history-records', { account_name: cleanAccountName }, 30000);
 
+    if (generation !== bankingHistoryGeneration || !bankingHistoryDialogOpen) return;
     if (!response?.ok) {
       throw new Error(response?.message || response?.error || 'Failed to load banking history.');
     }
 
     bankingHistoryRecords = normalizeBankingHistoryRecords(response.records);
   } catch (error) {
+    if (generation !== bankingHistoryGeneration || !bankingHistoryDialogOpen) return;
     bankingHistoryError = formatError(error);
   } finally {
+    if (generation !== bankingHistoryGeneration || !bankingHistoryDialogOpen) return;
     bankingHistoryLoading = false;
     renderGuildSyncTabLayout();
   }
@@ -8240,6 +8336,7 @@ function wireDiscordMemberDataPanel() {
       discordSearchSelectionStart = event.target.selectionStart;
       discordSearchSelectionEnd = event.target.selectionEnd;
       renderGuildSyncTabLayout({ restoreDiscordSearchFocus: true });
+      memberHistoryFallback.schedule('discord');
     });
   }
 
@@ -8599,6 +8696,7 @@ function sortDiscordMembers(members) {
 }
 
 function getDiscordSortValue(member, column) {
+  if (column === 'display_name') return discordDisplayName(member);
   if (column === 'global_name') {
     return member.global_name || '';
   }
@@ -8619,7 +8717,7 @@ function getDiscordSortValue(member, column) {
 }
 
 function setDiscordSort(column) {
-  const allowedColumns = new Set(['username', 'global_name', 'server_nickname', 'roles']);
+  const allowedColumns = new Set(['display_name', 'username', 'global_name', 'server_nickname', 'roles']);
   const nextColumn = allowedColumns.has(column) ? column : 'username';
 
   if (discordSortColumn === nextColumn) {
@@ -8746,9 +8844,10 @@ function renderDiscordMemberRow(member) {
       ? `<img src="${escapeAttribute(avatarURL)}" alt="${escapeAttribute(displayName)}" />`
       : `<span>${escapeHtml(getInitials(displayName))}</span>`}
           </div>
-          <span>${escapeHtml(member.username || member.discord_id || 'Unknown')}</span>
+          <span>${escapeHtml(displayName)}</span>
         </div>
       </td>
+      <td>${escapeHtml(member.username || member.discord_id || 'Unknown')}</td>
       <td>${escapeHtml(member.global_name || '')}</td>
       <td>${escapeHtml(member.server_nickname || '')}</td>
       <td>
@@ -8771,7 +8870,7 @@ function renderEmptyDiscordMemberRow() {
 
   return `
     <tr>
-      <td colspan="6" class="discord-empty-row">${escapeHtml(message)}</td>
+      <td colspan="7" class="discord-empty-row">${escapeHtml(message)}</td>
     </tr>
   `;
 }
@@ -8978,7 +9077,7 @@ function getDiscordMemberAvatarURL(member) {
 }
 
 function getMemberSortName(member) {
-  return member.server_nickname || member.global_name || member.username || member.discord_id || 'Unknown';
+  return discordDisplayName(member);
 }
 
 function formatDiscordRefreshDate(value) {
@@ -9261,7 +9360,7 @@ function applyUserSwitchProfile(user) {
   discordSearchText = '';
   discordSelectedRoleNames = new Set();
   discordSelectedLinkStatuses = new Set();
-  discordSortColumn = 'username';
+  discordSortColumn = 'display_name';
   discordSortDirection = 'asc';
   discordSearchSelectionStart = null;
   discordSearchSelectionEnd = null;
@@ -9878,6 +9977,8 @@ function startSupportedDesktopConnection() {
 
 
 function disconnectSocket(updateDot = true) {
+  memberHistoryFallback.cancel();
+  closeHistoryDialogsForNavigation();
   desktopVersionAccepted = false;
   window.clearTimeout(desktopVersionHandshakeTimer);
   rosterHistoryLoadGeneration++;

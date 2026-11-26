@@ -29,10 +29,10 @@ for(const client of clients) {
   ctx.openRosterMemberHistory('@Alice');ctx.openDiscordMemberHistory('456','Same Name');
   assert.deepEqual(calls,[['roster','@Alice'],['discord','456','Same Name']]);assert.equal(ctx.rosterHistoryDialogOpen,true);assert.equal(ctx.discordHistoryDialogOpen,true);assert.equal(ctx.rosterHistoryMatches[0].account_name,'@Alice');assert.equal(ctx.discordHistoryMatches[0].discord_id,'456');assert.equal(ctx.discordHistoryActiveMatchIndex,0);
  });
- test(`${client}: roster keeps history before links without an extra reminder column`,()=>{
+ test(`${client}: roster and Discord keep history before links with a Discord display-name column`,()=>{
   const context=vm.createContext({canEditGuildSyncData:()=>false,renderMemberHistoryButton,escapeHtml:String,escapeAttribute:String,getEsoRosterRankColor:()=>'',rosterSearchActiveIndex:-1,renderEsoRosterRank:String,formatRosterJoinedDate:String,renderRosterNotesButton:()=> 'Notes',renderMemberLinkStatusButton:()=> 'Linked',getDiscordMemberAvatarURL:()=>'',getMemberSortName:()=> 'Alice',discordRoles:[],getDiscordMemberColor:()=> '#fff',getInitials:()=> 'A'});
   vm.runInContext(sourceFunction(source,'renderEsoRosterRow')+'\n'+sourceFunction(source,'renderDiscordMemberRow'),context);
-  for(const [html,columns] of [[context.renderEsoRosterRow({account_name:'@Alice',rank:'Associate'}),6],[context.renderDiscordMemberRow({discord_id:'123',username:'Alice'}),6]]) {
+  for(const [html,columns] of [[context.renderEsoRosterRow({account_name:'@Alice',rank:'Associate'}),6],[context.renderDiscordMemberRow({discord_id:'123',username:'Alice'}),7]]) {
    assert.equal((html.match(/<td[ >]/g)||[]).length,columns);assert.ok(html.indexOf('member-history-cell')<html.indexOf('member-link-action-cell'));
   }
   assert.match(source,/function bindLiveDataActions\(root\) \{\s+memberHistoryActions.wire\(root\)/);
