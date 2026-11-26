@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {membershipDMMessage,membershipReplyMessage,createMembershipDMWorker,formatMembershipStatus} from './membership-dms.js';
+import {createMemoryDMIntake} from './membership-dm-intake.js';
 const cardOf=payload=>{const embed=payload.embeds[0].toJSON();return {embed,fields:Object.fromEntries(embed.fields.map(field=>[field.name,field.value]))};};
 
 const job={id:'12345678-1234-1234-1234-123456789abc',userId:'10',name:'Member',token:'claim'};
@@ -31,9 +32,10 @@ function fixture(request) {
   kick:async reason=>{kicks.push(reason);},setNickname:async(name,reason)=>{nicknames.push([name,reason]);},
   roles:{add:async id=>roles.push(['add',id]),remove:async id=>roles.push(['remove',id])}};
  const cache=new Map([['10',member]]);
+ const intake=createMemoryDMIntake();
  const guild={id:'1',name:'Guild',members:{cache,fetch:async()=>member}};
  const client={user:{id:'bot'},isReady:()=>true,guilds:{fetch:async()=>guild},channels:{fetch:async()=>({guildId:'1',send:async payload=>{forwards.push(payload);return {id:'200'};}})}};
- return {worker:createMembershipDMWorker({client,guildId:'1',request,log:()=>{}}),sends,forwards,roles,member,kicks,nicknames,cache};
+ return {worker:createMembershipDMWorker({client,guildId:'1',request,log:()=>{},intake}),sends,forwards,roles,member,kicks,nicknames,cache,intake};
 }
 test('worker revalidates immediately before send and saves the confirmed message ID',async()=>{
  const calls=[];let claimed=false;
@@ -63,9 +65,49 @@ test('buttons open forms, and submitted responses are routed to the backend with
  const {worker}=fixture(async(action,payload)=>{calls.push([action,payload]);return {message:'Linked'};});
  await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,showModal:async value=>{modal=value;}});
  assert.equal(modal.toJSON().components[0].components[0].max_length,64);
+ let prompt;
+ await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>false,isModalSubmit:()=>true,inGuild:()=>false,user:{id:'10'},id:'123',fields:{getTextInputValue:()=>'@ESO'},reply:async value=>{prompt=value;}});
+ assert.deepEqual(calls,[],'nothing is saved before the nickname choice');
+ assert.deepEqual(prompt.components[0].toJSON().components.map(button=>button.custom_id),[
+  `gs-membership-rename:${job.id}:eso:ESO`,`gs-membership-keepname:${job.id}:eso:ESO`]);
  let reply;
- await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>false,isModalSubmit:()=>true,inGuild:()=>false,user:{id:'10'},id:'123',fields:{getTextInputValue:()=>'@ESO'},deferReply:async()=>{},editReply:async value=>{reply=value;}});
- assert.equal(calls[0][1].userId,'10');assert.equal(calls[0][1].text,'@ESO');assert.equal(reply,'Linked');
+ await worker.interaction({customId:`gs-membership-keepname:${job.id}:eso:ESO`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,user:{id:'10'},id:'124',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.equal(calls[0][1].userId,'10');assert.equal(calls[0][1].text,'ESO');assert.equal(calls[0][1].nicknameConsent,false);
+ assert.match(reply,/Linked/);assert.match(reply,/left unchanged/);
+});
+test('declining the nickname change still saves the ESO answer and skips the rename',async()=>{
+ const calls=[];let reply;
+ const {worker,nicknames}=fixture(async(action,payload)=>{calls.push([action,payload]);
+  return action==='response'?{status:'linked',message:'Linked.',nickname:{status:'declined',reason:'The member chose to keep their current server nickname.'}}:{ok:true};});
+ await worker.interaction({customId:`gs-membership-keepname:${job.id}:eso:ESOName`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1004',deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ assert.deepEqual(nicknames,[]);
+ assert.equal(calls[0][1].nicknameConsent,false);
+ assert.equal(calls.filter(([action])=>action==='outcome').length,0,'there is no Discord action to report');
+ assert.match(reply,/left unchanged/);
+});
+test('a Discord outcome survives a dropped backend and is replayed before the card',async()=>{
+ let offline=true;const replayed=[];
+ const {worker,member,intake,kicks}=fixture(async(action,payload)=>{
+  if(action==='response')return {status:'removal requested',message:'Sent to the officers.'};
+  if(action==='outcome'){
+   if(offline)throw Object.assign(Error('Backend disconnected'),{code:'ECONNREFUSED'});
+   replayed.push(payload);return {ok:true};
+  }
+  return {ok:true};
+ });
+ await worker.interaction({customId:`gs-membership-confirm:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1005',deferReply:async()=>{},editReply:async()=>{}});
+ assert.deepEqual(kicks,['User Request']);
+ const pending=await intake.list();
+ assert.equal(pending.length,1);
+ assert.equal(pending[0].kind,'outcome');
+ assert.deepEqual(pending[0].payload.removal,{status:'kicked'});
+ offline=false;
+ await worker.retryIntake();
+ assert.equal(replayed.length,1);
+ assert.deepEqual(replayed[0],{eventId:'1005',removal:{status:'kicked'}});
+ assert.deepEqual(await intake.list(),[]);
 });
 test('a removal request asks for confirmation before anything is recorded or kicked',async()=>{
  const calls=[];let reply;
@@ -126,8 +168,8 @@ test('an ESO answer sets the server nickname once and reports it',async()=>{
  const calls=[];let reply;
  const {worker,nicknames}=fixture(async(action,payload)=>{calls.push([action,payload]);
   return action==='response'?{status:'linked',message:'Linked.',rename:{allowed:true,name:'ESOName'}}:{ok:true};});
- await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>false,isModalSubmit:()=>true,inGuild:()=>false,
-  user:{id:'10'},id:'1002',fields:{getTextInputValue:()=>'@ESOName'},deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ await worker.interaction({customId:`gs-membership-rename:${job.id}:eso:ESOName`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1002',deferReply:async()=>{},editReply:async value=>{reply=value;}});
  assert.deepEqual(nicknames,[['ESOName','GuildSync membership DM: ESO account name']]);
  const outcome=calls.find(([action])=>action==='outcome')[1];
  assert.deepEqual(outcome.nickname,{status:'set',name:'ESOName'});
@@ -138,8 +180,8 @@ test('a nickname another member already uses is never applied',async()=>{
  const {worker,nicknames,cache}=fixture(async(action,payload)=>{calls.push([action,payload]);
   return action==='response'?{status:'linked',message:'Linked.',rename:{allowed:true,name:'ESOName'}}:{ok:true};});
  cache.set('20',{id:'20',displayName:'Other',nickname:'ESOName',user:{username:'other'}});
- await worker.interaction({customId:`gs-membership:${job.id}:eso`,isButton:()=>false,isModalSubmit:()=>true,inGuild:()=>false,
-  user:{id:'10'},id:'1003',fields:{getTextInputValue:()=>'@ESOName'},deferReply:async()=>{},editReply:async value=>{reply=value;}});
+ await worker.interaction({customId:`gs-membership-rename:${job.id}:eso:ESOName`,isButton:()=>true,isModalSubmit:()=>false,inGuild:()=>false,
+  user:{id:'10'},id:'1003',deferReply:async()=>{},editReply:async value=>{reply=value;}});
  assert.deepEqual(nicknames,[]);
  const outcome=calls.find(([action])=>action==='outcome')[1];
  assert.equal(outcome.nickname.status,'skipped');

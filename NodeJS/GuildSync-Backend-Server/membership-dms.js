@@ -32,7 +32,7 @@ export {dmConfig};
 // actually happened instead of claiming an officer still has to act.
 const OUTCOME_GRACE_SECONDS=45;
 const REMOVAL_STATUSES=new Set(['kicked','gone','failed']);
-const NICKNAME_STATUSES=new Set(['set','skipped','failed']);
+const NICKNAME_STATUSES=new Set(['set','skipped','failed','declined']);
 const outcomeText=value=>String(value??'').trim().slice(0,300);
 
 // The bot reports what Discord did; only known outcomes and bounded text are kept,
@@ -243,6 +243,14 @@ export async function initializeMembershipDMs(db) {
     choice VARCHAR(20) NOT NULL,response_text LONGTEXT NOT NULL,responded_at DATETIME(3) NOT NULL,
     PRIMARY KEY (guild_id,discord_user_id),INDEX idx_membership_dm_response_choice (guild_id,choice)
   ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  // The kick and nickname outcomes are stored with the response so a repost shows
+  // what Discord actually did, even after the queued event has been pruned.
+  await db.query(`ALTER TABLE guildsync_membership_dm_responses
+    ADD COLUMN IF NOT EXISTS removal_status VARCHAR(16) DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS removal_reason VARCHAR(300) DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS nickname_status VARCHAR(16) DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS nickname_name VARCHAR(64) DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS nickname_reason VARCHAR(300) DEFAULT NULL`);
 }
 
 // The per-guild JSON keeps only operational state (the campaign queue, preferences
@@ -384,6 +392,17 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       return {allowed:false,reason:'That ESO account is already linked to another Discord member.'};
     return {allowed:true,name:canonical};
   }
+  // The latest Discord outcome is written onto the stored response as well as the
+  // queued event, so a repost can report it after the event is gone.
+  async function saveResponseOutcome(connection,guildId,userId,result={}) {
+    const removal=result.removal||{},nickname=result.nickname||{};
+    await connection.execute(`UPDATE guildsync_membership_dm_responses SET
+      removal_status=COALESCE(?,removal_status),removal_reason=COALESCE(?,removal_reason),
+      nickname_status=COALESCE(?,nickname_status),nickname_name=COALESCE(?,nickname_name),
+      nickname_reason=COALESCE(?,nickname_reason) WHERE guild_id=? AND discord_user_id=?`,
+      [removal.status||null,removal.reason||null,nickname.status||null,nickname.name||null,
+        nickname.reason||null,guildId,String(userId)]);
+  }
   async function removeMemberLinks(connection,userId) {
     const [result]=await connection.execute("DELETE FROM guildsync_member_links WHERE discord_user_id=? AND auto_link_blocked=0 AND COALESCE(link_method,'')<>'manual_unlink' AND link_status NOT IN ('blocked','unlinked')",[String(userId)]);
     return Number(result?.affectedRows||0);
@@ -506,8 +525,7 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
       const key=String(userId??'').trim();
       if(!/^\d+$/.test(key))throw Error('Choose a Discord member whose stored membership reply to repost.');
-      const [rows]=await db.execute(`SELECT display_name,eso_account_name,choice,response_text,responded_at
-        FROM guildsync_membership_dm_responses WHERE guild_id=? AND discord_user_id=?`,[guildId,key]);
+      const [rows]=await db.execute(`SELECT * FROM guildsync_membership_dm_responses WHERE guild_id=? AND discord_user_id=?`,[guildId,key]);
       const row=rows[0];
       if(!row)throw Error('No stored membership reply was found for that member.');
       const config=configuration();
@@ -518,8 +536,11 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         const [links]=await db.execute("SELECT link_status FROM guildsync_member_links WHERE discord_user_id=? AND LOWER(TRIM(LEADING '@' FROM TRIM(eso_account_name)))=? LIMIT 1",[key,account.toLowerCase()]);
         if(links.some(link=>String(link.link_status)==='linked'))status='linked';
       }
+      const removal=row.removal_status?{status:String(row.removal_status),reason:row.removal_reason||null}:null;
+      const nickname=row.nickname_status?{status:String(row.nickname_status),name:row.nickname_name||null,reason:row.nickname_reason||null}:null;
       return {response:{userId:key,name:row.display_name||'',choice:row.choice,text:row.response_text||'',
-        at:Math.floor(new Date(row.responded_at).getTime()/1000),result:{status,accountName}},
+        at:Math.floor(new Date(row.responded_at).getTime()/1000),
+        result:{status,accountName,...(removal?{removal}:{}),...(nickname?{nickname}:{})}},
         destinationType:config.destinationType,destinationId:config.destinationId};
     },
     async claim(guildId){return atomic(guildId,async(state,connection,config)=>{
@@ -552,7 +573,7 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       }catch{}
       return job;
     });},
-    async response(guildId,{userId,deliveryId,eventId,choice,text=''}) {
+    async response(guildId,{userId,deliveryId,eventId,choice,text='',nicknameConsent}) {
       if(!['eso','community','not_playing','remove','other'].includes(choice)||String(text).length>10000||!/^\d+$/.test(String(eventId)))throw Error('Invalid membership response.');
       return atomic(guildId,async(state,connection,config)=>{
         // Only the exact DM button or form a member pressed can answer a campaign;
@@ -577,6 +598,10 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
             result=await autoLink(connection,userId,text);
             if(result.status==='linked')delete state.preferences[userId];
             result.rename=await renameDecision(connection,userId,text);
+            // A member who keeps their own name is still linked; the card records
+            // that the nickname change was offered and declined.
+            if(nicknameConsent===false)result.nickname={status:'declined',
+              reason:'The member chose to keep their current server nickname.'};
           }
           if(choice==='community'||choice==='not_playing'){
             state.preferences[userId]=choice;
@@ -599,6 +624,7 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
           ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),eso_account_name=COALESCE(VALUES(eso_account_name),eso_account_name),
           choice=VALUES(choice),response_text=VALUES(response_text),responded_at=VALUES(responded_at)`,
           [guildId,userId,String(job.name||'').slice(0,255),result.accountName?String(result.accountName).slice(0,255):null,choice,String(text||'').slice(0,10000),new Date(now()*1000)]);
+        if(!job.isTest&&(result.removal||result.nickname))await saveResponseOutcome(connection,guildId,userId,result);
         if(!job.isTest)try{
           await recordDiscordMemberHistoryEvent(connection,{discordId:userId,eventType:'membership_dm_response',
             fieldName:'membership_dm_response',newValue:responseHistoryText(choice,text,result)
@@ -606,7 +632,8 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         }catch{}
         // The kick and the nickname are carried out by the bot immediately after
         // this call returns, so their events wait briefly for the reported outcome.
-        const awaitingDiscordOutcome=!job.isTest&&(choice==='remove'||(choice==='eso'&&Boolean(result.rename?.allowed)));
+        const awaitingDiscordOutcome=!job.isTest&&!result.nickname
+          &&(choice==='remove'||(choice==='eso'&&Boolean(result.rename?.allowed)));
         state.events.push({eventId,deliveryId,userId,name:job.name,choice,text:String(text),at:now(),result,
           isTest:Boolean(job.isTest),destinationType:config.destinationId?config.destinationType:job.destinationType,destinationId:config.destinationId||job.destinationId,
           roleId:!job.isTest&&(['community','not_playing'].includes(choice)||result.status==='linked')?config.communityRoleId:'',
@@ -621,15 +648,19 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
     // removal request, or the nickname it set from a submitted ESO account name.
     async outcome(guildId,{eventId,removal,nickname}={}) {
       const clean=cleanMembershipOutcome({removal,nickname});
-      if(!clean||!/^\d+$/.test(String(eventId)))throw Error('Invalid membership response outcome.');
+      // Every rejection here is permanent: the queued answer is gone or never
+      // allowed this outcome, so a bot must drop its saved copy instead of retrying.
+      const stale=message=>Object.assign(Error(message),{code:'STALE_OUTCOME'});
+      if(!clean||!/^\d+$/.test(String(eventId)))throw stale('Invalid membership response outcome.');
       return atomic(guildId,async(state,connection)=>{
         const event=state.events.find(entry=>String(entry.eventId)===String(eventId));
-        if(!event)throw Error('That membership response is no longer queued.');
-        if(event.isTest)throw Error('Test responses never change the Discord server.');
-        if(clean.removal&&event.choice!=='remove')throw Error('Removal outcomes only apply to removal requests.');
-        if(clean.nickname&&event.choice!=='eso')throw Error('Nickname outcomes only apply to ESO account answers.');
+        if(!event)throw stale('That membership response is no longer queued.');
+        if(event.isTest)throw stale('Test responses never change the Discord server.');
+        if(clean.removal&&event.choice!=='remove')throw stale('Removal outcomes only apply to removal requests.');
+        if(clean.nickname&&event.choice!=='eso')throw stale('Nickname outcomes only apply to ESO account answers.');
         event.result={...event.result,...(clean.removal?{removal:clean.removal}:{}),...(clean.nickname?{nickname:clean.nickname}:{})};
         event.retryAt=now();
+        await saveResponseOutcome(connection,guildId,event.userId,clean);
         const note=clean.removal
           ?clean.removal.status==='kicked'?'Removed from the Discord server (reason: User Request)'
             :clean.removal.status==='gone'?'Already left the Discord server'

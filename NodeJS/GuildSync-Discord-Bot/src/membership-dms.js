@@ -1,7 +1,7 @@
 import {ActionRowBuilder,ButtonBuilder,ButtonStyle,EmbedBuilder,ModalBuilder,TextInputBuilder,TextInputStyle,Events} from 'discord.js';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {createFileDMIntake,createMemoryDMIntake} from './membership-dm-intake.js';
+import {createFileDMIntake,createMemoryDMIntake,membershipIntakeKey} from './membership-dm-intake.js';
 
 const nonce=id=>createHash('sha256').update(String(id)).digest('hex').slice(0,24);
 const safeText=value=>String(value||'').replace(/([\\`*_~|<>])/g,'\\$1');
@@ -216,10 +216,21 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
     }
   }
   async function retryIntake() {
-    for(const event of await intake.list()){
-      if(event.guildId!==guildId)continue;
-      try{await request('response',event.payload);await intake.remove(event.payload.eventId);}
-      catch(error){if(error.code==='NO_MEMBERSHIP_DM')await intake.remove(event.payload.eventId);else throw error;}
+    // An answer is replayed before the Discord outcome it belongs to, so the outcome
+    // attaches to the queued event in the same pass and the officer card is correct.
+    const events=(await intake.list()).filter(event=>event.guildId===guildId)
+      .sort((a,b)=>Number(a.kind==='outcome')-Number(b.kind==='outcome'));
+    for(const event of events){
+      try{
+        if(event.kind==='outcome')await request('outcome',event.payload);
+        else await request('response',event.payload);
+      }catch(error){
+        if(error.code==='NO_MEMBERSHIP_DM'||error.code==='STALE_OUTCOME'){
+          await intake.remove(membershipIntakeKey(event));continue;
+        }
+        throw error;
+      }
+      await intake.remove(membershipIntakeKey(event));
     }
   }
   async function repost({response,destinationType,destinationId},officerName) {
@@ -233,6 +244,11 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
   const removeConfirmRow=deliveryId=>new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`gs-membership-confirm:${deliveryId}:remove`).setLabel('Yes, remove me').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`gs-membership-cancel:${deliveryId}:remove`).setLabel('Keep me on the server').setStyle(ButtonStyle.Secondary));
+  // A nickname is the member's own identity, so it is offered as a choice. Declining
+  // still records the ESO answer and link.
+  const nameConsentRow=(deliveryId,name)=>new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`gs-membership-rename:${deliveryId}:eso:${name}`).setLabel('Yes, change my nickname').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`gs-membership-keepname:${deliveryId}:eso:${name}`).setLabel('No, keep my name').setStyle(ButtonStyle.Secondary));
   // The requested audit reason is the only text a moderator sees in Discord's audit log.
   async function kickForRemoval(userId) {
     try {
@@ -271,14 +287,25 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       return {status:'failed',reason:String(error?.message||'The nickname could not be set.').slice(0,300)};
     }
   }
+  // The kick or rename has already happened in Discord, so its report must survive a
+  // dropped backend: it is queued on disk and replayed before the officer card.
   async function reportOutcome(eventId,outcome) {
-    try { await request('outcome',{eventId,...outcome}); }
-    catch(error) { log('Membership Discord outcome could not be recorded: '+error.message); }
+    const payload={eventId,...outcome};
+    try { await request('outcome',payload); }
+    catch(error) {
+      if(error.code==='STALE_OUTCOME'){log('Membership Discord outcome was stale: '+error.message);return;}
+      try {
+        await intake.put({kind:'outcome',payload,guildId});
+        log('Membership Discord outcome saved locally for retry: '+error.message);
+      } catch(storeError) {
+        log('Membership Discord outcome could not be saved: '+storeError.message);
+      }
+    }
   }
   async function interaction(interaction) {
-    const match=/^gs-membership(-confirm|-cancel)?:([0-9a-f-]{36}):(eso|community|not_playing|remove|other)$/i.exec(interaction.customId||'');
+    const match=/^gs-membership(-confirm|-cancel|-rename|-keepname)?:([0-9a-f-]{36}):(eso|community|not_playing|remove|other)(?::([A-Za-z0-9_-]{1,32}))?$/i.exec(interaction.customId||'');
     if(!match||interaction.inGuild?.())return false;
-    const [,step,deliveryId,choice]=match;
+    const [,step,deliveryId,choice,consentName]=match;
     try{
       // Removal is the only irreversible answer, so it asks once more before the bot
       // kicks anyone. Nothing is recorded or changed until the member confirms.
@@ -291,7 +318,18 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
           components:[removeConfirmRow(deliveryId)],allowedMentions:{parse:[]}});
         return true;
       }
-      if(interaction.isButton()&&(choice==='eso'||choice==='other')){
+      // The typed ESO name is offered as a nickname choice before anything is saved,
+      // so a declined rename never changes the member's name.
+      if(interaction.isModalSubmit()&&choice==='eso'&&!step){
+        const typed=String(interaction.fields.getTextInputValue('response')||'').trim().replace(/^@+/,'');
+        const name=typed.replace(/[^A-Za-z0-9_-]/g,'').slice(0,32);
+        if(name){
+          await interaction.reply({content:`We can also set your Discord server nickname to @${name}. Your ESO answer is sent to the officers either way.`,
+            components:[nameConsentRow(deliveryId,name)],allowedMentions:{parse:[]}});
+          return true;
+        }
+      }
+      if(interaction.isButton()&&!step&&(choice==='eso'||choice==='other')){
         const input=new TextInputBuilder().setCustomId('response').setLabel(choice==='eso'?'Your ESO login (include @)':'Your response')
           .setStyle(choice==='eso'?TextInputStyle.Short:TextInputStyle.Paragraph).setRequired(true).setMaxLength(choice==='eso'?64:4000);
         await interaction.showModal(new ModalBuilder().setCustomId(interaction.customId).setTitle(choice==='eso'?'Link your Alphabet Mafia account':'Membership response')
@@ -300,8 +338,10 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       }
       if(!interaction.isButton()&&!interaction.isModalSubmit())return false;
       await interaction.deferReply();
+      const consent=step==='-rename'?true:step==='-keepname'?false:undefined;
       const result=await saveResponse({deliveryId,choice,userId:interaction.user.id,eventId:interaction.id,
-        text:interaction.isModalSubmit()?interaction.fields.getTextInputValue('response'):''});
+        text:consent===undefined?(interaction.isModalSubmit()?interaction.fields.getTextInputValue('response'):''):consentName,
+        ...(consent===undefined?{}:{nicknameConsent:consent})});
       let note='';
       // Only a real delivery is acted on: test responses must never kick or rename.
       if(step==='-confirm'&&choice==='remove'&&result?.status==='removal requested'&&!result.duplicate){
@@ -311,7 +351,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
           :removal.status==='gone'?' You were already no longer in the server.'
           :' Your request was recorded; an officer will finish the removal.';
       }
-      if(choice==='eso'&&!step){
+      if(choice==='eso'&&consent!==false){
         const rename=result?.rename;
         if(rename?.allowed){
           const nickname=await setNicknameForEso(interaction.user.id,rename.name);
@@ -321,6 +361,8 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
         } else if(rename&&!rename.allowed){
           note=` Your nickname was not changed: ${rename.reason}`;
         }
+      } else if(choice==='eso'&&consent===false){
+        note=' Your server nickname was left unchanged; your ESO answer was still saved.';
       }
       await interaction.editReply(`${result?.message||'Your response has been sent to the guild officers.'}${note}`);
       return true;

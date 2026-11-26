@@ -41,7 +41,19 @@ function fixture({legacy}={}) {
     responses.set(key,{guild_id:guild,discord_user_id:user,display_name:displayName,eso_account_name:eso??previous?.eso_account_name??null,choice,response_text:text,responded_at:at});
     return [{affectedRows:1}];
    }
-   if(sql.startsWith('SELECT display_name,eso_account_name,choice,response_text,responded_at'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
+   if(sql.startsWith('UPDATE guildsync_membership_dm_responses')){
+    const [removalStatus,removalReason,nicknameStatus,nicknameName,nicknameReason,guild,user]=args;
+    const row=responses.get(guild+':'+user);
+    if(row){
+     if(removalStatus!=null)row.removal_status=removalStatus;
+     if(removalReason!=null)row.removal_reason=removalReason;
+     if(nicknameStatus!=null)row.nickname_status=nicknameStatus;
+     if(nicknameName!=null)row.nickname_name=nicknameName;
+     if(nicknameReason!=null)row.nickname_reason=nicknameReason;
+    }
+    return [{affectedRows:row?1:0}];
+   }
+   if(sql.startsWith('SELECT * FROM guildsync_membership_dm_responses'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
    if(sql.startsWith('SELECT link_status FROM guildsync_member_links'))return [links.filter(l=>String(l.discord_user_id)===String(args[0])&&l.eso_account_name.toLowerCase()===String(args[1]).toLowerCase())];
    if(sql.startsWith('SELECT choice,eso_account_name,responded_at FROM guildsync_membership_dm_responses'))return [[...responses.values()].filter(row=>row.guild_id===args[0]&&row.discord_user_id===args[1])];
    if(sql.startsWith('SELECT username,global_name,server_nickname FROM discord_members'))return [[{username:'Alice',global_name:'Alice G',server_nickname:null}]];
@@ -130,6 +142,32 @@ test('the officer card reports the kick the bot performed, and mismatched outcom
  assert.equal(fields.Outcome,'Removed from the server (reason: User Request)');
  const note=f.history().filter(args=>args[4]==='membership_dm_outcome').at(-1);
  assert.deepEqual([note[0],note[7]],['10','Removed from the Discord server (reason: User Request)']);
+});
+test('a declined nickname change still links the account and is kept for repost',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ const result=await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'430',choice:'eso',text:'@ESOName',nicknameConsent:false});
+ assert.equal(result.status,'linked');
+ assert.equal(f.upserts(),1,'declining the rename never blocks the link');
+ assert.equal(result.nickname.status,'declined');
+ const event=f.state().events.at(-1);
+ assert.ok(event.retryAt<=1800000600+1,'nothing waits for a Discord action');
+ const repost=await f.request('repost',{actorId:'officer',userId:'10'});
+ assert.equal(repost.response.result.status,'linked');
+ assert.deepEqual(repost.response.result.nickname,{status:'declined',name:null,reason:'The member chose to keep their current server nickname.'});
+ await f.worker.repost(repost,'Officer');
+ const fields=Object.fromEntries(f.forwards.at(-1).embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(fields['Server nickname'],'Not changed — The member chose to keep their current server nickname.');
+});
+test('reposts and cards keep the kick outcome after the event is forwarded',async()=>{
+ const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
+ await f.request('response',{deliveryId:f.result('10').delivery_id,userId:'10',eventId:'440',choice:'remove'});
+ await f.request('outcome',{eventId:'440',removal:{status:'kicked'}});
+ f.advance(1);await f.worker.forwardOne();
+ const repost=await f.request('repost',{actorId:'officer',userId:'10'});
+ assert.deepEqual(repost.response.result.removal,{status:'kicked',reason:null});
+ await f.worker.repost(repost,'Officer');
+ const fields=Object.fromEntries(f.forwards.at(-1).embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(fields.Outcome,'Removed from the server (reason: User Request)');
 });
 test('a submitted ESO name becomes a rename only when the roster and links allow it',async()=>{
  const f=fixture();await f.service.command('1','officer','start');f.advance(600);await f.worker.sendNext();
