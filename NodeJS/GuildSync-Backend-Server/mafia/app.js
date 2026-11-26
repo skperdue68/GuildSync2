@@ -1,17 +1,16 @@
 // Alphabet Mafia guild chat archive. Vanilla JS on purpose: this page is served
 // as plain files by the GuildSync backend, with no build step.
-const SORT_LABELS = {
-  time: 'Local time',
-  sender: 'Sender',
-  message: 'Message'
-};
 const PAGE_SIZE = 500;
+// The archive is always read oldest first: that is what makes scrolling for more
+// feel like following a conversation.
+const SORT_COLUMN = 'time';
+const SORT_DIRECTION = 'asc';
+// Start fetching the next batch before the last row is anywhere near the screen.
+const PREFETCH_PX = 480;
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 const HASH_MESSAGE = /^#msg-(\d{1,15})$/;
 
 const state = {
-  sort: 'time',
-  dir: 'desc',
   search: '',
   start: null,
   end: null,
@@ -19,6 +18,7 @@ const state = {
   latest: 0,
   offset: 0,
   loaded: 0,
+  loading: false,
   pendingAbove: 0,
   ids: new Set()
 };
@@ -34,7 +34,6 @@ const elements = {
   rangeStart: document.getElementById('range-start'),
   rangeEnd: document.getElementById('range-end'),
   rangeClear: document.getElementById('range-clear'),
-  loadOlder: document.getElementById('load-older'),
   pill: document.getElementById('new-messages-pill'),
   refresh: document.getElementById('refresh-button'),
   banner: document.getElementById('update-banner'),
@@ -181,14 +180,13 @@ function updateSummary() {
 
   if (total === 0) {
     elements.summary.textContent = 'No messages';
-  } else {
-    const noun = total === 1 ? 'message' : 'messages';
-    const parts = [`${total.toLocaleString()} ${noun}`];
-    if (loaded < total) parts.push(`showing ${loaded.toLocaleString()}`);
-    elements.summary.textContent = parts.join(' · ');
+    return;
   }
 
-  elements.loadOlder.hidden = total === 0 || loaded >= total;
+  const noun = total === 1 ? 'message' : 'messages';
+  const parts = [`${total.toLocaleString()} ${noun}`];
+  if (loaded < total) parts.push(`showing ${loaded.toLocaleString()}`);
+  elements.summary.textContent = parts.join(' · ');
 }
 
 function renderEmpty(message) {
@@ -219,8 +217,6 @@ function buildRow(message) {
   row.id = `msg-${message.id}`;
   row.dataset.id = String(message.id ?? '');
   row.dataset.time = String(Number(message.message_timestamp) || 0);
-  row.dataset.sender = String(message.sender ?? '');
-  row.dataset.message = String(message.message_text ?? '');
   row.dataset.receivedAt = message.received_at || '';
   row.dataset.uploadedBy = message.uploaded_by || '';
   row.title = 'Click to copy a link to this message';
@@ -230,6 +226,10 @@ function buildRow(message) {
   row.append(cell('cell-message', message.message_text || ''));
 
   return row;
+}
+
+function visibleRows() {
+  return Array.from(elements.body.querySelectorAll('tr.chat-row'));
 }
 
 function renderMessages(messages) {
@@ -267,10 +267,6 @@ function appendMessages(messages) {
   elements.body.append(...rows);
   state.loaded = visibleRows().length;
   updateSummary();
-}
-
-function visibleRows() {
-  return Array.from(elements.body.querySelectorAll('tr.chat-row'));
 }
 
 // A live row is only shown when it would survive the filters the reader set.
@@ -312,13 +308,12 @@ function restoreScrollAnchor(anchor) {
 }
 
 // The server owns the collation, so it says how many matching rows sort before
-// each pushed row. That keeps live inserts exactly where a reload would put
-// them, whatever column the table is sorted by.
+// each pushed row.
 async function fetchPositions(messages) {
   const params = new URLSearchParams({
     ids: messages.map(message => String(message.id)).join(','),
-    sort: state.sort,
-    dir: state.dir
+    sort: SORT_COLUMN,
+    dir: SORT_DIRECTION
   });
 
   if (state.search) params.set('q', state.search);
@@ -334,8 +329,8 @@ async function fetchPositions(messages) {
   return Array.isArray(payload.positions) ? payload.positions : [];
 }
 
-// Applies pushed rows that belong inside the page on screen. Rows that sort
-// onto another page are left alone; they arrive when that page is loaded.
+// Applies pushed rows that belong inside the rows on screen. Rows that sort into
+// a stretch that has not been loaded yet are left for that load.
 async function applyLiveMessages(messages) {
   const fresh = messages.filter(message => {
     const id = String(message.id ?? '');
@@ -425,8 +420,8 @@ function hidePill() {
 }
 
 function setLoading(loading) {
+  state.loading = loading;
   elements.refresh.disabled = loading;
-  elements.loadOlder.disabled = loading;
   if (loading) elements.summary.textContent = 'Loading…';
 }
 
@@ -445,8 +440,8 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, focus = 
   requestController = new AbortController();
 
   const params = new URLSearchParams({
-    sort: state.sort,
-    dir: state.dir,
+    sort: SORT_COLUMN,
+    dir: SORT_DIRECTION,
     limit: String(limit),
     offset: String(offset)
   });
@@ -474,7 +469,7 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, focus = 
 
     state.total = Number(payload.total) || 0;
     // On append the window start stays put; the payload offset is the start of
-    // the page just added.
+    // the batch just added.
     if (!append) state.offset = Number(payload.offset) || 0;
     markLatest(payload.latest);
 
@@ -491,11 +486,25 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, focus = 
       setError(error.message || 'Guild chat messages could not be loaded.');
     }
   } finally {
-    if (sequence === requestSequence) setLoading(false);
+    if (sequence === requestSequence) {
+      setLoading(false);
+      setTimeout(maybeLoadMore, 0);
+    }
   }
 }
 
-// Refresh in place: the same window is fetched again, so paging through the
+// Scrolling toward the end quietly fetches the next stretch of rows.
+function maybeLoadMore() {
+  if (state.loading || state.loaded >= state.total) return;
+
+  const scroller = elements.tableScroll;
+  const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  if (remaining > PREFETCH_PX) return;
+
+  loadPage({offset: state.offset + state.loaded, append: true});
+}
+
+// Refresh in place: the same rows are fetched again, so scrolling through the
 // archive is never undone by pressing Refresh.
 async function refreshCurrent() {
   hidePill();
@@ -518,37 +527,6 @@ async function refreshCurrent() {
   } while (state.loaded < target);
 
   elements.tableScroll.scrollTop = scrollTop;
-}
-
-function updateSortHeaders() {
-  document.querySelectorAll('.chat-table thead th[data-sort]').forEach(header => {
-    const key = header.dataset.sort;
-    const button = header.querySelector('.sort-button');
-
-    if (key === state.sort) {
-      header.setAttribute('aria-sort', state.dir === 'asc' ? 'ascending' : 'descending');
-      button.title = `${SORT_LABELS[key]}: sorted ${state.dir === 'asc' ? 'ascending' : 'descending'}`;
-    } else {
-      header.removeAttribute('aria-sort');
-      button.title = `Sort by ${SORT_LABELS[key].toLowerCase()}`;
-    }
-  });
-}
-
-function applySort(key) {
-  if (!SORT_LABELS[key]) return;
-
-  if (state.sort === key) {
-    state.dir = state.dir === 'desc' ? 'asc' : 'desc';
-  } else {
-    state.sort = key;
-    // Newest first stays the default, including when the column changes.
-    state.dir = 'desc';
-  }
-
-  updateSortHeaders();
-  hidePill();
-  loadPage({offset: 0});
 }
 
 function hideTooltip() {
@@ -696,10 +674,6 @@ elements.rangeClear.addEventListener('click', () => {
   loadPage({offset: 0});
 });
 
-elements.loadOlder.addEventListener('click', () => {
-  loadPage({offset: state.offset + state.loaded, append: true});
-});
-
 elements.pill.addEventListener('click', () => {
   if (elements.pill.dataset.mode === 'refresh') {
     refreshCurrent();
@@ -712,10 +686,6 @@ elements.pill.addEventListener('click', () => {
 
 elements.refresh.addEventListener('click', refreshCurrent);
 elements.bannerRefresh.addEventListener('click', refreshCurrent);
-
-document.querySelectorAll('.chat-table thead th[data-sort]').forEach(header => {
-  header.addEventListener('click', () => applySort(header.dataset.sort));
-});
 
 // Hovering anywhere on a row shows when it was stored and who uploaded it.
 elements.body.addEventListener('mouseover', event => {
@@ -734,6 +704,7 @@ elements.body.addEventListener('mousemove', event => {
 
 elements.body.addEventListener('mouseleave', hideTooltip);
 elements.tableScroll.addEventListener('scroll', hideTooltip, {passive: true});
+elements.tableScroll.addEventListener('scroll', maybeLoadMore, {passive: true});
 
 // Clicking a row copies a permalink to that message.
 elements.body.addEventListener('click', event => {
@@ -743,7 +714,6 @@ elements.body.addEventListener('click', event => {
   copyMessageLink(row);
 });
 
-updateSortHeaders();
 refreshLatestText();
 
 const focusId = hashFocusId();

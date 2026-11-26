@@ -158,9 +158,7 @@ body {
 
 .refresh-button:focus-visible,
 .clear-button:focus-visible,
-.pager-button:focus-visible,
 .new-pill:focus-visible,
-.sort-button:focus-visible,
 input:focus-visible {
   outline: 2px solid #93c5fd;
   outline-offset: 2px;
@@ -325,7 +323,7 @@ input:focus-visible {
   position: sticky;
   top: 0;
   z-index: 2;
-  padding: 0;
+  padding: 11px 14px;
   background: #16264a;
   border-bottom: 1px solid rgba(147, 197, 253, 0.28);
   text-align: left;
@@ -336,55 +334,16 @@ input:focus-visible {
   color: #bfdbfe;
 }
 
+.chat-table thead th.align-right {
+  text-align: right;
+}
+
 .chat-table thead th:nth-child(1) {
   width: 168px;
 }
 
 .chat-table thead th:nth-child(2) {
   width: 170px;
-}
-
-.sort-button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 11px 14px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
-  text-align: inherit;
-  cursor: pointer;
-}
-
-.sort-button:hover {
-  color: #f8fafc;
-  background: rgba(59, 130, 246, 0.12);
-}
-
-.sort-indicator {
-  font-size: 9px;
-  color: #60a5fa;
-  opacity: 0;
-}
-
-th[aria-sort] .sort-indicator {
-  opacity: 1;
-}
-
-th[aria-sort="ascending"] .sort-indicator::after {
-  content: "▲";
-}
-
-th[aria-sort="descending"] .sort-indicator::after {
-  content: "▼";
-}
-
-.align-right .sort-button {
-  justify-content: flex-end;
 }
 
 .chat-table tbody td {
@@ -500,28 +459,6 @@ th[aria-sort="descending"] .sort-indicator::after {
   text-transform: uppercase;
   letter-spacing: 0.3px;
   white-space: nowrap;
-}
-
-.pager-button {
-  border: 1px solid rgba(147, 197, 253, 0.35);
-  border-radius: 7px;
-  padding: 3px 10px;
-  background: rgba(15, 23, 42, 0.6);
-  color: #cbd5e1;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.pager-button:hover {
-  border-color: rgba(147, 197, 253, 0.6);
-  color: #f8fafc;
-}
-
-.pager-button[disabled] {
-  opacity: 0.5;
-  cursor: progress;
 }
 
 /* Jump back to the newest rows when live inserts landed above the viewport. */

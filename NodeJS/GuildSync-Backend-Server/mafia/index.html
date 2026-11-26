@@ -54,15 +54,9 @@
         <table class="chat-table">
           <thead>
             <tr>
-              <th scope="col" data-sort="time" class="align-right" aria-sort="descending">
-                <button class="sort-button" type="button">Local time<span class="sort-indicator" aria-hidden="true"></span></button>
-              </th>
-              <th scope="col" data-sort="sender" class="align-right">
-                <button class="sort-button" type="button">Sender<span class="sort-indicator" aria-hidden="true"></span></button>
-              </th>
-              <th scope="col" data-sort="message">
-                <button class="sort-button" type="button">Message<span class="sort-indicator" aria-hidden="true"></span></button>
-              </th>
+              <th scope="col" class="align-right">Local time</th>
+              <th scope="col" class="align-right">Sender</th>
+              <th scope="col">Message</th>
             </tr>
           </thead>
           <tbody id="chat-body"></tbody>
@@ -71,7 +65,6 @@
       <div class="table-footer">
         <span class="footer-left">
           <span id="table-summary">Loading…</span>
-          <button id="load-older" class="pager-button" type="button" hidden>Load older</button>
         </span>
         <span id="latest-data" class="latest-data">MOST RECENT DATA: —</span>
         <span class="footer-right">

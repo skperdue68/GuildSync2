@@ -18,16 +18,18 @@ function ruleBody(selector) {
   return match ? match[1] : '';
 }
 
-test('every visible value has a sortable column header', () => {
-  for (const key of ['time', 'sender', 'message']) {
-    assert.match(html, new RegExp(`data-sort="${key}"`), `${key} has no sort header`);
-  }
-  assert.equal((html.match(/data-sort="/g) || []).length, 3);
-  assert.doesNotMatch(html, /data-sort="source"/);
-  assert.doesNotMatch(html, /data-sort="uploaded_by"/);
+test('the table has three fixed columns and no sort controls', () => {
+  assert.equal((html.match(/<th scope="col"/g) || []).length, 3);
+  assert.doesNotMatch(html, /data-sort=|sort-button|sort-indicator|aria-sort/);
+  assert.match(html, />Local time</);
+  assert.match(html, />Sender</);
+  assert.match(html, />Message</);
 
-  assert.match(client, /header\.addEventListener\('click', \(\) => applySort\(header\.dataset\.sort\)\)/);
-  assert.match(client, /state\.dir = 'desc';/);
+  // Oldest first, always: the archive reads like a conversation.
+  assert.match(client, /const SORT_COLUMN = 'time';/);
+  assert.match(client, /const SORT_DIRECTION = 'asc';/);
+  assert.match(client, /sort: SORT_COLUMN,\n    dir: SORT_DIRECTION,/);
+  assert.doesNotMatch(client, /applySort|SORT_LABELS|updateSortHeaders/);
 });
 
 test('the table header sticks while the rows scroll under it', () => {
@@ -49,10 +51,10 @@ test('times render as mm/dd/yyyy hh:ii:ss in the reader time zone', () => {
 
 test('the time and sender columns right justify with their headers', () => {
   assert.match(ruleBody('.cell-time'), /text-align:\s*right/);
-  assert.match(html, /data-sort="time" class="align-right"/);
+  assert.match(ruleBody('.chat-table thead th.align-right'), /text-align:\s*right/);
+  assert.match(html, /<th scope="col" class="align-right">Local time</);
   assert.match(ruleBody('.cell-sender'), /text-align:\s*right/);
-  assert.match(html, /data-sort="sender" class="align-right"/);
-  assert.match(ruleBody('.align-right .sort-button'), /justify-content:\s*flex-end/);
+  assert.match(html, /<th scope="col" class="align-right">Sender</);
 });
 
 test('every row carries the provenance tooltip', () => {
@@ -109,7 +111,7 @@ test('Refresh reloads the window on screen instead of jumping to the first page'
   // The refresh itself never scrolls the page or rewrites the URL.
   const refreshBody = client.slice(
     client.indexOf('async function refreshCurrent'),
-    client.indexOf('function updateSortHeaders')
+    client.indexOf('function hideTooltip')
   );
   assert.match(refreshBody, /do \{/);
   assert.match(refreshBody, /elements\.tableScroll\.scrollTop = scrollTop;/);
@@ -149,15 +151,18 @@ test('stale data turns amber instead of passing silently', () => {
   assert.match(ruleBody('.latest-data[data-stale="true"]'), /#fbbf24/i);
 });
 
-test('results page with a Load older button and a restamped footer', () => {
-  assert.match(html, /id="load-older"/);
-  assert.match(client, /const PAGE_SIZE = 500;/);
-  assert.match(client, /offset: String\(offset\)/);
-  assert.match(client, /elements\.loadOlder\.addEventListener\('click', \(\) => \{\n  loadPage\(\{offset: state\.offset \+ state\.loaded, append: true\}\);\n\}\);/);
-  assert.match(client, /elements\.loadOlder\.hidden = total === 0 \|\| loaded >= total;/);
+test('more rows stream in before the reader reaches the bottom', () => {
+  assert.doesNotMatch(html, /id="load-older"|Load older/);
+  assert.match(client, /const PREFETCH_PX = 480;/);
+  assert.match(client, /function maybeLoadMore\(\) \{/);
+  assert.match(client, /const remaining = scroller\.scrollHeight - scroller\.scrollTop - scroller\.clientHeight;/);
+  assert.match(client, /if \(remaining > PREFETCH_PX\) return;/);
+  assert.match(client, /loadPage\(\{offset: state\.offset \+ state\.loaded, append: true\}\);/);
+  assert.match(client, /elements\.tableScroll\.addEventListener\('scroll', maybeLoadMore, \{passive: true\}\)/);
+  assert.match(client, /setTimeout\(maybeLoadMore, 0\)/);
   assert.match(client, /if \(!append\) state\.offset = Number\(payload\.offset\) \|\| 0;/);
 
-  const loader = client.slice(client.indexOf('async function loadPage'), client.indexOf('async function refreshAll'));
+  const loader = client.slice(client.indexOf('async function loadPage'), client.indexOf('// Scrolling toward the end'));
   assert.match(loader, /markUpdated\(\)/);
   assert.match(loader, /if \(append\) appendMessages\(payload\.messages\);/);
 });
