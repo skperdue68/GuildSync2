@@ -105,6 +105,8 @@ import {
   parseGuildSyncBankingSavedVarsLua,
   parseGuildSyncTraderSavedVarsLua,
   parseGuildSyncRosterSavedVarsLua,
+  parseGuildSyncChatSavedVarsLua,
+  parseGuildSyncDiscordReminderSavedVarsLua,
   parseGuildSyncApplicationsSavedVarsLua
 } from './guildsync-database-actions.js';
 
@@ -870,12 +872,19 @@ function registerGuildSyncConnection(socket) {
       const fileName = path.basename(String(payload.file_name || payload.fileName || '').trim());
       const rawLuaText = String(payload.raw_lua_text || payload.rawLuaText || '').trim();
       const source = String(payload.source || 'web-drag-drop').trim() || 'web-drag-drop';
-      const allowedFiles = new Set(['GuildSyncBanking.lua', 'GuildSyncRoster.lua', 'GuildSyncApplications.lua', 'GuildSyncTrader.lua']);
+      const allowedFiles = new Set([
+        'GuildSyncBanking.lua',
+        'GuildSyncRoster.lua',
+        'GuildSyncApplications.lua',
+        'GuildSyncTrader.lua',
+        'GuildSyncChat.lua',
+        'GuildSyncDiscordReminder.lua'
+      ]);
 
       if (!allowedFiles.has(fileName)) {
         sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
           ok: false,
-          message: `Unsupported file: ${fileName || 'unknown file'}. Drop only GuildSyncBanking.lua, GuildSyncRoster.lua, GuildSyncApplications.lua, or GuildSyncTrader.lua.`
+          message: `Unsupported file: ${fileName || 'unknown file'}. Drop only ${[...allowedFiles].join(', ')}.`
         });
         return;
       }
@@ -930,6 +939,80 @@ function registerGuildSyncConnection(socket) {
           message: `GuildSyncTrader.lua uploaded and processed. Sales: ${result.trader_entries_received}.`,
           world: data.world || null,
           ...result
+        });
+        return;
+      }
+
+      if (fileName === 'GuildSyncChat.lua') {
+        const data = parseGuildSyncChatSavedVarsLua(rawLuaText);
+        validateEsoGuildImport('chat', data);
+        const result = await ingestGuildChatMessages(applicationDB, {
+          uploadedBy: socket.guildSyncUser.display_name || socket.guildSyncUser.username || socket.guildSyncUser.discord_user_id,
+          source: 'web-drag-drop',
+          entries: data.entries || []
+        });
+
+        const {inserted_ids: insertedIds = [], ...chatResult} = result;
+
+        if (insertedIds.length > 0) {
+          await broadcastMafiaChatUpdate({inserted: insertedIds.length, ids: insertedIds});
+        }
+
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: true,
+          kind: 'chat',
+          file_name: fileName,
+          message: `GuildSyncChat.lua uploaded and processed. Entries: ${chatResult.chat_messages_received}, new: ${chatResult.chat_messages_inserted}, duplicate: ${chatResult.chat_messages_duplicates}.` +
+            (chatResult.chat_channel_supported === false ? ' Officer chat markers were stored as guild chat because the database column could not be added.' : ''),
+          ...chatResult
+        });
+        return;
+      }
+
+      if (fileName === 'GuildSyncDiscordReminder.lua') {
+        const data = parseGuildSyncDiscordReminderSavedVarsLua(rawLuaText);
+
+        if (!data.acks.length) {
+          sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+            ok: true,
+            kind: 'discord_reminders',
+            file_name: fileName,
+            message: 'GuildSyncDiscordReminder.lua contains no delivery results to synchronize.',
+            acks: 0,
+            processed: 0
+          });
+          return;
+        }
+
+        const reminderUserId = socket.guildSyncUser.discord_user_id;
+        const [roleRows] = await applicationDB.execute('SELECT role_id, role_name FROM discord_roles');
+        const [heldRows] = await applicationDB.execute('SELECT role_id FROM discord_member_roles WHERE discord_id = ?', [reminderUserId]);
+
+        if (!hasOfficerRole(roleRows, (heldRows || []).map(row => row.role_id))) {
+          sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+            ok: false,
+            kind: 'discord_reminders',
+            file_name: fileName,
+            message: 'Only members with the Consigliere or Kingpin role can synchronize Discord reminder results.'
+          });
+          return;
+        }
+
+        // The reminder service caps one acknowledgement call, so the saved
+        // results go over in the same batches the desktop client uses.
+        let processed = 0;
+        for (let offset = 0; offset < data.acks.length; offset += 250) {
+          const ackResult = await discordReminders.acknowledge(reminderUserId, data.acks.slice(offset, offset + 250));
+          processed += Number(ackResult?.processed) || 0;
+        }
+
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: true,
+          kind: 'discord_reminders',
+          file_name: fileName,
+          message: `GuildSyncDiscordReminder.lua uploaded and processed. Delivery results: ${data.acks.length}, updated: ${processed}.`,
+          acks: data.acks.length,
+          processed
         });
         return;
       }

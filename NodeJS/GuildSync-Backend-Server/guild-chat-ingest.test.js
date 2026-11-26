@@ -1,5 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// The SavedVariables parsers live beside the database helpers, which read their
+// connection settings from the environment at import time.
+process.env.MARIADB_USER ||= 'test';
+process.env.MARIADB_PASSWORD ||= 'test';
+
 import {
   normalizeGuildChatSender,
   normalizeGuildChatText,
@@ -166,4 +171,111 @@ test('officer chat is stored as officer chat and never deduped against guild cha
   assert.equal(officer.chat_messages_inserted, 4, 'a channel change is a different message');
   assert.deepEqual(db.rows.map(row => row.channel), ['officer', 'guild', 'officer', 'guild']);
   assert.notEqual(db.rows[0].hash, db.rows[1].hash, 'the hash includes the channel');
+});
+
+test('a dropped GuildSyncChat file parses every message and channel', async () => {
+  const {parseGuildSyncChatSavedVarsLua} = await import('./guildsync-database-actions.js');
+
+  // The shape ESO writes, including the older messages that carry guild instead
+  // of channel and the newer ones that carry channel.
+  const data = parseGuildSyncChatSavedVarsLua(`GuildSyncChat =
+{
+    ["Default"] =
+    {
+        ["@evainefaye"] =
+        {
+            ["$AccountWide"] =
+            {
+                ["NA Megaserver"] =
+                {
+                    ["version"] = 1,
+                    ["debugChat"] = false,
+                    ["messages"] =
+                    {
+                        [1] =
+                        {
+                            ["text"] = "first line",
+                            ["timestamp"] = 1795650771,
+                            ["sender"] = "@lesidhe",
+                            ["guild"] = "alphabet_mafia",
+                        },
+                        [2] =
+                        {
+                            ["text"] = "Yall are being waay too talkative tonight :)",
+                            ["timestamp"] = 1795652978,
+                            ["sender"] = "@evainefaye",
+                            ["channel"] = "officer",
+                        },
+                        [3] =
+                        {
+                            ["text"] = "Hi hello :3",
+                            ["timestamp"] = 1795653002,
+                            ["sender"] = "@RainStarlight",
+                            ["channel"] = "guild",
+                        },
+                        [4] =
+                        {
+                            ["text"] = "",
+                            ["timestamp"] = 1795653010,
+                            ["sender"] = "@Vatrys",
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+`);
+
+  assert.equal(data.account_names[0], '@evainefaye');
+  assert.equal(data.entries_count, 3, 'an empty message is skipped');
+  assert.deepEqual(data.entries.map((entry) => entry.channel), ['guild', 'officer', 'guild']);
+  assert.deepEqual(data.entries.map((entry) => entry.timestamp), [1795650771, 1795652978, 1795653002]);
+  assert.equal(data.entries[1].text, 'Yall are being waay too talkative tonight :)');
+});
+
+test('a dropped reminder file parses its delivery results', async () => {
+  const {parseGuildSyncDiscordReminderSavedVarsLua} = await import('./guildsync-database-actions.js');
+
+  const data = parseGuildSyncDiscordReminderSavedVarsLua(`GuildSyncDiscordReminder =
+{
+    ["NA Megaserver"] =
+    {
+        ["@evainefaye"] =
+        {
+            ["$AccountWide"] =
+            {
+                ["mailAck"] =
+                {
+                    ["req-1"] =
+                    {
+                        ["requestId"] = "req-1",
+                        ["batchId"] = "batch-1",
+                        ["guildId"] = "761817",
+                        ["sendingAccount"] = "@evainefaye",
+                        ["worldName"] = "NA Megaserver",
+                        ["status"] = "sent",
+                        ["sentAt"] = 1795650771,
+                    },
+                    ["req-2"] =
+                    {
+                        ["requestId"] = "req-2",
+                        ["batchId"] = "batch-1",
+                        ["guildId"] = "761817",
+                        ["sendingAccount"] = "@evainefaye",
+                        ["worldName"] = "NA Megaserver",
+                        ["status"] = "failed",
+                        ["detail"] = "Mailbox full",
+                    },
+                },
+            },
+        },
+    },
+}
+`);
+
+  assert.equal(data.acks_count, 2);
+  assert.deepEqual(data.acks.map((ack) => ack.status), ['sent', 'failed']);
+  assert.equal(data.acks[0].sentAt, 1795650771);
+  assert.equal(data.acks[1].detail, 'Mailbox full');
 });

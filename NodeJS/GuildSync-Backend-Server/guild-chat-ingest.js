@@ -73,19 +73,27 @@ export function guildChatMessageHash({ guild, channel = 'guild', sender, text })
     .digest('hex');
 }
 
+// null until the column is known to exist, true once it does, false when the
+// database refuses the change. A failed ALTER must never lose an upload, so the
+// insert falls back to the guild-chat default instead.
+let guildChatChannelColumn = null;
+
 export async function ensureGuildChatSchema(db) {
   await db.query(GUILD_CHAT_SCHEMA);
+  if (guildChatChannelColumn === true) return;
 
-  const [columns] = await db.execute(
-    `SELECT COUNT(*) AS present FROM information_schema.columns
-     WHERE table_schema = DATABASE()
-       AND table_name = 'guildsync_guild_chat_messages'
-       AND column_name = 'channel'`
-  );
+  try {
+    await db.query(GUILD_CHAT_CHANNEL_MIGRATION);
+    guildChatChannelColumn = true;
+  } catch (error) {
+    // 1060 is MariaDB/MySQL's "duplicate column": the migration already ran.
+    if (Number(error?.errno) === 1060 || /duplicate column/i.test(String(error?.message || ''))) {
+      guildChatChannelColumn = true;
+      return;
+    }
 
-  if (Number(columns?.[0]?.present ?? 0) > 0) return;
-
-  await db.query(GUILD_CHAT_CHANNEL_MIGRATION);
+    guildChatChannelColumn = false;
+  }
 }
 
 // Looks up and inserts every report inside one transaction, so two clients
@@ -107,6 +115,9 @@ export async function ingestGuildChatMessages(db, payload = {}) {
     chat_messages_inserted: 0,
     chat_messages_duplicates: 0,
     chat_messages_skipped: 0,
+    // False when the database refused the officer-chat column, so the caller can
+    // say why an officer line was stored as guild chat.
+    chat_channel_supported: guildChatChannelColumn !== false,
     // Ids of the rows this report created, so the live site can be handed the
     // exact records instead of re-reading the table.
     inserted_ids: []
@@ -149,8 +160,10 @@ export async function ingestGuildChatMessages(db, payload = {}) {
         continue;
       }
 
+      const storeChannel = guildChatChannelColumn !== false;
       const [insertResult] = await connection.execute(
-        `INSERT INTO guildsync_guild_chat_messages (
+        storeChannel
+          ? `INSERT INTO guildsync_guild_chat_messages (
           message_hash,
           guild,
           channel,
@@ -161,8 +174,21 @@ export async function ingestGuildChatMessages(db, payload = {}) {
           data_source,
           uploaded_by
         )
-        VALUES (?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`,
-        [messageHash, guild, channel, sender, text, messageTimestamp, messageTimestamp, dataSource, uploadedBy]
+        VALUES (?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`
+          : `INSERT INTO guildsync_guild_chat_messages (
+          message_hash,
+          guild,
+          sender,
+          message_text,
+          message_timestamp,
+          event_datetime,
+          data_source,
+          uploaded_by
+        )
+        VALUES (?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`,
+        storeChannel
+          ? [messageHash, guild, channel, sender, text, messageTimestamp, messageTimestamp, dataSource, uploadedBy]
+          : [messageHash, guild, sender, text, messageTimestamp, messageTimestamp, dataSource, uploadedBy]
       );
 
       result.chat_messages_inserted += 1;
