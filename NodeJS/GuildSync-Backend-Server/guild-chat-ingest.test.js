@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 // The SavedVariables parsers live beside the database helpers, which read their
 // connection settings from the environment at import time.
 process.env.MARIADB_USER ||= 'test';
@@ -31,6 +32,12 @@ function memoryDB() {
       }
 
       if (sql.includes('INSERT INTO guildsync_guild_chat_messages')) {
+        // The insert names one column per value; a missing placeholder is a SQL
+        // error MariaDB rejects ("Column count doesn't match value count"), so
+        // the fake database refuses it the same way instead of storing the row.
+        const columnNames = sql.slice(sql.indexOf('(') + 1, sql.indexOf(')')).split(',').map((name) => name.trim()).filter(Boolean);
+        assert.equal(columnNames.length, params.length, `INSERT names ${columnNames.length} columns but supplies ${params.length} values`);
+
         rows.push({
           id: rows.length + 1,
           hash: params[0],
@@ -151,6 +158,26 @@ test('guild chat ingestion dedupes reporters within 30 seconds but keeps a later
   assert.equal(invalid.chat_messages_skipped, 3);
   assert.equal(invalid.chat_messages_inserted, 0);
   assert.equal(db.schema.length, 0, 'an upload never runs schema changes');
+});
+
+test('the chat insert supplies one value for every column', () => {
+  // This insert broke in production with "Column count doesn't match value
+  // count" because channel was added to the column list without a placeholder.
+  const source = fs.readFileSync(new URL('./guild-chat-ingest.js', import.meta.url), 'utf8');
+  const insertAt = source.indexOf('INSERT INTO guildsync_guild_chat_messages');
+  const columnsEnd = source.indexOf(')', insertAt);
+  const columnCount = source
+    .slice(source.indexOf('(', insertAt) + 1, columnsEnd)
+    .split(',')
+    .filter((name) => name.trim()).length;
+
+  const valuesAt = source.indexOf('VALUES', columnsEnd);
+  const valuesEnd = source.indexOf('`', valuesAt);
+  const valueCount = (source.slice(valuesAt, valuesEnd).match(/\?/g) || []).length;
+
+  assert.ok(columnCount > 0 && valueCount > 0);
+  assert.equal(valueCount, columnCount, `the insert names ${columnCount} columns but binds ${valueCount} values`);
+  assert.ok(source.slice(insertAt, columnsEnd).includes('channel'), 'the officer chat column is stored');
 });
 
 test('the officer chat column is added at startup and a failure is loud', async () => {

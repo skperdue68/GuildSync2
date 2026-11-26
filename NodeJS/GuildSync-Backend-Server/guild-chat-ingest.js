@@ -171,7 +171,7 @@ export async function ingestGuildChatMessages(db, payload = {}) {
           data_source,
           uploaded_by
         )
-        VALUES (?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?)`,
         [messageHash, guild, channel, sender, text, messageTimestamp, messageTimestamp, dataSource, uploadedBy]
       );
 
