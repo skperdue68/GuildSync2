@@ -17,5 +17,5 @@
     "test": "node --test mafia-site.test.js mafia-live-rows.test.js"
   },
   "type": "module",
-  "version": "2.1.8-beta"
+  "version": "2.1.9-beta"
 }
