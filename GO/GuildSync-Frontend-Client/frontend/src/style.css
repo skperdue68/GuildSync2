@@ -3055,21 +3055,6 @@ body {
   overflow-wrap: anywhere;
 }
 
-.member-link-option-discord-names {
-  color: rgba(226, 232, 240, 0.82);
-  overflow-wrap: anywhere;
-  line-height: 1.45;
-}
-
-.member-link-option-discord-name.member-link-option-discord-match {
-  color: #bfdbfe;
-  font-weight: 800;
-}
-
-.member-link-option-separator {
-  color: rgba(148, 163, 184, 0.6);
-}
-
 .member-link-option-hint {
   margin-top: 8px;
 }
@@ -7004,4 +6989,103 @@ body {
 .user-settings-dialog .user-settings-in-use {
   color: #E5E7EB;
   font-weight: 700;
+}
+
+
+/* Member link cards must keep their content height inside the scrolling dialog. */
+.member-link-dialog-body > .member-link-dialog-section {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow-wrap: anywhere;
+}
+.member-link-dialog-body > .member-link-current-section {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #0b1429;
+  max-height: 40%;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.member-link-dialog-body .member-link-reminder-history,
+.member-link-dialog-body .member-link-reminder-opt-out {
+  line-height: 1.6;
+}
+.member-link-dialog-body .member-link-reminder-help {
+  margin: 8px 0 0;
+}
+.member-link-dialog-body .member-link-option-list {
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: min(34vh, 320px);
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .member-link-dialog {
+    height: calc(100dvh - 24px) !important;
+    max-height: calc(100dvh - 24px) !important;
+  }
+}
+
+
+/* Show each Discord identity explicitly and emphasize the actual matching field. */
+.member-discord-names {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  color: #dbe4f3;
+}
+.member-discord-name { display: block; }
+.member-discord-name-label { color: #94a3b8; }
+.member-name-match {
+  background: rgba(34, 197, 94, .18);
+  color: #86efac;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-weight: 750;
+}
+.member-name-match-fuzzy { background: rgba(245, 158, 11, .18); color: #fde68a; }
+.member-name-match-label { margin-left: 6px; color: #b8c7de; }
+.member-link-option-subtitle { white-space: normal; overflow: visible; text-overflow: clip; }
+.discord-members-current-table th:nth-child(1) { width: 18%; }
+.discord-members-current-table th:nth-child(2),
+.discord-members-current-table th:nth-child(3),
+.discord-members-current-table th:nth-child(4) { width: 16%; }
+.discord-members-current-table th:nth-child(5) { width: 22%; }
+.guildsync-tabs.guildsync-history-navigation { z-index: 40; }
+@media (min-width: 769px) {
+  .discord-members-current-table th:nth-child(2),
+  .discord-members-current-table td:nth-child(2) { display: table-cell; }
+}
+@media (max-width: 768px) {
+  .discord-members-current-table td:nth-child(1)::before { content: "Display Name"; }
+  .discord-members-current-table td:nth-child(2)::before { content: "Username"; }
+  .discord-members-current-table td:nth-child(3)::before { content: "Global Name"; }
+  .discord-members-current-table td:nth-child(4)::before { content: "Server Nickname"; }
+  .discord-members-current-table td:nth-child(5)::before { content: "Roles"; }
+  .discord-members-current-table td:nth-child(6)::before { content: "History"; }
+  .discord-members-current-table td:nth-child(7)::before { content: "Linked"; }
+  .discord-members-current-table td:nth-child(2) { display: block; }
+  .member-history-navigation-overlay {
+    top: var(--member-history-navigation-top, 0px);
+    bottom: var(--member-history-navigation-bottom, 0px);
+  }
+}
+
+.member-link-option-list { grid-auto-rows: max-content; align-content: start; }
+
+@media (max-width: 768px) {
+  .member-history-navigation-overlay > .roster-history-dialog {
+    height: calc(100dvh - var(--member-history-navigation-top, 0px) - var(--member-history-navigation-bottom, 0px) - 24px) !important;
+    max-height: calc(100dvh - var(--member-history-navigation-top, 0px) - var(--member-history-navigation-bottom, 0px) - 24px) !important;
+  }
+  .member-history-navigation-overlay .roster-history-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto !important;
+  }
 }

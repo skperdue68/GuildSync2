@@ -1,3 +1,4 @@
+import {renderDiscordNames} from './web/src/member-discovery.js';
 import {canUseUserSwitch} from './web/src/user-switch-controls.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,18 +23,18 @@ for(const file of ['./web/src/main.js','../../GO/GuildSync-Frontend-Client/front
   ctx.canManageGuildSyncLinks=()=>true;assert.match(vm.runInContext('renderMemberLinksRows()',ctx),/data-accept-member-candidate/);
  });
  test(`${file}: Viewer can read notes and linked identities without editing forms`,()=>{
-  const ctx=context({canEditGuildSyncData:()=>false,rosterNotesDialogAccountName:'@Test',rosterNotesDialogError:'',renderRosterNotesRows:()=>'<tr><td>Existing note</td></tr>',renderRosterNotesForm:()=>'<textarea id="editNote"></textarea>',getMemberLinkMatchedField:()=>'',renderMemberLinkCurrentStatus:()=> 'Linked',formatMemberLinkMethodForDisplay:String});
+  const ctx=context({canEditGuildSyncData:()=>false,rosterNotesDialogAccountName:'@Test',rosterNotesDialogError:'',renderRosterNotesRows:()=>'<tr><td>Existing note</td></tr>',renderRosterNotesForm:()=>'<textarea id="editNote"></textarea>',renderDiscordNames,getMemberLinkMatchedField:()=>'',renderMemberLinkCurrentStatus:()=> 'Linked',formatMemberLinkMethodForDisplay:String});
   vm.runInContext(functions(['renderRosterNotesDialog','renderMemberLinkCurrentCard','renderMemberLinkDialogOptions']),ctx);
   const notes=vm.runInContext('renderRosterNotesDialog()',ctx);assert.match(notes,/Existing note/);assert.doesNotMatch(notes,/editNote/);
   const link=vm.runInContext('renderMemberLinkCurrentCard({eso_account_name:"@Test",discord_username:"Member",link_status:"linked"})',ctx);assert.match(link,/@Test|Member/);assert.doesNotMatch(link,/data-unlink-dialog/);assert.equal(vm.runInContext('renderMemberLinkDialogOptions()',ctx),'');
  });
  test(`${file}: suggested matches name the ESO account and mark the Discord name that matched`,()=>{
-  const ctx=context({memberLinkDialogContext:{mode:'eso-to-discord',esoAccountName:'Alpha'}});
+  const ctx=context({memberLinkDialogContext:{mode:'eso-to-discord',esoAccountName:'Alpha'},renderDiscordNames});
   vm.runInContext(functions(['renderMemberLinkDialogOption','formatDiscordMatchFieldName']),ctx);
   const html=vm.runInContext('renderMemberLinkDialogOption({discord_id:"9",username:"Alpha",global_name:"Alpha G",server_nickname:"Old Name",confidence:88,matchField:"discord_username"})',ctx);
   assert.ok(html.includes('<span class="member-link-option-label">ESO Account:</span>'));assert.match(html,/>Alpha</);
-  assert.equal((html.match(/member-link-option-discord-match/g)||[]).length,1,'only the matching Discord name is marked');
-  assert.match(html,/member-link-option-discord-name member-link-option-discord-match">Alpha</);
+  assert.equal((html.match(/<mark class="member-name-match/g)||[]).length,1,'only the matching Discord name is marked');
+  assert.match(html,/class="member-name-match member-name-match-fuzzy">Alpha</);
   assert.match(html,/data-member-link-option-excluded="0"/);assert.doesNotMatch(html,/ hidden>/);
   // An opted-out member stays out of the automatic list but keeps its search text.
   const excluded=vm.runInContext('renderMemberLinkDialogOption({account_name:"Beta",excluded:true,excludeReason:"Marked as “does not use Discord”",confidence:0})',ctx);
