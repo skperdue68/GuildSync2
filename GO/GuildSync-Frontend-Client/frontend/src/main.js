@@ -1,3 +1,5 @@
+import {wireGuildToolsLauncher, decorateProfileMenu, resetGuildToolsLauncher} from './guild-tools.js';
+const profileOpenSections = new Set();
 import {createGuildChatPanel} from './guild-chat-panel.js';
 import {discordDisplayName,renderDiscordNames,createMemberHistoryFallback,getMemberLinkMatchStrength,observeMemberLinkSummary} from './member-discovery.js';
 import './discord-reminders.css';
@@ -9217,6 +9219,7 @@ function handleCurrentAccountProfile(user) {
 }
 
 function renderDiscordArea() {
+  resetGuildToolsLauncher();
   const area = document.querySelector('#discordArea');
   if (!area) {
     return;
@@ -9243,6 +9246,7 @@ function renderDiscordArea() {
       </div>
     `;
 
+    wireGuildToolsLauncher(area, {openExternal: BrowserOpenURL, closeProfile: () => closeProfileMenu()});
     updateUserAdministrationBadge(userAdministrationPanel.count);
     const avatarButton = document.querySelector('#discordAvatarButton');
 
@@ -9280,6 +9284,7 @@ function toggleProfileMenu() {
     return;
   }
 
+  document.querySelector('.guild-tools-launcher')?.removeAttribute('open');
   openProfileMenu();
 }
 
@@ -9369,6 +9374,7 @@ function renderOpenProfileMenuContents() {
   `;
 
   voiceHotkey.wire(menu);
+  decorateProfileMenu(menu, {openExternal: BrowserOpenURL, openSections: profileOpenSections, onDesktopClose: () => voiceHotkey.close()});
   menu.querySelector('#returnToMyAccount')?.addEventListener('click',()=>void changeGuildSyncUser(null));
   menu.querySelector('#switchGuildSyncAccount')?.addEventListener('change',event=>{if(event.target.value)void changeGuildSyncUser(event.target.value);});
   menu.querySelectorAll('[data-role-view]').forEach(button=>button.addEventListener('click',()=>void changeGuildSyncRoleView(button.dataset.roleView)));

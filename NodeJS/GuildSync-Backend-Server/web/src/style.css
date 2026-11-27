@@ -7138,3 +7138,173 @@ body {
   .main-surface.guild-chat-active { padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
   .main-surface.guild-chat-active > .status-bar { position: static; flex: 0 0 auto; margin: 8px 0 0; min-height: 32px; padding: 6px 10px; }
 }
+
+/* Guild tools and compact profile menus. */
+.discord-profile-wrap {
+  display:flex;
+  align-items:center;
+  gap:14px}
+
+.guild-tools-launcher {
+  position:relative}
+.guild-tools-launcher>summary {
+  display:flex;
+  gap:9px;
+  align-items:center;
+  padding:11px 15px;
+  border:1px solid #344563;
+  border-radius:10px;
+  background:#142340;
+  color:#e7efff;
+  cursor:pointer;
+  font-weight:650;
+  list-style:none}
+.guild-tools-launcher>summary::-webkit-details-marker,.profile-disclosure>summary::-webkit-details-marker {
+  display:none}
+.guild-tools-launcher[open]>summary {
+  background:#214788}
+
+.guild-tools-popup {
+  position:absolute;
+  right:0;
+  top:calc(100% + 12px);
+  width:min(420px,calc(100vw - 32px));
+  max-height:calc(100dvh - 170px);
+  overflow-y:auto;
+  padding:18px;
+  box-sizing:border-box;
+  border:1px solid #344563;
+  border-radius:16px;
+  background:#0d172d;
+  box-shadow:0 20px 60px #0009;
+  z-index:10}
+.guild-tools-heading {
+  font-size:19px;
+  font-weight:750;
+  color:#f2f6ff}
+.guild-tools-caption {
+  font-size:12px;
+  color:#9eafc9;
+  margin:5px 0 14px}
+
+.guild-tool-list {
+  display:grid;
+  gap:7px}
+.guild-tool-link {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:12px 9px;
+  border-radius:10px;
+  color:#dce9ff;
+  text-decoration:none;
+  border:1px solid transparent}
+.guild-tool-link:hover,.guild-tool-link:focus-visible {
+  background:#1b3055;
+  border-color:#466a9e}
+.guild-tool-icon {
+  display:grid;
+  place-items:center;
+  width:40px;
+  height:40px;
+  border-radius:10px;
+  flex-shrink:0;
+  font-size:23px;
+  background:#2c60c5;
+  color:white}
+.tool-color-1 {
+  background:#7956ba}
+.tool-color-2 {
+  background:#167d77}
+.tool-color-3 {
+  background:#b47621}
+.guild-tool-copy {
+  flex:1;
+  min-width:0;
+  display:grid;
+  gap:4px}
+.guild-tool-copy strong {
+  font-size:13px;
+  overflow-wrap:anywhere}
+.guild-tool-copy small {
+  color:#b3c1d8;
+  font-size:11px;
+  line-height:1.4}
+.guild-tool-copy .guild-tool-domain {
+  color:#7fa5df}
+.guild-tools-error {
+  margin:0;
+  color:#ffb4b4;
+  font-size:12px}
+
+.discord-profile-menu {
+  width:min(400px,calc(100vw - 28px));
+  max-height:calc(100dvh - 180px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  border-radius:16px;
+  scrollbar-gutter:stable}
+.profile-card {
+  padding:18px}
+.profile-card-title {
+  color:#f2f6ff;
+  font-size:18px;
+  font-weight:750}
+.profile-row {
+  font-size:12px}
+.profile-row .profile-value {
+  overflow-wrap:anywhere}
+.profile-user-settings-mount {
+  margin:10px 0}
+.profile-user-settings-button,.user-admin-menu-button {
+  width:100%;
+  text-align:left;
+  padding:11px 12px;
+  border-radius:9px}
+.profile-disclosure {
+  margin-top:10px;
+  border-top:1px solid #2c3b55;
+  padding-top:5px}
+.profile-disclosure>summary {
+  cursor:pointer;
+  color:#dce9ff;
+  font-weight:650;
+  font-size:13px;
+  padding:11px 3px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  list-style:none}
+.profile-disclosure>summary::after {
+  content:'+';
+  color:#9fb4d3}
+.profile-disclosure[open]>summary::after {
+  content:'−'}
+.profile-disclosure .profile-section {
+  margin-top:0;
+  border-top:0;
+  padding-top:4px}
+.profile-tools-section>summary>span {
+  display:none}
+.profile-logout-button {
+  width:100%;
+  margin-top:15px;
+  color:#ffb7bd}
+
+@media(max-width:760px),(pointer:coarse) {
+  .guild-tools-popup {
+  position:fixed;
+  top:72px;
+  left:14px;
+  right:14px;
+  width:auto;
+  max-height:calc(100dvh - 150px)}
+.guild-tools-launcher>summary {
+  padding:9px;
+  gap:5px}
+.discord-profile-wrap {
+  gap:8px}
+.discord-profile-menu {
+  width:auto;
+  max-height:calc(100dvh - 150px)}
+}
