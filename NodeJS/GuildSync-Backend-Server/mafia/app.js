@@ -38,6 +38,10 @@ const state = {
   follow: false,
   // Where the reader was before a search, so clearing it can go back.
   savedView: null,
+  // True while the rows on screen reach the last matching message. Rows that
+  // arrive afterwards leave this alone; a refresh uses it to take in the tail
+  // that arrived instead of reloading the same count from the same place.
+  atEnd: false,
   ids: new Set()
 };
 
@@ -252,6 +256,7 @@ function renderEmpty(message) {
   elements.body.replaceChildren(row);
   state.ids = new Set();
   state.loaded = 0;
+  state.atEnd = false;
   updateDateTab();
   updateSummary();
 }
@@ -540,12 +545,14 @@ async function applyLiveMessages(messages) {
 
   const beforeById = new Map(positions.map(position => [String(position.id), position.before]));
   const windowStart = state.offset;
-  const atEndOfResults = state.offset + state.loaded >= state.total;
+  const atEndOfResults = state.atEnd;
   const followFromBottom = isFollowingBottom();
   const anchor = captureScrollAnchor();
 
   const candidates = [];
   let matched = 0;
+  let addedAbove = 0;
+  let beyondWindow = 0;
 
   for (const message of fresh) {
     const before = beforeById.get(String(message.id));
@@ -553,12 +560,25 @@ async function applyLiveMessages(messages) {
     matched += 1;
 
     const index = before - windowStart;
-    if (index < 0) continue;
-    if (index > state.loaded) continue;
-    if (index === state.loaded && !atEndOfResults) continue;
+    if (index < 0) {
+      // It belongs above the rows on screen: one more matching row now sits
+      // before the window, so its start moves with it. Without this the next
+      // push near the bottom is judged against a stale window start and the
+      // row it carries is dropped.
+      addedAbove += 1;
+      continue;
+    }
+
+    if (index > state.loaded || (index === state.loaded && !atEndOfResults)) {
+      beyondWindow += 1;
+      continue;
+    }
 
     candidates.push({message, index});
   }
+
+  if (beyondWindow > 0) state.atEnd = false;
+  state.offset += addedAbove;
 
   candidates.sort((a, b) => a.index - b.index || Number(a.message.id) - Number(b.message.id));
 
@@ -586,7 +606,12 @@ async function applyLiveMessages(messages) {
     updateSummary();
   }
 
-  if (inserted === 0) return 0;
+  if (inserted === 0) {
+    // Nothing joined the rows on screen, but the window start moved, so the
+    // strips still have to say how many are left on either side.
+    updateEdgeStrips();
+    return 0;
+  }
 
   state.loaded = visibleRows().length;
 
@@ -1121,6 +1146,9 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend 
       if (payload.messages.length === 0) state.total = state.offset + state.loaded;
     } else renderMessages(payload.messages);
 
+    // Whether the rows on screen now reach the last matching message.
+    state.atEnd = state.offset + state.loaded >= state.total;
+
     markUpdated();
 
     // Every row, band and header change is in place before this point, so one
@@ -1193,7 +1221,9 @@ async function refreshCurrent() {
   // Rows that were not on screen before this refresh arrived just now.
   const knownIds = new Set(state.ids);
   const start = state.offset;
-  const target = Math.max(PAGE_SIZE, state.loaded);
+  // A window that already reached the end has to take in the rows that arrived
+  // since, not just the same number of rows from the same place.
+  const target = Math.max(PAGE_SIZE, state.loaded, state.atEnd ? state.total - start : 0);
   let first = true;
 
   // The refresh keeps the button for as long as it runs, so pressing it again
@@ -1327,6 +1357,11 @@ function connectLiveFeed() {
     // A bulk upload only announces its size; the page reloads on request.
     if (detail?.bulk) {
       const count = Number(detail.inserted) || messages.length;
+      // The rows are in the archive even though none were delivered, so the
+      // count and the strips have to include them before any refresh.
+      state.total += count;
+      updateSummary();
+      updateEdgeStrips();
       showPill(`${count} new message${count === 1 ? '' : 's'} — refresh`);
       showToast(`${count} new message${count === 1 ? '' : 's'} arrived — refresh to show them`);
       return;
