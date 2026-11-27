@@ -169,15 +169,6 @@ input:focus-visible {
   cursor: progress;
 }
 
-.refresh-button-attention {
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35), 0 0 22px rgba(59, 130, 246, 0.55);
-}
-
-.refresh-button-small {
-  padding: 5px 12px;
-  font-size: 12px;
-}
-
 /* Follow the newest row. Green while it is on, amber while it is paused
    because the reader scrolled away from the bottom. */
 .follow-button {
@@ -262,25 +253,6 @@ input:focus-visible {
 
 .clear-button:hover {
   filter: brightness(1.1);
-}
-
-/* Update notice: the socket only says new rows exist, the reader refreshes. */
-
-.update-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 16px;
-  border: 1px solid rgba(96, 165, 250, 0.45);
-  border-radius: 11px;
-  background: linear-gradient(180deg, rgba(34, 83, 184, 0.35) 0%, rgba(20, 55, 139, 0.35) 100%);
-  color: #dbeafe;
-  font-size: 13px;
-}
-
-.update-banner[hidden] {
-  display: none;
 }
 
 /* Filters */
@@ -674,19 +646,15 @@ input:focus-visible {
   filter: brightness(1.08);
 }
 
-@keyframes row-flash {
-  0%,
-  100% {
-    background: transparent;
-  }
-
-  20% {
-    background: rgba(250, 204, 21, 0.3);
-  }
+/* The row a permalink asked for stays marked after it scrolls into view, so
+   there is no doubt which line the link was about. It outranks the zebra,
+   officer and hover washes below. */
+.chat-table tbody tr.row-target td {
+  background: rgba(250, 204, 21, 0.22);
 }
 
-.chat-row.row-flash td {
-  animation: row-flash 2.4s ease;
+.chat-table tbody tr.row-target td:first-child {
+  box-shadow: inset 3px 0 0 #facc15;
 }
 
 .table-error {
@@ -717,6 +685,71 @@ input:focus-visible {
 .tooltip-line strong {
   color: #93c5fd;
   font-weight: 600;
+}
+
+/* Toasts: what just happened (a copied link, rows that arrived live), stacked
+   above the hint so neither of them covers a message. */
+
+.toast-stack {
+  position: fixed;
+  left: 50%;
+  bottom: 48px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.toast {
+  padding: 9px 18px;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.96), rgba(29, 78, 216, 0.96));
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 14px 30px rgba(2, 8, 23, 0.5);
+  animation: toast-in 160ms ease-out;
+}
+
+.toast-leaving {
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Says what a row does, without taking a column or a header row. */
+.row-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  z-index: 6;
+  margin: 0;
+  transform: translateX(-50%);
+  padding: 5px 14px;
+  border: 1px solid rgba(147, 197, 253, 0.2);
+  border-radius: 999px;
+  background: rgba(7, 12, 24, 0.82);
+  color: #94a3b8;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 @media (max-width: 760px) {
