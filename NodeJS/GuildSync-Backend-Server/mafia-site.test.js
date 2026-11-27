@@ -342,6 +342,18 @@ test('the date boxes start empty and the page opens on today unless following', 
   assert.match(client, /state\.follow = readFollowPreference\(\);/);
 });
 
+test('a follow-on load pins the newest message once, with rows and header in place', () => {
+  const loadBody = client.slice(client.indexOf('async function loadPage('), client.indexOf('async function loadEarlier('));
+
+  // One scroll after the render, the bands and the header: no retry timers.
+  assert.doesNotMatch(loadBody, /for \(const delay of \[/);
+  assert.equal(loadBody.split('scrollToNewest();').length - 1, 1);
+
+  const edgeAt = loadBody.indexOf('updateEdgeStrips();');
+  const pinAt = loadBody.indexOf('if (followFromBottom) scrollToNewest();');
+  assert.ok(pinAt > edgeAt, 'the single pin must come after the rows and header are updated');
+});
+
 test('date bands mark each day that has rows, and only those', () => {
   assert.match(client, /function buildDateBand\(seconds\)/);
   assert.match(client, /cell\.colSpan = 3;/);

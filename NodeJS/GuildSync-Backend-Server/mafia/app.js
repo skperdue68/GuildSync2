@@ -1123,20 +1123,11 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend 
 
     markUpdated();
 
-    if (followFromBottom) {
-      scrollToNewest();
-
-      // Rows and the date tab can still settle a frame or two after the first
-      // scroll, which leaves the window short of the bottom; pin it again unless
-      // the reader has taken over in the meantime.
-      for (const delay of [60, 240, 700]) {
-        setTimeout(() => {
-          if (state.follow && !readerMoved && !isAtBottom()) scrollToNewest();
-        }, delay);
-      }
-    }
-
+    // Every row, band and header change is in place before this point, so one
+    // scroll lands the window exactly on the newest message.
     updateEdgeStrips();
+
+    if (followFromBottom) scrollToNewest();
   } catch (error) {
     if (error.name === 'AbortError' || sequence !== requestSequence) return;
     if (!append) {
