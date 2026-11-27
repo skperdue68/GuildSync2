@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raffles · GuildSync manual</title>
+<link rel="stylesheet" href="assets/manual.css">
+</head>
+<body>
+<header class="manual-top">
+  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <nav class="manual-nav" aria-label="Manual sections">
+    <a href="getting-started.html">Getting started</a>
+    <a href="desktop-client.html">Desktop client</a>
+    <a href="members.html">Members</a>
+    <a href="banking.html">Banking</a>
+    <a href="raffles.html" aria-current="page">Raffles</a>
+    <a href="commands.html">Commands</a>
+    <a href="reports.html">Reports</a>
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </nav>
+</header>
+
+<main class="manual-page">
+  <p class="manual-crumb"><a href="index.html">Manual</a> / Raffles</p>
+  <h1>Raffles</h1>
+  <p class="lede">Two raffles run side by side: the Bi-Weekly raffle and the 50/50. Your tickets come from bank deposits, and the draw is worked from a spreadsheet.</p>
+
+  <section id="buying">
+    <h2>Buying tickets</h2>
+    <p>Deposit gold into the guild bank with the raffle marker in the amount. The <a href="banking.html#markers">deposit markers</a> explain the amounts: <code>501</code> buys one Bi-Weekly ticket, <code>2503</code> buys one 50/50 ticket, and so on.</p>
+    <p>Deposits are recorded when GuildSyncBanking uploads them, so a ticket bought seconds ago can take a moment to appear. Ask in Discord with <a href="commands.html#raffle"><code>/tickets</code></a> to see your own purchases.</p>
+  </section>
+
+  <section id="bonus">
+    <h2>Early purchase bonuses</h2>
+    <p>Bonuses reward buying early. Each raffle type, or each individual raffle, can have its own periods and percentages; an administrator sets them in <strong>Raffle Bonus Tickets</strong>.</p>
+    <ul>
+      <li>Bonuses round down <strong>per purchase</strong>. Five tickets at 20% earns one extra, for six total.</li>
+      <li>Earlier periods can pay more, and the last period pays 0%.</li>
+      <li>Ticket entries added by hand do not earn an early purchase bonus.</li>
+    </ul>
+  </section>
+
+  <figure class="shot" id="SHOT-RAFFLE-02" data-shot="SHOT-RAFFLE-02">
+    <div class="shot-slot"><span class="shot-id">SHOT-RAFFLE-02</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-RAFFLE-02</span> The Raffle Bonus Tickets section with the raffle selector marking enabled raffles <em>(Bonuses)</em>, a period list, and the Save Bonus Settings button.</figcaption>
+  </figure>
+
+  <section id="checking">
+    <h2>Checking a raffle from Discord</h2>
+    <p>Members can use <code>/raffle</code> for the current prizes, draw times and ticket counts, and <code>/tickets</code> for their own purchases. Both answer privately unless you add <code>public:true</code>. Ticket details stay private even when the summary is public.</p>
+    <p>Replies show two times for each period: the <strong>As of</strong> time, when GuildSync assembled the answer, and the <strong>Latest recorded transaction</strong>, the newest entry the automation has recorded. The transaction time can lag behind real deposits; it does not confirm that every deposit has been uploaded.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-RAFFLE-03" data-shot="SHOT-RAFFLE-03">
+    <div class="shot-slot"><span class="shot-id">SHOT-RAFFLE-03</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-RAFFLE-03</span> A private <code>/tickets</code> reply in Discord showing a Bi-Weekly and a 50/50 purchase with a bonus percentage, and the As of and Latest recorded transaction times.</figcaption>
+  </figure>
+
+  <section id="officer-raffle">
+    <h2>Running the raffle as an officer</h2>
+    <p>Raffle administration needs the Discord role named exactly <strong>Consigliere</strong>. The commands are <code>/gsraffle</code> and its short alias <code>/gsr</code> &mdash; remember that in ESO <code>/gsr</code> is the roster add-on, a different thing entirely.</p>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/gsr load</code></td><td>Clears and refills the working raffle sheets from the database, including saved result fields. Returns an <strong>Open Working Raffle</strong> button.</td></tr>
+        <tr><td><code>/gsr load date:092526</code></td><td>Loads the raffle containing that date from its archive, leaving the working sheet alone. Creates an archive if none exists.</td></tr>
+        <tr><td><code>/gsr update date:092526</code></td><td>Saves winners, attendance and other supported result fields from that archived sheet back into the database. It does not clear the sheet or import purchases.</td></tr>
+        <tr><td><code>/gsr archive</code></td><td>Archives the current sheet, saves its result fields, resets both working tabs and reloads current data. Returns archive and working-sheet buttons.</td></tr>
+        <tr><td><code>/gsr reset</code></td><td>Clears managed data and draw dates on both working tabs without deleting database records. Load afterwards to restore.</td></tr>
+      </tbody>
+    </table>
+    <p>Dates use zero-padded <code>MMDDYY</code>: <code>100326</code> is 3 October 2026. <code>10/03/26</code> and <code>10-03-26</code> also work. If zeros are missing and the date is unambiguous, GuildSync shows the full date and asks you to confirm. Ambiguous values fail rather than guess.</p>
+    <div class="callout">If a raffle date is the start or end boundary of a Bi-Weekly period, you are asked to choose <strong>Starts on this date</strong> or <strong>Ends on this date</strong>. You have one minute; no answer cancels the operation and changes nothing.</div>
+  </section>
+
+  <figure class="shot" id="SHOT-RAFFLE-01" data-shot="SHOT-RAFFLE-01">
+    <div class="shot-slot"><span class="shot-id">SHOT-RAFFLE-01</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-RAFFLE-01</span> The response to <code>/gsr load</code> in Discord, including the Open Working Raffle button and the summary of what was loaded.</figcaption>
+  </figure>
+
+  <section id="editing-history">
+    <h2>Editing an old raffle</h2>
+    <ol>
+      <li>Run <code>/gsr load date:MMDDYY</code> and answer the boundary question if it appears.</li>
+      <li>Open the returned archive button and edit the supported winner, attendance, bonus-ticket or winnings-sent fields.</li>
+      <li>Run the <strong>update</strong> command shown in the response, with the normalised date and the same boundary choice.</li>
+    </ol>
+    <p>Archived files keep their file ID while you load and update them. Archive names use the Bi-Weekly ending date, such as <code>261010 Raffle</code>. Archiving the live sheet again can replace an older archive with the same name and give the replacement a new link.</p>
+  </section>
+
+  <section id="time-zones">
+    <h2>Times and time zones</h2>
+    <p>Discord shows dates and times in your own time zone, while draw times are defined in Eastern time. Around a daylight-saving change, a draw can appear an hour earlier or later than you expect; the recorded draw time is the authoritative one.</p>
+  </section>
+
+  <section id="highlights">
+    <h2>Community highlights</h2>
+    <p><code>/highlights</code> shows the Community Highlights report: raffle regulars, guild trader leaders and Discord activity. Trader gold is never included in the ranking. Use <code>public:true</code> to post it visibly in the channel.</p>
+  </section>
+
+  <section id="announcements-cleanup">
+    <h2>Announcements stay tidy</h2>
+    <p>When the bot posts a raffle summary, or you run <code>/raffle public:true</code>, it removes its own older summaries in that channel and keeps the freshest one. Private ticket replies, archive notifications, other announcements and messages from people or other bots are left alone. The bot needs <strong>Read Message History</strong> in the channel.</p>
+  </section>
+</main>
+
+<footer class="manual-foot">GuildSync user manual · served by GuildSync at <code>/manual/</code></footer>
+</body>
+</html>

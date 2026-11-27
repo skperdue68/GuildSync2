@@ -65,3 +65,7 @@ GuildSyncBackups/
 
 coverage.out
 NodeJS/GuildSync-Discord-Bot/data/membership-dm-intake/
+
+# User manual copied into both clients at build time (source: manual/)
+/GO/GuildSync-Frontend-Client/frontend/public/manual/
+/NodeJS/GuildSync-Backend-Server/web/public/manual/

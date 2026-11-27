@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GuildSync user manual</title>
+<link rel="stylesheet" href="assets/manual.css">
+</head>
+<body>
+<header class="manual-top">
+  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <nav class="manual-nav" aria-label="Manual sections">
+    <a href="getting-started.html">Getting started</a>
+    <a href="desktop-client.html">Desktop client</a>
+    <a href="members.html">Members</a>
+    <a href="banking.html">Banking</a>
+    <a href="raffles.html">Raffles</a>
+    <a href="commands.html">Commands</a>
+    <a href="reports.html">Reports</a>
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </nav>
+</header>
+
+<main class="manual-page">
+  <p class="manual-crumb">Manual</p>
+  <h1>GuildSync user manual</h1>
+  <p class="lede">How to use GuildSync: reading the data, keeping ESO and Discord in step, buying raffle tickets, and finding your way around the desktop client.</p>
+
+  <section id="what-is-guildsync">
+    <h2>What GuildSync does</h2>
+    <p>GuildSync connects your guild's Elder Scrolls Online activity with Discord. ESO add-ons collect guild bank deposits and roster changes, the desktop client uploads them, and GuildSync stores the records. Those records produce raffle tickets, guild trader invoices, receipt mail, membership history and the reports officers review.</p>
+    <p>Data appears after an officer's ESO add-ons save it and the GuildSync desktop app uploads it. GuildSync never asks the live ESO bank: everything you see is based on what has been uploaded.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-START-02" data-shot="SHOT-START-02">
+    <div class="shot-slot"><span class="shot-id">SHOT-START-02</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-START-02</span> The signed-in main window with all six tabs visible: Discord Member Data, Guild Roster, Guild Chat, Bank Deposits / Raffle Tickets, Reports and Admin.</figcaption>
+  </figure>
+
+  <section id="map">
+    <h2>Where things live</h2>
+    <div class="card-grid">
+      <div class="card"><h3><a href="getting-started.html">Getting started</a></h3><p>Signing in, what your role allows, and the first five things to check.</p></div>
+      <div class="card"><h3><a href="desktop-client.html">Desktop client</a></h3><p>Installing, the tray, start at login, file watchers, hotkeys and updates.</p></div>
+      <div class="card"><h3><a href="members.html">Members</a></h3><p>Roster and Discord lists, history, linking ESO accounts to Discord, and notes.</p></div>
+      <div class="card"><h3><a href="banking.html">Banking</a></h3><p>Deposits, raffle ticket purchases, receipts, and the spreadsheets.</p></div>
+      <div class="card"><h3><a href="raffles.html">Raffles</a></h3><p>Ticket maths, early purchase bonuses, and archiving a finished raffle.</p></div>
+      <div class="card"><h3><a href="commands.html">Commands</a></h3><p>Every Discord bot command and every in-game ESO command, with who can use each one.</p></div>
+      <div class="card"><h3><a href="reports.html">Reports</a></h3><p>The reports officers run, and the settings behind them.</p></div>
+      <div class="card"><h3><a href="troubleshooting.html">Troubleshooting</a></h3><p>Missing tickets, unsupported versions, uploads that never arrive.</p></div>
+    </div>
+  </section>
+
+  <section id="roles">
+    <h2>Your GuildSync role</h2>
+    <p>GuildSync accounts are approved by an administrator. Roles decide what you can do here; they are separate from your Discord roles.</p>
+    <table>
+      <thead><tr><th>Role</th><th>What it allows</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Viewer</strong></td><td>Browse data, run reports, upload ESO history, and use automatic linking. New accounts start here.</td></tr>
+        <tr><td><strong>User</strong></td><td>Everything a Viewer can do, plus normal editing: notes, receipts, account-name changes and raffle work.</td></tr>
+        <tr><td><strong>Admin</strong></td><td>Everything a User can do, plus administrator configuration, user management, and acting as another account to test permissions.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">Some features also need a Discord role or an administrator switch. <code>/gsr</code> and <code>/gsraffle</code> in Discord require the <strong>Consigliere</strong> role; voice mute and onboarding each have their own switch in Administrator Configuration.</div>
+  </section>
+
+  <section id="how-to-read">
+    <h2>How to use this manual</h2>
+    <ul>
+      <li>Pages are grouped by the tab or task you are working in, not by which part of GuildSync does the work.</li>
+      <li>Screenshots are being added. Each one has a slot with a reference such as <code>SHOT-MEMBERS-04</code>; the caption says what the picture shows, so a page still reads correctly before the images land.</li>
+      <li>Commands are listed on the <a href="commands.html">Commands</a> page, split into Discord commands and in-game ESO commands. They are not the same thing: Discord <code>/gsr</code> manages raffles, ESO <code>/gsr</code> manages the roster.</li>
+    </ul>
+  </section>
+
+  <section id="need-help">
+    <h2>If something looks wrong</h2>
+    <p>Start with <a href="troubleshooting.html">Troubleshooting</a>. Most gaps come from one of three things: the add-on has not saved yet (type <code>/reloadui</code> in ESO), the desktop app has not uploaded yet, or the Discord account is not linked to the right ESO account.</p>
+  </section>
+</main>
+
+<footer class="manual-foot">GuildSync user manual · served by GuildSync at <code>/manual/</code></footer>
+</body>
+</html>

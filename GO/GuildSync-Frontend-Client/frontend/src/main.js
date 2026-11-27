@@ -9426,6 +9426,30 @@ function renderProfileFileWatcherSection(status = guildSyncFileWatcherStatus) {
   `;
 }
 
+// The manual ships inside the desktop app's own assets, so it opens in an in-app
+// window rather than the system browser, which has no route to it.
+function openUserManual() {
+  if (document.querySelector('#userManualOverlay')) {
+    return;
+  }
+  const overlay = document.createElement('div');
+  overlay.id = 'userManualOverlay';
+  overlay.className = 'roster-history-overlay user-manual-overlay';
+  overlay.innerHTML = `
+    <div class="roster-history-dialog user-manual-dialog" role="dialog" aria-modal="true" aria-labelledby="userManualTitle">
+      <div class="roster-history-header">
+        <div><h3 id="userManualTitle">GuildSync User Manual</h3><p>Every page lists its sections, so you can jump straight to the thing you need.</p></div>
+        <button class="roster-history-close modal-close-button user-manual-close" type="button" aria-label="Close the user manual">&times;</button>
+      </div>
+      <iframe class="user-manual-frame" src="/manual/index.html" title="GuildSync user manual"></iframe>
+    </div>`;
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) overlay.remove();
+  });
+  overlay.querySelector('.user-manual-close').addEventListener('click', () => overlay.remove());
+  document.body.append(overlay);
+}
+
 function renderOpenProfileMenuContents() {
   const menu = document.querySelector('#discordProfileMenu');
   if (!menu) {
@@ -9462,6 +9486,7 @@ function renderOpenProfileMenuContents() {
         ${renderProfileFileWatcherSection()}
         <div class="profile-user-settings-mount">
           <button id="openUserSettingsButton" class="profile-user-settings-button" type="button">User Settings</button>
+          <button id="openUserManualButton" class="profile-user-settings-button profile-manual-button" type="button">User Manual</button>
         </div>
       </div>
       ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}
@@ -9473,6 +9498,7 @@ function renderOpenProfileMenuContents() {
 
   voiceHotkey.wire(menu);
   decorateProfileMenu(menu, {openExternal: BrowserOpenURL, openSections: profileOpenSections, onDesktopClose: () => voiceHotkey.close()});
+  menu.querySelector('#openUserManualButton')?.addEventListener('click', () => openUserManual());
   menu.querySelector('#returnToMyAccount')?.addEventListener('click',()=>void changeGuildSyncUser(null));
   menu.querySelector('#switchGuildSyncAccount')?.addEventListener('change',event=>{if(event.target.value)void changeGuildSyncUser(event.target.value);});
   menu.querySelectorAll('[data-role-view]').forEach(button=>button.addEventListener('click',()=>void changeGuildSyncRoleView(button.dataset.roleView)));

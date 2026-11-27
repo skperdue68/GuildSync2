@@ -9627,6 +9627,7 @@ function renderOpenProfileMenuContents() {
         ${renderProfileFileWatcherSection()}
         <div class="profile-user-settings-mount">
           <button id="openUserSettingsButton" class="profile-user-settings-button" type="button">User Settings</button>
+          <button id="openUserManualButton" class="profile-user-settings-button profile-manual-button" type="button">User Manual</button>
         </div>
       </div>
       ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}
@@ -9637,6 +9638,11 @@ function renderOpenProfileMenuContents() {
   `;
 
   decorateProfileMenu(menu, {openExternal: null, openSections: profileOpenSections});
+  // The web client serves the manual beside the app, so a new tab keeps the app
+  // where it is.
+  menu.querySelector('#openUserManualButton')?.addEventListener('click', () => {
+    window.open('/manual/index.html', '_blank', 'noopener');
+  });
   menu.querySelector('#returnToMyAccount')?.addEventListener('click',()=>void changeGuildSyncUser(null));
   menu.querySelector('#switchGuildSyncAccount')?.addEventListener('change',event=>{if(event.target.value)void changeGuildSyncUser(event.target.value);});
   menu.querySelectorAll('[data-role-view]').forEach(button=>button.addEventListener('click',()=>void changeGuildSyncRoleView(button.dataset.roleView)));

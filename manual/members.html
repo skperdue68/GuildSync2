@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Members · GuildSync manual</title>
+<link rel="stylesheet" href="assets/manual.css">
+</head>
+<body>
+<header class="manual-top">
+  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <nav class="manual-nav" aria-label="Manual sections">
+    <a href="getting-started.html">Getting started</a>
+    <a href="desktop-client.html">Desktop client</a>
+    <a href="members.html" aria-current="page">Members</a>
+    <a href="banking.html">Banking</a>
+    <a href="raffles.html">Raffles</a>
+    <a href="commands.html">Commands</a>
+    <a href="reports.html">Reports</a>
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </nav>
+</header>
+
+<main class="manual-page">
+  <p class="manual-crumb"><a href="index.html">Manual</a> / Members</p>
+  <h1>Members and links</h1>
+  <p class="lede">Two lists, one for Discord and one for ESO, joined by the link between a person's ESO account and their Discord account.</p>
+
+  <section id="discord-tab">
+    <h2>Discord Member Data</h2>
+    <p>Everyone on your Discord server. Search by name, filter by role or link status, and sort any column. Each row shows the Discord name, server nickname, roles, whether the member is linked to an ESO account, and when they were last seen.</p>
+    <ul>
+      <li>Click a column heading to sort; click again to reverse.</li>
+      <li>Click the <strong>history</strong> button on a row to open that member's Discord history with the name already filled in.</li>
+      <li><strong>Refresh</strong> re-reads the list from Discord. Roles and members only change after a refresh, which the bot does with <a href="commands.html#roles"><code>/roles</code></a>.</li>
+    </ul>
+  </section>
+
+  <figure class="shot" id="SHOT-MEMBERS-02" data-shot="SHOT-MEMBERS-02">
+    <div class="shot-slot"><span class="shot-id">SHOT-MEMBERS-02</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-MEMBERS-02</span> The Discord Member Data tab with several rows, the role filter, and the history and linked columns visible.</figcaption>
+  </figure>
+
+  <section id="roster-tab">
+    <h2>Guild Roster</h2>
+    <p>Everyone in the ESO guild, with rank, join date, notes, the linked Discord account and a history button. The roster updates when GuildSyncRoster uploads an ESO roster snapshot.</p>
+    <ul>
+      <li>The <strong>Last Refresh</strong> time above the table tells you how current the data is.</li>
+      <li>The <strong>history</strong> button opens that member's roster history: rank changes, joins, leaves, and notes.</li>
+      <li>Notes are per member and visible according to your role. Use them for anything an officer needs to remember.</li>
+    </ul>
+  </section>
+
+  <figure class="shot" id="SHOT-MEMBERS-01" data-shot="SHOT-MEMBERS-01">
+    <div class="shot-slot"><span class="shot-id">SHOT-MEMBERS-01</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-MEMBERS-01</span> The Guild Roster tab showing rank filters and a row with the history button between Notes and Linked.</figcaption>
+  </figure>
+
+  <section id="history">
+    <h2>Member history</h2>
+    <p>The history window lists every recorded change for one member, newest first, including rank and roster changes on the ESO side and joins, leaves and role changes on the Discord side. From a roster history, Users and Admins can also start an <a href="#renames">ESO account-name change</a>.</p>
+    <p>You can open the window from the row button, or search for someone else once it is open.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-MEMBERS-03" data-shot="SHOT-MEMBERS-03">
+    <div class="shot-slot"><span class="shot-id">SHOT-MEMBERS-03</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-MEMBERS-03</span> An open roster history window for one member, with the search box and a list of dated events.</figcaption>
+  </figure>
+
+  <section id="links">
+    <h2>Member links</h2>
+    <p>A <strong>link</strong> connects one ESO account to one Discord account. GuildSync proposes links automatically by comparing names, and an officer confirms the uncertain ones. Raffle tickets, trader invoices and membership history all depend on the link being right.</p>
+    <table>
+      <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><strong>linked</strong></td><td>Confirmed. Either an exact automatic match or a pair an officer approved. A confirmed link is never overwritten by a later automatic pass.</td></tr>
+        <tr><td><strong>candidate</strong></td><td>A suggestion the matcher is not certain about. It is listed in <em>Possible links to make</em> for review.</td></tr>
+        <tr><td><strong>blocked</strong></td><td>The pair is deliberately kept apart. It appears in <em>Blocks we can remove</em>.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="links-report">
+    <h2>The Member Links report</h2>
+    <p>Open it from <a href="reports.html">Reports</a>. It groups links into three sections so each row has exactly one sensible action:</p>
+    <ul>
+      <li><strong>Possible links to make</strong> &mdash; candidates at 82% or better. The action is a <strong>check</strong>: approve and link the pair.</li>
+      <li><strong>Blocks we can remove</strong> &mdash; pairs kept apart on purpose. The action is a <strong>restore arrow</strong>: let the matcher consider them again.</li>
+      <li><strong>Links we can unlink</strong> &mdash; confirmed links. The action is a <strong>broken chain</strong>: remove the link.</li>
+    </ul>
+    <p>Filters narrow by status, method and available action, and the search box matches either side of the pair.</p>
+    <div class="callout">
+      <strong>Removing a link has two different outcomes, and the report says which one applies before you click.</strong>
+      <ul>
+        <li>An officer-approved link returns to <em>Possible links to make</em> as a candidate, marked <code>→ candidate</code>.</li>
+        <li>An exact automatic link becomes a block, marked <code>→ block</code>, which you can remove later from the same report.</li>
+      </ul>
+      You still get a confirmation dialog. Nothing is deleted from history.
+    </div>
+  </section>
+
+  <figure class="shot" id="SHOT-MEMBERS-04" data-shot="SHOT-MEMBERS-04">
+    <div class="shot-slot"><span class="shot-id">SHOT-MEMBERS-04</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-MEMBERS-04</span> The Member Links report showing the <em>Links we can unlink</em> section with the broken-chain button, its <code>→ block</code> and <code>→ candidate</code> captions, and the filter row.</figcaption>
+  </figure>
+
+  <section id="link-dialog">
+    <h2>Linking one member by hand</h2>
+    <p>Open the member link dialog from a member row or from the report. It shows the ESO account, the current Discord match, the match method and confidence, and the actions available to you:</p>
+    <ul>
+      <li><strong>Approve</strong> a candidate (<strong>check</strong>) to confirm the pair.</li>
+      <li><strong>Unlink</strong> a confirmed pair (<strong>broken chain</strong>) to remove the link.</li>
+      <li><strong>Remove a block</strong> (<strong>restore arrow</strong>) to let the matcher consider the pair again.</li>
+    </ul>
+    <p>Approved links are marked as confirmed by an officer, so the automatic matcher leaves them alone.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-MEMBERS-05" data-shot="SHOT-MEMBERS-05">
+    <div class="shot-slot"><span class="shot-id">SHOT-MEMBERS-05</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-MEMBERS-05</span> The member link dialog for a linked member: ESO account, Discord match, status line, and the round action buttons.</figcaption>
+  </figure>
+
+  <section id="discovery">
+    <h2>Member discovery and membership DMs</h2>
+    <p>Member discovery helps officers find people who are on one side but not the other, so a member with no Discord account and a Discord member with no ESO account are easy to spot.</p>
+    <p>Where the <strong>membership DM</strong> campaign is enabled, GuildSync sends eligible unlinked Discord members a slow, alphabetical series of direct messages. Officers with the Consigliere or Kingpin role manage it with <a href="commands.html#membership-dm"><code>/membership-dm</code></a>: start, pause, resume, restart, status, resolve and test.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-MEMBERS-06" data-shot="SHOT-MEMBERS-06">
+    <div class="shot-slot"><span class="shot-id">SHOT-MEMBERS-06</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-MEMBERS-06</span> The member discovery view listing members present on only one side, with the action offered for each.</figcaption>
+  </figure>
+
+  <section id="onboarding">
+    <h2>Joining Discord and gaining access</h2>
+    <p>When onboarding is enabled, a member with the <strong>Gangsters</strong> role is promoted to <strong>Associates</strong> once their Discord account is linked to an ESO account. GuildSync adds Associates, removes Gangsters and leaves your other roles alone. If you already hold a guild rank role, only Gangsters is removed and your rank is kept.</p>
+    <p>The confirmation arrives as a tagged message in a private thread in the onboarding channel. If private threads are unavailable, GuildSync uses a public thread in the same channel instead. No direct message is sent.</p>
+    <p>Members who stay unlinked after reminders are switched on receive one reminder after the configured delay, normally 24 hours. It is sent once per Discord member, including if they leave and rejoin.</p>
+  </section>
+
+  <section id="renames">
+    <h2>ESO account-name changes</h2>
+    <p>From a member's roster history, Users and Admins can choose <strong>Change ESO account name</strong>, preview the affected records and confirm. Viewers cannot rename. Previous names stay searchable, existing data stays attached, and the history records the old name, the new name, the operator and the time.</p>
+    <div class="callout warn">If the new name already exists in GuildSync, the rename is not merged automatically. Review the destination account first.</div>
+  </section>
+</main>
+
+<footer class="manual-foot">GuildSync user manual · served by GuildSync at <code>/manual/</code></footer>
+</body>
+</html>

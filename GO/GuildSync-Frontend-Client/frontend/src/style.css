@@ -7666,3 +7666,27 @@ body {
   height: 15px;
   display: block;
 }
+
+/* User manual. The pages ship inside the client's own assets and open in an
+   overlay window, so the desktop never needs an external browser route. */
+.profile-manual-button {
+  margin-top: 8px;
+}
+
+.roster-history-overlay.user-manual-overlay {
+  z-index: 70;
+}
+
+.user-manual-dialog {
+  display: flex;
+  flex-direction: column;
+  height: min(880px, calc(100% - 16px));
+}
+
+.user-manual-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: #0b1424;
+}

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desktop client · GuildSync manual</title>
+<link rel="stylesheet" href="assets/manual.css">
+</head>
+<body>
+<header class="manual-top">
+  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <nav class="manual-nav" aria-label="Manual sections">
+    <a href="getting-started.html">Getting started</a>
+    <a href="desktop-client.html" aria-current="page">Desktop client</a>
+    <a href="members.html">Members</a>
+    <a href="banking.html">Banking</a>
+    <a href="raffles.html">Raffles</a>
+    <a href="commands.html">Commands</a>
+    <a href="reports.html">Reports</a>
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </nav>
+</header>
+
+<main class="manual-page">
+  <p class="manual-crumb"><a href="index.html">Manual</a> / Desktop client</p>
+  <h1>Desktop client</h1>
+  <p class="lede">The desktop client watches your ESO folder, uploads add-on files, and can sit in the tray all day.</p>
+
+  <section id="install">
+    <h2>Installing</h2>
+    <table>
+      <thead><tr><th>Platform</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Windows</td><td>Run the installer. GuildSync installs per user and adds a Start menu entry.</td></tr>
+        <tr><td>macOS</td><td>The package is unsigned and runs in two stages. Use <strong>System Settings → Privacy &amp; Security → Security → Open Anyway</strong>, then finish the app and ESO AddOns folder prompts.</td></tr>
+        <tr><td>Linux</td><td>GTK4 and WebKitGTK 6.0 are required. Tray support follows your desktop's StatusNotifier host.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">Only one client can run at a time. Launching GuildSync again brings the running window back instead of starting a second copy, which would fight over the sign-in callback and the file watchers.</div>
+  </section>
+
+  <section id="window">
+    <h2>The window</h2>
+    <ul>
+      <li>The title bar has its own minimise, maximise and close buttons.</li>
+      <li>GuildSync remembers its size and position between launches.</li>
+      <li>Minimising is a normal minimise. Closing follows your tray setting below.</li>
+    </ul>
+  </section>
+
+  <section id="tray">
+    <h2>Tray and close to tray</h2>
+    <p>Where your desktop provides a tray, GuildSync keeps an icon there with <strong>Show</strong>, <strong>Hide</strong> and <strong>Quit GuildSync</strong>.</p>
+    <ul>
+      <li><strong>Windows:</strong> click or double-click the icon to restore the window; right-click for the menu.</li>
+      <li><strong>macOS:</strong> the menu-bar icon opens the same menu; reopening from the Dock also restores the window.</li>
+      <li><strong>Linux:</strong> the icon appears when a StatusNotifier panel host is registered. Without one, GuildSync runs as a normal window and closing quits.</li>
+    </ul>
+    <p><strong>Close to tray</strong> is on by default where a tray exists, so closing the window hides it. Turn it off in your profile menu and closing the window quits GuildSync instead.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-DESKTOP-02" data-shot="SHOT-DESKTOP-02">
+    <div class="shot-slot"><span class="shot-id">SHOT-DESKTOP-02</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-DESKTOP-02</span> The open tray menu on Windows showing Show, Hide and Quit GuildSync.</figcaption>
+  </figure>
+
+  <section id="start-at-login">
+    <h2>Start GuildSync at login</h2>
+    <p>In the profile menu, switch <strong>Start GuildSync at login</strong> on. GuildSync registers a login item for your account:</p>
+    <ul>
+      <li><strong>Windows:</strong> a per-user entry in <code>Run</code>.</li>
+      <li><strong>macOS:</strong> a LaunchAgent for the application bundle.</li>
+      <li><strong>Linux:</strong> an XDG autostart entry.</li>
+    </ul>
+    <p>At login GuildSync starts <strong>hidden in the tray</strong> instead of opening a window over your desktop. Click the tray icon when you want the window. If your desktop has no tray host, the window opens normally, because a hidden app with no tray would be unreachable.</p>
+    <div class="callout">The login item stores the location of the app. When GuildSync is updated or moved, it repairs that entry the next time it starts, so login keeps working. Turning the switch off removes the entry.</div>
+  </section>
+
+  <figure class="shot" id="SHOT-DESKTOP-01" data-shot="SHOT-DESKTOP-01">
+    <div class="shot-slot"><span class="shot-id">SHOT-DESKTOP-01</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-DESKTOP-01</span> The profile menu: name, role, client version, the Start GuildSync at login row with its checkbox, and the User Settings button.</figcaption>
+  </figure>
+
+  <section id="profile-menu">
+    <h2>Your profile menu</h2>
+    <p>Click your Discord avatar to open it. Alongside your name, role and client version it holds collapsible sections:</p>
+    <table>
+      <thead><tr><th>Section</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Guild Tools</strong></td><td>Shortcuts to the tools your role can use.</td></tr>
+        <tr><td><strong>SavedVariables &amp; File Watch</strong></td><td>Which add-on files GuildSync uploads, and the folder it watches. This is also where you open <strong>User Settings</strong>.</td></tr>
+        <tr><td><strong>Desktop &amp; Voice</strong></td><td>The global voice-mute shortcut and its separate unmute key.</td></tr>
+        <tr><td><strong>Switch Account</strong></td><td>Administrators can act as another account to check what that person sees, then return.</td></tr>
+      </tbody>
+    </table>
+    <p>The menu also shows the desktop options, including <strong>Start GuildSync at login</strong>, <strong>Close to tray</strong> and <strong>Log out</strong>. Hovering your avatar shows who is signed in on the server and which client each person is using.</p>
+  </section>
+
+  <section id="files">
+    <h2>File watchers and uploads</h2>
+    <p>Each add-on export has its own switch. Turning one off stops that file from being uploaded; the others continue. The status line tells you whether the watcher is active and when it last saw a change.</p>
+    <p>The folder GuildSync watches is shown in <strong>User Settings</strong>. Change it there if your ESO documents folder is somewhere unusual, for example a Steam or Proton prefix on Linux.</p>
+    <div class="callout"><strong>Receipt mail is different.</strong> When GuildSync needs to write a queued receipt-mail batch, close ESO completely, let GuildSync write the batch, then reopen ESO to send it. Roster, banking and application uploads just need a <code>/reloadui</code>, logout or exit.</div>
+  </section>
+
+  <figure class="shot" id="SHOT-DESKTOP-03" data-shot="SHOT-DESKTOP-03">
+    <div class="shot-slot"><span class="shot-id">SHOT-DESKTOP-03</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-DESKTOP-03</span> The User Settings dialog with the SavedVariables folder field and the per-file watcher switches.</figcaption>
+  </figure>
+
+  <section id="hotkeys">
+    <h2>Voice mute shortcut</h2>
+    <p>Where an administrator has enabled voice mute and chosen the roles it applies to, the desktop client can hold <kbd>Ctrl</kbd>+<kbd>M</kbd> to mute lower-ranked members in your current Discord voice channel. Releasing the keys, or leaving the channel, ends the mute. Moderator mutes are never undone.</p>
+    <p>You can assign a different mute key, plus a second unmute key that ends a mute immediately, in <strong>Desktop &amp; Voice</strong>. Pressing the mute key again restarts the countdown.</p>
+  </section>
+
+  <section id="updates">
+    <h2>Updates</h2>
+    <p>GuildSync checks the newest release about every six hours. When an update exists, the profile menu offers <strong>Download latest GuildSync</strong>: it downloads the installer for your platform and hands it to your operating system. Development builds skip the check.</p>
+    <p>If the server stops supporting your client version, GuildSync hides member and banking data and shows an <strong>unsupported desktop</strong> screen with the same download button. Install the update and restart.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-TROUBLE-01" data-shot="SHOT-TROUBLE-01">
+    <div class="shot-slot"><span class="shot-id">SHOT-TROUBLE-01</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-TROUBLE-01</span> The unsupported-desktop screen with its download, minimise and close buttons.</figcaption>
+  </figure>
+
+  <section id="guild-chat">
+    <h2>Guild Chat on the desktop</h2>
+    <p>Guild Chat opens in your web browser from the desktop client, so it keeps its own window and you can leave it open beside ESO. In the web client the same chat appears inside the Guild Chat tab.</p>
+  </section>
+</main>
+
+<footer class="manual-foot">GuildSync user manual · served by GuildSync at <code>/manual/</code></footer>
+</body>
+</html>

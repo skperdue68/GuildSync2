@@ -1,0 +1,170 @@
+/* GuildSync user manual.
+   Shared by every page. The manual ships inside both clients and is served at
+   /manual/, so it stays dependency-free: no fonts, scripts or CDN links. */
+
+:root {
+  --bg: #0b1424;
+  --panel: #111c31;
+  --panel-2: #16233c;
+  --line: rgba(148, 163, 184, 0.22);
+  --text: #e5e7eb;
+  --muted: #93a4bd;
+  --accent: #7dd3fc;
+  --accent-2: #2563eb;
+  --warn: #fca5a5;
+  --ok: #bbf7d0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover, a:focus-visible { text-decoration: underline; }
+
+.manual-top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 26px;
+  align-items: center;
+  padding: 14px 28px;
+  background: rgba(7, 13, 26, 0.96);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+}
+
+.manual-brand {
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+.manual-brand span { color: var(--muted); font-weight: 600; }
+
+.manual-nav { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; }
+.manual-nav a { color: var(--muted); font-weight: 600; }
+.manual-nav a:hover { color: #f8fafc; }
+.manual-nav a[aria-current="page"] { color: #fff; box-shadow: inset 0 -2px 0 var(--accent-2); }
+
+.manual-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 34px 28px 90px;
+}
+
+.manual-crumb { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+h1 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; }
+h2 { font-size: 20px; margin: 38px 0 10px; }
+h3 { font-size: 16px; margin: 26px 0 8px; }
+p, li { color: #dbe3ee; }
+.lede { color: var(--muted); font-size: 16px; margin: 0 0 26px; }
+
+ul, ol { padding-left: 22px; }
+li { margin: 5px 0; }
+
+table { width: 100%; border-collapse: collapse; margin: 14px 0 22px; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border: 1px solid var(--line); vertical-align: top; }
+th { background: var(--panel-2); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: #cbd5e1; }
+tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+
+code, kbd {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 13px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: #e2e8f0;
+}
+kbd { border-bottom-width: 2px; }
+
+.callout {
+  margin: 18px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 14px;
+}
+.callout strong { color: #f8fafc; }
+.callout.warn { border-left-color: var(--warn); }
+
+.card-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin: 18px 0 8px; }
+.card { padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.card h3 { margin: 0 0 6px; font-size: 14px; color: #f8fafc; }
+.card p { margin: 0; font-size: 13px; color: var(--muted); }
+
+/* Screenshot slots.
+   Every slot carries a stable id and data-shot value so a screenshot can be
+   matched to the page later. See SCREENSHOTS.md for the full list. */
+figure.shot {
+  margin: 22px 0 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+figure.shot .shot-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 150px;
+  padding: 22px;
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.4);
+  background:
+    repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.05) 0 12px, transparent 12px 24px);
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+figure.shot .shot-slot .shot-id { color: #f8fafc; font-weight: 800; letter-spacing: 0.08em; }
+
+figure.shot img { display: block; width: 100%; height: auto; }
+
+figure.shot figcaption {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+figure.shot figcaption .shot-id {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: rgba(37, 99, 235, 0.2);
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  color: #dbeafe;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.manual-foot {
+  border-top: 1px solid var(--line);
+  padding: 18px 28px 30px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media print {
+  .manual-top { position: static; }
+  body { background: #fff; color: #000; }
+  figure.shot .shot-slot { display: none; }
+}

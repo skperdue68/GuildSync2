@@ -7642,3 +7642,9 @@ body {
   height: 15px;
   display: block;
 }
+
+/* User manual button in the profile menu; the web client opens the same pages
+   from /manual/ in a new tab. */
+.profile-manual-button {
+  margin-top: 8px;
+}
