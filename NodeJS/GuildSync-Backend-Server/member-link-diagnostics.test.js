@@ -27,7 +27,7 @@ function loadContext({roster = [{account_name: 'Auleric', rank: 'Member'}], disc
     isMemberLinkPairLinked: (maps, _eso, id) => maps.rows.some((link) => String(link.discord_user_id) === String(id) && String(link.link_status).toLowerCase() === 'linked'),
     isMemberLinkPairAutoUpgradeable: (maps, _eso, id) => !maps.rows.some((link) => String(link.discord_user_id) === String(id) && (String(link.link_status).toLowerCase() === 'linked' || Number(link.auto_link_blocked || 0) === 1))
   });
-  vm.runInContext(fn('getMemberLinkMatchDiagnostics') + '\nconst MEMBER_LINK_CANDIDATE_THRESHOLD = 82;', ctx);
+  vm.runInContext(fn('getMemberLinkMatchDiagnostics'), ctx);
   return ctx;
 }
 

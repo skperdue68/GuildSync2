@@ -6011,8 +6011,6 @@ export async function getMemberLinkHistory(applicationDB, payload = {}) {
 // Match diagnostics: why the matcher did or did not offer a Discord member
 // ---------------------------------------------------------------------------
 
-export const MEMBER_LINK_CANDIDATE_THRESHOLD = 82;
-
 // getMemberLinkMatchDiagnostics explains one ESO account against every Discord member:
 // the score per best name field, and whether the matcher would link, candidate, block or
 // skip it, so an officer can answer "why is this pair not linked?" without guessing.
@@ -6022,6 +6020,8 @@ export async function getMemberLinkMatchDiagnostics(applicationDB, payload = {})
 
   const requested = Number(payload.limit ?? 8);
   const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 25) : 8;
+  // The matcher's own candidate floor; kept local so the function stays self-contained.
+  const candidateThreshold = 82;
 
   const {rosterRows, discordRows, linkRows} = await loadMemberLinkInputs(applicationDB);
   const roster = (rosterRows || []).find((row) => esoAccountKey(row.account_name) === esoAccountKey(esoAccountName));
@@ -6049,10 +6049,10 @@ export async function getMemberLinkMatchDiagnostics(applicationDB, payload = {})
     else if (blocked) decision = 'blocked';
     else if (esoOptOut || discordOptOut) decision = 'opted_out';
     else if (top.score >= 100 && autoUpgradeable) decision = 'auto_link';
-    else if (top.score >= MEMBER_LINK_CANDIDATE_THRESHOLD && autoUpgradeable) decision = 'candidate';
+    else if (top.score >= candidateThreshold && autoUpgradeable) decision = 'candidate';
     // A score that would normally be offered, held back by an existing confirmed link
     // or block on the pair: the reason an officer sees nothing rather than a duplicate.
-    else if (top.score >= MEMBER_LINK_CANDIDATE_THRESHOLD) decision = 'protected_by_existing_link';
+    else if (top.score >= candidateThreshold) decision = 'protected_by_existing_link';
 
     return {
       discord_user_id: String(discord.discord_id || ''),
@@ -6081,7 +6081,7 @@ export async function getMemberLinkMatchDiagnostics(applicationDB, payload = {})
     eso_account_name: esoAccountName,
     rank: roster.rank || '',
     eso_opt_out: esoOptOut ? 1 : 0,
-    candidate_threshold: MEMBER_LINK_CANDIDATE_THRESHOLD,
+    candidate_threshold: candidateThreshold,
     discord_members_evaluated: rows.length,
     candidates: rows.slice(0, limit)
   };
