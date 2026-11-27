@@ -7604,3 +7604,31 @@ body {
 .roster-history-overlay.user-settings-overlay {
   z-index: 60;
 }
+
+
+/* The Action column spells out what removing a link will do, so it needs room for
+   the short outcome line under the trash button. */
+.member-links-table .member-links-action-col {
+  width: 104px;
+  min-width: 104px;
+  max-width: 104px;
+}
+
+.member-link-unlink-outcome {
+  display: block;
+  margin-top: 3px;
+  color: #93a4bd;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.member-link-unlink-outcome.becomes-candidate {
+  color: #7dd3fc;
+}
+
+.member-link-unlink-outcome.becomes-block {
+  color: #fca5a5;
+}

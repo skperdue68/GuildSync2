@@ -3467,6 +3467,13 @@ function renderMemberLinksRows() {
     const status = statusOf(link);
     const method = String(link.link_method || '').trim().toLowerCase();
     const blocked = isBlocked(link);
+    // Removing a confirmed link has two different outcomes, so both the button and
+    // the row say which one this pair will get.
+    const unlinkBlocked = method === 'exact';
+    const unlinkOutcome = unlinkBlocked ? '→ block' : '→ candidate';
+    const unlinkLabel = unlinkBlocked
+      ? 'Unlink this exact auto-link; the pair becomes a block you can remove later'
+      : 'Unlink this link; the pair returns to Possible links to make as a fuzzy candidate';
     return `
       <tr
         data-member-links-report-row
@@ -3482,9 +3489,10 @@ function renderMemberLinksRows() {
         <td class="member-links-action-col">
           <div class="member-link-actions">
             ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
-            ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Unlink this ESO/Discord pair" title="Unlink this ESO/Discord pair">🗑</button>` : ''}
+            ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="${escapeAttribute(unlinkLabel)}" title="${escapeAttribute(unlinkLabel)}">🗑</button>` : ''}
             ${canManageGuildSyncLinks() && blocked ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block">↺</button>` : ''}
           </div>
+          ${canManageGuildSyncLinks() && status === 'linked' ? `<span class="member-link-unlink-outcome${unlinkBlocked ? ' becomes-block' : ' becomes-candidate'}" title="${escapeAttribute(unlinkLabel)}">${unlinkOutcome}</span>` : ''}
         </td>
         <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
       </tr>
@@ -3528,7 +3536,7 @@ function renderMemberLinksRows() {
       'Auto-linking is blocked for these pairs. Remove a block to let the matcher consider them again.',
       blocks, 'No blocked pairs.')}
     ${renderSection('linked', 'Links we can unlink',
-      'Confirmed ESO / Discord links. Unlink a pair to break the connection.',
+      'Confirmed ESO / Discord links. Removing an approved fuzzy link puts the pair back in Possible links to make as a fuzzy candidate; removing an exact auto-link turns the pair into a block you can remove later.',
       linked, 'No confirmed links yet.')}
     ${excluded.length ? renderSection('excluded', 'Excluded from fuzzy matching',
       'Members who told us they do not use Discord, do not play ESO or are not guild members. These pairs are left out of matching until the answer changes; remove stale rows here.',
