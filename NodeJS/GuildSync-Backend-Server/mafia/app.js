@@ -9,6 +9,15 @@ const SORT_DIRECTION = 'asc';
 const PREFETCH_PX = 480;
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 const HASH_MESSAGE = /^#msg-(\d{1,15})$/;
+// How close to the end of the window still counts as being at the bottom.
+const BOTTOM_SLACK = 24;
+// How long the + stays on a row that arrived while the page was open, counted
+// from the moment the row first becomes half visible.
+const NEW_MARK_MS = 60000;
+const FOLLOW_STORAGE_KEY = 'mafia-follow-newest';
+// New rows settle for a moment after they land, so "am I still at the bottom?"
+// is not settled either. This is how long that is ignored.
+const FOLLOW_SETTLE_MS = 700;
 
 const state = {
   search: '',
@@ -19,7 +28,8 @@ const state = {
   offset: 0,
   loaded: 0,
   loading: false,
-  pendingAbove: 0,
+  // Following the newest row: remembered between visits, off until pressed.
+  follow: false,
   ids: new Set()
 };
 
@@ -40,13 +50,27 @@ const elements = {
   bannerText: document.getElementById('update-banner-text'),
   bannerRefresh: document.getElementById('update-banner-refresh'),
   connection: document.getElementById('connection-status'),
-  tooltip: document.getElementById('row-tooltip')
+  tooltip: document.getElementById('row-tooltip'),
+  follow: document.getElementById('follow-button'),
+  edgeTop: document.getElementById('edge-top'),
+  edgeTopText: document.getElementById('edge-top-text'),
+  edgeBottom: document.getElementById('edge-bottom'),
+  edgeBottomText: document.getElementById('edge-bottom-text')
 };
 
 let searchTimer = null;
 let bannerTimer = null;
 let requestController = null;
 let requestSequence = 0;
+// Following: how long "not at the bottom" is ignored after we scrolled the
+// window ourselves, and whether the reader has scrolled since we last pinned it.
+let followSettleUntil = 0;
+let readerMoved = false;
+let settleTimer = null;
+// Following only ever scrolls down, so a window that moved up was moved by the
+// reader — by wheel, keys, or dragging the scrollbar, which fires no input
+// events of its own.
+let lastScrollTop = 0;
 
 // mm/dd/yyyy hh:ii:ss, always 24-hour, in the reader's own time zone.
 function pad(value) {
@@ -202,6 +226,7 @@ function updateSummary() {
 }
 
 function renderEmpty(message) {
+  markObserver?.disconnect();
   const row = document.createElement('tr');
   row.className = 'empty-row';
   const cell = document.createElement('td');
@@ -219,6 +244,26 @@ function cell(className, text) {
   element.className = className;
   element.textContent = text;
   return element;
+}
+
+// Deterministic colour per sender: FNV-1a over the name, hue = |hash| % 360,
+// saturation locked at 70%. Lightness is 74% rather than 60% because this page
+// is navy: 60% put the blue-violet hues under 2:1 on a hovered row and below
+// 3:1 even on the plain background, so they could not be read at all.
+function senderHash(name) {
+  const text = String(name ?? '').trim().toLowerCase();
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return hash | 0;
+}
+
+function senderColor(name) {
+  return `hsl(${Math.abs(senderHash(name)) % 360}, 70%, 74%)`;
 }
 
 // One row, with everything the client needs to place and de-duplicate it kept
@@ -248,9 +293,31 @@ function buildRow(message) {
     messageCell.prepend(tag);
   }
 
-  row.append(cell('cell-time', formatLocalTimestamp(message.message_timestamp)));
-  row.append(cell('cell-sender', message.sender || 'unknown'));
-  row.append(messageCell);
+  const timeCell = document.createElement('td');
+  timeCell.className = 'cell-time';
+
+  const timeLine = document.createElement('span');
+  timeLine.className = 'cell-time-line';
+
+  // The slot is reserved on every row so a fading mark never moves a timestamp.
+  const mark = document.createElement('span');
+  mark.className = 'row-new-mark';
+  mark.dataset.mark = 'none';
+  mark.setAttribute('aria-hidden', 'true');
+  mark.textContent = '+';
+
+  const timeText = document.createElement('span');
+  timeText.textContent = formatLocalTimestamp(message.message_timestamp);
+
+  timeLine.append(mark, timeText);
+  timeCell.append(timeLine);
+
+  const color = senderColor(message.sender);
+  const senderCell = cell('cell-sender', message.sender || 'unknown');
+  senderCell.style.color = color;
+  messageCell.style.color = color;
+
+  row.append(timeCell, senderCell, messageCell);
 
   return row;
 }
@@ -265,6 +332,7 @@ function renderMessages(messages) {
     return;
   }
 
+  markObserver?.disconnect();
   state.ids = new Set();
   const rows = messages.map(message => {
     const row = buildRow(message);
@@ -377,8 +445,8 @@ async function applyLiveMessages(messages) {
   const beforeById = new Map(positions.map(position => [String(position.id), position.before]));
   const windowStart = state.offset;
   const atEndOfResults = state.offset + state.loaded >= state.total;
+  const followFromBottom = isFollowingBottom();
   const anchor = captureScrollAnchor();
-  const anchorIndex = anchor ? visibleRows().indexOf(anchor.row) : -1;
 
   const candidates = [];
   let matched = 0;
@@ -398,8 +466,6 @@ async function applyLiveMessages(messages) {
 
   candidates.sort((a, b) => a.index - b.index || Number(a.message.id) - Number(b.message.id));
 
-  const aboveViewport = anchorIndex >= 0 && candidates.some(candidate => candidate.index <= anchorIndex);
-
   let inserted = 0;
   for (const {message, index} of candidates) {
     const rows = visibleRows();
@@ -411,6 +477,7 @@ async function applyLiveMessages(messages) {
     if (target) elements.body.insertBefore(row, target);
     else elements.body.append(row);
 
+    markRowAsNew(row);
     state.ids.add(String(message.id));
     inserted += 1;
   }
@@ -424,13 +491,15 @@ async function applyLiveMessages(messages) {
   if (inserted === 0) return 0;
 
   state.loaded = visibleRows().length;
-  restoreScrollAnchor(anchor);
-  updateSummary();
 
-  if (aboveViewport) {
-    state.pendingAbove += inserted;
-    showPill(`${state.pendingAbove} new message${state.pendingAbove === 1 ? '' : 's'} ↑`, 'scroll');
-  }
+  // Following only ever moves the window down. A row that landed above the
+  // window keeps the reader exactly where they were; one that landed at the
+  // bottom carries them with it.
+  if (followFromBottom) scrollToNewest();
+  else restoreScrollAnchor(anchor);
+
+  updateSummary();
+  updateEdgeStrips();
 
   return inserted;
 }
@@ -443,7 +512,6 @@ function showPill(text, mode) {
 
 function hidePill() {
   elements.pill.hidden = true;
-  state.pendingAbove = 0;
 }
 
 function setLoading(loading) {
@@ -452,17 +520,234 @@ function setLoading(loading) {
   if (loading) elements.summary.textContent = 'Loading…';
 }
 
+// --- Following the newest row -------------------------------------------
+
+function readFollowPreference() {
+  try {
+    return localStorage.getItem(FOLLOW_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveFollowPreference(following) {
+  try {
+    localStorage.setItem(FOLLOW_STORAGE_KEY, following ? 'true' : 'false');
+  } catch {
+    // Blocked storage is not worth breaking the page over; the choice just
+    // does not survive the reload.
+  }
+}
+
+function isAtBottom() {
+  const scroller = elements.tableScroll;
+  return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= BOTTOM_SLACK;
+}
+
+// True while following, including the moment right after a programmatic scroll
+// to the bottom, when the browser is still settling the new rows.
+function isFollowingBottom() {
+  return state.follow && (isAtBottom() || performance.now() < followSettleUntil);
+}
+
+function scrollToNewest() {
+  const scroller = elements.tableScroll;
+
+  readerMoved = false;
+  followSettleUntil = performance.now() + FOLLOW_SETTLE_MS;
+  scroller.scrollTop = scroller.scrollHeight;
+
+  // Once the new rows have settled, say so even if nothing scrolls again.
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(updateEdgeStrips, FOLLOW_SETTLE_MS + 50);
+}
+
+// The button is where following says it is on, and where it says it stopped
+// keeping up because the reader scrolled away from the bottom.
+function updateFollowControls() {
+  const paused = state.follow && !isFollowingBottom();
+  const label = !state.follow ? 'Follow newest' : paused ? 'Following paused' : 'Following';
+
+  const following = state.follow ? 'true' : 'false';
+  if (elements.follow.dataset.following !== following) {
+    elements.follow.dataset.following = following;
+    elements.follow.setAttribute('aria-pressed', following);
+  }
+  elements.follow.dataset.paused = paused ? 'true' : 'false';
+
+  if (elements.follow.textContent !== label) elements.follow.textContent = label;
+
+  elements.follow.title = !state.follow
+    ? 'Keep the newest message in view as rows arrive'
+    : paused
+      ? 'You scrolled away — click to jump back to the newest message'
+      : 'Stop following the newest message';
+}
+
+function toggleFollow() {
+  if (!state.follow) {
+    state.follow = true;
+    saveFollowPreference(true);
+    hidePill();
+    // Pressing it is asking to see the newest row now.
+    scrollToNewest();
+  } else if (!isFollowingBottom()) {
+    // Pressed while paused: take me back down rather than stop following.
+    scrollToNewest();
+  } else {
+    state.follow = false;
+    saveFollowPreference(false);
+  }
+
+  updateFollowControls();
+  updateEdgeStrips();
+}
+
+// --- The + on rows that arrive while the page is open --------------------
+
+// A row's minute only starts once the row is at least half on screen, so a row
+// that lands off-screen keeps its mark until the reader scrolls to it.
+const markObserver = typeof IntersectionObserver === 'function'
+  ? new IntersectionObserver(
+    entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting || entry.intersectionRatio < 0.5) continue;
+
+        markObserver.unobserve(entry.target);
+
+        const mark = entry.target.querySelector('.row-new-mark');
+        if (!mark || mark.dataset.mark !== 'new') continue;
+
+        setTimeout(() => {
+          if (mark.dataset.mark === 'new') mark.dataset.mark = 'expired';
+        }, NEW_MARK_MS);
+      }
+    },
+    {root: elements.tableScroll, threshold: 0.5}
+  )
+  : null;
+
+function markRowAsNew(row) {
+  const mark = row.querySelector('.row-new-mark');
+  if (!mark) return;
+
+  mark.dataset.mark = 'new';
+  mark.title = 'Arrived while you were watching';
+  mark.removeAttribute('aria-hidden');
+  mark.setAttribute('aria-label', 'new message');
+
+  if (markObserver) {
+    markObserver.observe(row);
+    return;
+  }
+
+  // No IntersectionObserver: fall back to timing from insertion.
+  setTimeout(() => {
+    if (mark.dataset.mark === 'new') mark.dataset.mark = 'expired';
+  }, NEW_MARK_MS);
+}
+
+// A refresh that pulled in rows the reader had not seen marks them too.
+function markRowsArrivedDuringRefresh(knownIds) {
+  for (const row of visibleRows()) {
+    if (knownIds.has(row.dataset.id)) continue;
+    if (row.querySelector('.row-new-mark')?.dataset.mark === 'new') continue;
+    markRowAsNew(row);
+  }
+}
+
+// --- Edge indicators ----------------------------------------------------
+
+function messages(count, word = 'message') {
+  return `${count.toLocaleString()} ${count === 1 ? word : `${word}s`}`;
+}
+
+function updateEdgeStrips() {
+  const viewport = elements.tableScroll.getBoundingClientRect();
+  let above = 0;
+  let below = 0;
+  let freshAbove = false;
+  let freshBelow = false;
+
+  for (const row of visibleRows()) {
+    const rect = row.getBoundingClientRect();
+    const fresh = Boolean(row.querySelector('.row-new-mark[data-mark="new"]'));
+
+    if (rect.bottom <= viewport.top + 1) {
+      above += 1;
+      if (fresh) freshAbove = true;
+    } else if (rect.top >= viewport.bottom - 1) {
+      below += 1;
+      if (fresh) freshBelow = true;
+    }
+  }
+
+  updateFollowControls();
+
+  if (above === 0) {
+    elements.edgeTop.hidden = true;
+  } else {
+    elements.edgeTop.hidden = false;
+    elements.edgeTopText.textContent = `↑ ${messages(above, freshAbove ? 'new message' : 'earlier message')} above`;
+  }
+
+  const unloaded = Math.max(0, Number(state.total) - state.loaded);
+  const paused = state.follow && !isFollowingBottom();
+
+  if (below === 0 && unloaded === 0) {
+    elements.edgeBottom.hidden = true;
+    elements.edgeBottom.dataset.paused = 'false';
+    return;
+  }
+
+  let label;
+  if (freshBelow) label = `↓ ${messages(below, 'new message')} below`;
+  else if (below > 0) label = `↓ ${messages(below)} below`;
+  else label = `↓ ${messages(unloaded, 'more message')} below`;
+
+  if (paused) label = `${label} · following paused`;
+
+  elements.edgeBottom.hidden = false;
+  elements.edgeBottom.dataset.paused = paused ? 'true' : 'false';
+  if (elements.edgeBottomText.textContent !== label) elements.edgeBottomText.textContent = label;
+}
+
+let edgeFrame = 0;
+
+// Scrolling fires far faster than the strips need to be recalculated.
+function scheduleEdgeUpdate() {
+  if (edgeFrame) return;
+  edgeFrame = window.requestAnimationFrame(() => {
+    edgeFrame = 0;
+
+    // Following stays pinned while the freshly inserted rows settle. Any scroll
+    // the page did not make itself stops that, and the button says it is paused.
+    if (state.follow) {
+      if (isAtBottom()) readerMoved = false;
+      else if (!readerMoved) {
+        scrollToNewest();
+        return;
+      }
+    }
+
+    updateEdgeStrips();
+  });
+}
+
 function revealFocusedRow(id) {
   const row = elements.body.querySelector(`tr.chat-row[data-id="${id}"]`);
   if (!row) return;
 
   row.classList.add('row-flash');
+  readerMoved = true;
   row.scrollIntoView({block: 'center'});
   setTimeout(() => row.classList.remove('row-flash'), 2400);
 }
 
 async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, focus = null} = {}) {
   const sequence = ++requestSequence;
+  // Read before the fetch: whether the reader was watching the bottom.
+  const followFromBottom = isFollowingBottom();
   if (requestController) requestController.abort();
   requestController = new AbortController();
 
@@ -505,6 +790,9 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, focus = 
 
     markUpdated();
 
+    if (followFromBottom) scrollToNewest();
+    updateEdgeStrips();
+
     if (focus != null && payload.messages?.[0]) revealFocusedRow(payload.messages[0].id);
   } catch (error) {
     if (error.name === 'AbortError' || sequence !== requestSequence) return;
@@ -538,6 +826,9 @@ async function refreshCurrent() {
   clearUpdateBanner();
 
   const scrollTop = elements.tableScroll.scrollTop;
+  const followFromBottom = isFollowingBottom();
+  // Rows that were not on screen before this refresh arrived just now.
+  const knownIds = new Set(state.ids);
   const start = state.offset;
   const target = Math.max(PAGE_SIZE, state.loaded);
   let first = true;
@@ -553,7 +844,11 @@ async function refreshCurrent() {
     if (added <= 0) break;
   } while (state.loaded < target);
 
-  elements.tableScroll.scrollTop = scrollTop;
+  if (followFromBottom) scrollToNewest();
+  else elements.tableScroll.scrollTop = scrollTop;
+
+  markRowsArrivedDuringRefresh(knownIds);
+  updateEdgeStrips();
 }
 
 function hideTooltip() {
@@ -711,12 +1006,19 @@ elements.pill.addEventListener('click', () => {
     return;
   }
 
+  readerMoved = true;
   elements.tableScroll.scrollTop = 0;
   hidePill();
 });
 
 elements.refresh.addEventListener('click', refreshCurrent);
 elements.bannerRefresh.addEventListener('click', refreshCurrent);
+elements.follow.addEventListener('click', toggleFollow);
+elements.edgeTop.addEventListener('click', () => {
+  readerMoved = true;
+  elements.tableScroll.scrollTop = 0;
+});
+elements.edgeBottom.addEventListener('click', scrollToNewest);
 
 // Hovering anywhere on a row shows when it was stored and who uploaded it.
 elements.body.addEventListener('mouseover', event => {
@@ -734,8 +1036,26 @@ elements.body.addEventListener('mousemove', event => {
 });
 
 elements.body.addEventListener('mouseleave', hideTooltip);
+// A scrollbar drag dispatches no wheel, key or pointer event we could listen
+// for, so the direction of travel is what tells us the reader took over.
+elements.tableScroll.addEventListener('scroll', () => {
+  const top = elements.tableScroll.scrollTop;
+
+  if (top < lastScrollTop - 2) {
+    readerMoved = true;
+    // The reader took over, so the grace period after our own scroll no longer
+    // applies; the paused state has to be visible straight away.
+    followSettleUntil = 0;
+    clearTimeout(settleTimer);
+  }
+
+  lastScrollTop = top;
+}, {passive: true});
+
 elements.tableScroll.addEventListener('scroll', hideTooltip, {passive: true});
 elements.tableScroll.addEventListener('scroll', maybeLoadMore, {passive: true});
+elements.tableScroll.addEventListener('scroll', scheduleEdgeUpdate, {passive: true});
+window.addEventListener('resize', scheduleEdgeUpdate);
 
 // Clicking a row copies a permalink to that message.
 elements.body.addEventListener('click', event => {
@@ -761,6 +1081,17 @@ if (focusId != null) {
   syncRangeBounds();
 }
 
+state.follow = readFollowPreference();
+updateFollowControls();
+updateEdgeStrips();
+
 connectLiveFeed();
-loadPage({focus: focusId});
+
+// A remembered follow is honoured once the first page is on screen, but never
+// at the cost of a permalink that asks for one particular message.
+loadPage({focus: focusId}).then(() => {
+  if (state.follow && focusId == null) scrollToNewest();
+  updateEdgeStrips();
+});
+
 setInterval(refreshLatestText, 60000);
