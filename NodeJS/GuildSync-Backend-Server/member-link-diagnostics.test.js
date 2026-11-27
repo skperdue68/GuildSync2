@@ -27,7 +27,9 @@ function loadContext({roster = [{account_name: 'Auleric', rank: 'Member'}], disc
     isMemberLinkPairLinked: (maps, _eso, id) => maps.rows.some((link) => String(link.discord_user_id) === String(id) && String(link.link_status).toLowerCase() === 'linked'),
     isMemberLinkPairAutoUpgradeable: (maps, _eso, id) => !maps.rows.some((link) => String(link.discord_user_id) === String(id) && (String(link.link_status).toLowerCase() === 'linked' || Number(link.auto_link_blocked || 0) === 1))
   });
-  vm.runInContext(fn('getMemberLinkMatchDiagnostics'), ctx);
+  const threshold = source.match(/export const MEMBER_LINK_CANDIDATE_THRESHOLD = (\d+);/)?.[1];
+  assert.ok(threshold, 'the shared candidate threshold is missing');
+  vm.runInContext(`const MEMBER_LINK_CANDIDATE_THRESHOLD = ${threshold};\n` + fn('getMemberLinkMatchDiagnostics'), ctx);
   return ctx;
 }
 

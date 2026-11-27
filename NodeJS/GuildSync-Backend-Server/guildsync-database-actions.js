@@ -343,6 +343,10 @@ export const MARIADB_CONNECTION_LIMIT = Number(
   process.env.MARIADB_CONNECTION_LIMIT || 10
 );
 
+// The matcher's candidate floor. Shared by the matcher and by match diagnostics so a
+// "below threshold" explanation can never drift from what the matcher actually does.
+export const MEMBER_LINK_CANDIDATE_THRESHOLD = 82;
+
 let guildSyncPoolPromise = null;
 
 export async function openGuildSyncDB() {
@@ -5661,7 +5665,7 @@ async function runMemberAutoLinkingUnlocked(applicationDB, options = {}) {
       }
     }
 
-    if (best && best.score >= 82 && isMemberLinkPairAutoUpgradeable(maps, esoName, best.discord.discord_id, best.score)) {
+    if (best && best.score >= MEMBER_LINK_CANDIDATE_THRESHOLD && isMemberLinkPairAutoUpgradeable(maps, esoName, best.discord.discord_id, best.score)) {
       await removeWeakerMemberAutoLinkCandidates(applicationDB, {
         esoAccountName: esoName,
         discordUserId: best.discord.discord_id,
@@ -6020,8 +6024,6 @@ export async function getMemberLinkMatchDiagnostics(applicationDB, payload = {})
 
   const requested = Number(payload.limit ?? 8);
   const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 25) : 8;
-  // The matcher's own candidate floor; kept local so the function stays self-contained.
-  const candidateThreshold = 82;
 
   const {rosterRows, discordRows, linkRows} = await loadMemberLinkInputs(applicationDB);
   const roster = (rosterRows || []).find((row) => esoAccountKey(row.account_name) === esoAccountKey(esoAccountName));
@@ -6049,10 +6051,10 @@ export async function getMemberLinkMatchDiagnostics(applicationDB, payload = {})
     else if (blocked) decision = 'blocked';
     else if (esoOptOut || discordOptOut) decision = 'opted_out';
     else if (top.score >= 100 && autoUpgradeable) decision = 'auto_link';
-    else if (top.score >= candidateThreshold && autoUpgradeable) decision = 'candidate';
+    else if (top.score >= MEMBER_LINK_CANDIDATE_THRESHOLD && autoUpgradeable) decision = 'candidate';
     // A score that would normally be offered, held back by an existing confirmed link
     // or block on the pair: the reason an officer sees nothing rather than a duplicate.
-    else if (top.score >= candidateThreshold) decision = 'protected_by_existing_link';
+    else if (top.score >= MEMBER_LINK_CANDIDATE_THRESHOLD) decision = 'protected_by_existing_link';
 
     return {
       discord_user_id: String(discord.discord_id || ''),
@@ -6081,7 +6083,7 @@ export async function getMemberLinkMatchDiagnostics(applicationDB, payload = {})
     eso_account_name: esoAccountName,
     rank: roster.rank || '',
     eso_opt_out: esoOptOut ? 1 : 0,
-    candidate_threshold: candidateThreshold,
+    candidate_threshold: MEMBER_LINK_CANDIDATE_THRESHOLD,
     discord_members_evaluated: rows.length,
     candidates: rows.slice(0, limit)
   };
