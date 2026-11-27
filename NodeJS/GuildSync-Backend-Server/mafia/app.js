@@ -20,6 +20,10 @@ const FOLLOW_STORAGE_KEY = 'mafia-follow-newest';
 const FOLLOW_SETTLE_MS = 700;
 // A toast lingers this long before it fades out.
 const TOAST_MS = 3200;
+// Day names are fixed rather than taken from the browser locale so the bands
+// and the sticky tab read the same for everyone, like the timestamps do.
+const WEEK_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const state = {
   search: '',
@@ -32,6 +36,8 @@ const state = {
   loading: false,
   // Following the newest row: remembered between visits, off until pressed.
   follow: false,
+  // Where the reader was before a search, so clearing it can go back.
+  savedView: null,
   ids: new Set()
 };
 
@@ -55,6 +61,8 @@ const elements = {
   edgeTopText: document.getElementById('edge-top-text'),
   edgeBottom: document.getElementById('edge-bottom'),
   edgeBottomText: document.getElementById('edge-bottom-text'),
+  dateTab: document.getElementById('date-tab-row'),
+  dateTabText: document.getElementById('date-tab'),
   toasts: document.getElementById('toast-stack')
 };
 
@@ -94,23 +102,25 @@ function formatLocalTimestamp(seconds) {
   return formatLocalDate(new Date(value * 1000));
 }
 
+// The row itself shows only the clock: the day is named by the band above it and
+// by the tab in the header.
+function formatLocalClock(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const date = new Date(value * 1000);
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 function formatLocalIso(isoString) {
   if (!isoString) return '—';
   return formatLocalDate(new Date(isoString)) || '—';
 }
 
-// yyyy-mm-dd, the value a date input expects.
-function dateInputValue(date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-// The page opens on today's messages, starting at midnight.
-function applyDefaultRange() {
-  const today = new Date();
-  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-
-  elements.rangeStart.value = dateInputValue(today);
-  elements.rangeEnd.value = dateInputValue(tomorrow);
+// Midnight today in the reader's own time zone: where a fresh page starts when
+// it is not following the newest line.
+function todayStart() {
+  const now = new Date();
+  return Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000);
 }
 
 // A date alone means the whole day: 00:00:00 on the from date and 23:59:59 on
@@ -242,6 +252,7 @@ function renderEmpty(message) {
   elements.body.replaceChildren(row);
   state.ids = new Set();
   state.loaded = 0;
+  updateDateTab();
   updateSummary();
 }
 
@@ -312,7 +323,7 @@ function buildRow(message) {
   mark.textContent = '+';
 
   const timeText = document.createElement('span');
-  timeText.textContent = formatLocalTimestamp(message.message_timestamp);
+  timeText.textContent = formatLocalClock(message.message_timestamp);
 
   timeLine.append(mark, timeText);
   timeCell.append(timeLine);
@@ -331,6 +342,61 @@ function visibleRows() {
   return Array.from(elements.body.querySelectorAll('tr.chat-row'));
 }
 
+// One name per calendar day, in the reader's own time zone.
+function dayKey(seconds) {
+  return new Date(seconds * 1000).toDateString();
+}
+
+function dayLabel(seconds) {
+  const date = new Date(seconds * 1000);
+  return `${WEEK_DAYS[date.getDay()]}, ${MONTH_NAMES[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+}
+
+function buildDateBand(seconds) {
+  const row = document.createElement('tr');
+  row.className = 'date-row';
+  row.dataset.day = dayKey(seconds);
+
+  const cell = document.createElement('td');
+  cell.colSpan = 3;
+  cell.textContent = dayLabel(seconds);
+
+  row.append(cell);
+  return row;
+}
+
+// Bands are derived from the rows that are actually on screen: one where the
+// loaded window begins and one wherever the day changes, so a band never stands
+// above rows that are not there. Running this after any change keeps them right
+// when rows arrive in the middle of the list.
+function syncBands() {
+  let previousDay = null;
+
+  for (const row of visibleRows()) {
+    const time = Number(row.dataset.time) || 0;
+    const day = dayKey(time);
+    const previous = row.previousElementSibling;
+    const band = previous && previous.classList.contains('date-row') ? previous : null;
+
+    if (previousDay === null || day !== previousDay) {
+      if (!band) {
+        row.before(buildDateBand(time));
+      } else if (band.dataset.day !== day) {
+        band.dataset.day = day;
+        band.firstElementChild.textContent = dayLabel(time);
+      }
+    } else if (band) {
+      // The window grew upwards inside the same day, so what used to be the top
+      // of the window is no longer a day change.
+      band.remove();
+    }
+
+    previousDay = day;
+  }
+
+  updateDateTab();
+}
+
 function renderMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) {
     renderEmpty('No guild chat messages match these filters.');
@@ -346,6 +412,7 @@ function renderMessages(messages) {
   });
 
   elements.body.replaceChildren(...rows);
+  syncBands();
   state.loaded = rows.length;
   updateSummary();
 }
@@ -365,6 +432,7 @@ function appendMessages(messages) {
 
   elements.body.querySelector('tr.empty-row')?.remove();
   elements.body.append(...rows);
+  syncBands();
   state.loaded = visibleRows().length;
   updateSummary();
 }
@@ -385,6 +453,7 @@ function prependMessages(messages) {
   if (rows.length === 0) return 0;
 
   elements.body.prepend(...rows);
+  syncBands();
   state.loaded = visibleRows().length;
   updateSummary();
 
@@ -509,6 +578,8 @@ async function applyLiveMessages(messages) {
     inserted += 1;
   }
 
+  syncBands();
+
   if (matched > 0) {
     state.total += matched;
     state.loaded = visibleRows().length;
@@ -625,13 +696,16 @@ function updateFollowControls() {
       : 'Stop following the newest message';
 }
 
-function toggleFollow() {
+async function toggleFollow() {
   if (!state.follow) {
     state.follow = true;
     saveFollowPreference(true);
     hidePill();
-    // Pressing it is asking to see the newest row now.
-    scrollToNewest();
+
+    // Pressing it is asking to see the newest row now, even when the window is
+    // still parked on today's first message.
+    if (state.offset + state.loaded >= state.total) scrollToNewest();
+    else await openAtNewest();
   } else if (!isFollowingBottom()) {
     // Pressed while paused: take me back down rather than stop following.
     scrollToNewest();
@@ -703,7 +777,47 @@ function messages(count, word = 'message') {
   return `${count.toLocaleString()} ${count === 1 ? word : `${word}s`}`;
 }
 
+// The tab under the column labels names the day of the first row the reader can
+// actually see, so a window that starts mid-day still says which day it is.
+function updateDateTab() {
+  const rows = visibleRows();
+  if (rows.length === 0) {
+    elements.dateTab.hidden = true;
+    return;
+  }
+
+  // Unhide first: the tab row is part of the header, so the header is only its
+  // full 60px once the row is displayed.
+  elements.dateTab.hidden = false;
+
+  const scroller = elements.tableScroll;
+  const thead = scroller.querySelector('thead');
+  const edge = scroller.getBoundingClientRect().top + (thead ? thead.offsetHeight : 0);
+
+  let low = 0;
+  let high = rows.length - 1;
+  let current = rows[rows.length - 1];
+
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (rows[middle].getBoundingClientRect().bottom > edge + 1) {
+      current = rows[middle];
+      high = middle - 1;
+    } else {
+      low = middle + 1;
+    }
+  }
+
+  const label = dayLabel(Number(current.dataset.time) || 0);
+  if (elements.dateTabText.textContent !== label) elements.dateTabText.textContent = label;
+}
+
 function updateEdgeStrips() {
+  // The header grows when the date tab is showing; the top strip has to sit
+  // under whatever height it actually has, not an assumed 38px.
+  const head = elements.tableScroll.querySelector('thead');
+  document.documentElement.style.setProperty('--mafia-header-height', `${head ? head.offsetHeight : 0}px`);
+
   const viewport = elements.tableScroll.getBoundingClientRect();
   let above = 0;
   let below = 0;
@@ -724,6 +838,7 @@ function updateEdgeStrips() {
   }
 
   updateFollowControls();
+  updateDateTab();
 
   if (above === 0) {
     elements.edgeTop.hidden = true;
@@ -858,8 +973,9 @@ async function landOnMessage(id) {
   updateEdgeStrips();
 }
 
-// A permalink is about one message, not today's range or the last search.
-function clearFiltersForPermalink() {
+// A fresh page and a permalink both start with no search and no dates. Going
+// through the fields also undoes values a browser restored on reload.
+function clearFilters() {
   elements.search.value = '';
   elements.rangeStart.value = '';
   elements.rangeEnd.value = '';
@@ -867,7 +983,91 @@ function clearFiltersForPermalink() {
   state.search = '';
   state.start = null;
   state.end = null;
+  state.savedView = null;
   hidePill();
+}
+
+// The totals for the filters on screen, without loading a page of rows.
+async function fetchFilteredTotal() {
+  const params = new URLSearchParams({sort: SORT_COLUMN, dir: SORT_DIRECTION, limit: '1', offset: '0'});
+  if (state.search) params.set('q', state.search);
+  if (state.start != null) params.set('start', String(state.start));
+  if (state.end != null) params.set('end', String(state.end));
+
+  try {
+    const response = await fetch(`/api/mafia/chat/messages?${params}`, {headers: {Accept: 'application/json'}});
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) return null;
+
+    markLatest(payload.latest);
+    return Number(payload.total) || 0;
+  } catch {
+    return null;
+  }
+}
+
+// The first message at or after midnight today, so a page that is not following
+// can open on the start of today rather than on the oldest row in the archive.
+async function fetchTodayAnchor() {
+  const params = new URLSearchParams({
+    sort: SORT_COLUMN,
+    dir: SORT_DIRECTION,
+    limit: '1',
+    offset: '0',
+    start: String(todayStart())
+  });
+
+  try {
+    const response = await fetch(`/api/mafia/chat/messages?${params}`, {headers: {Accept: 'application/json'}});
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) return null;
+
+    markLatest(payload.latest);
+    const first = Array.isArray(payload.messages) ? payload.messages[0] : null;
+    return first && first.id != null ? String(first.id) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The last page of whatever the filters allow, shown from the bottom.
+async function openAtNewest() {
+  const total = await fetchFilteredTotal();
+
+  if (!total) {
+    await loadPage({offset: 0});
+    return;
+  }
+
+  await loadPage({offset: Math.max(0, total - PAGE_SIZE)});
+  scrollToNewest();
+}
+
+// Where a fresh look at the archive begins: the newest line while following,
+// the first line of today otherwise, and the start of a range or a search when
+// those are set.
+async function openWindow() {
+  if (state.follow) {
+    await openAtNewest();
+    return;
+  }
+
+  if (state.search || state.start != null || state.end != null) {
+    await loadPage({offset: 0});
+    elements.tableScroll.scrollTop = 0;
+    return;
+  }
+
+  const anchor = await fetchTodayAnchor();
+  if (anchor == null) {
+    await openAtNewest();
+    return;
+  }
+
+  await loadPage({focus: Number(anchor)});
+  elements.tableScroll.scrollTop = 0;
+  readerMoved = true;
+  updateEdgeStrips();
 }
 
 async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend = false, focus = null, background = append || prepend} = {}) {
@@ -923,7 +1123,19 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend 
 
     markUpdated();
 
-    if (followFromBottom) scrollToNewest();
+    if (followFromBottom) {
+      scrollToNewest();
+
+      // Rows and the date tab can still settle a frame or two after the first
+      // scroll, which leaves the window short of the bottom; pin it again unless
+      // the reader has taken over in the meantime.
+      for (const delay of [60, 240, 700]) {
+        setTimeout(() => {
+          if (state.follow && !readerMoved && !isAtBottom()) scrollToNewest();
+        }, delay);
+      }
+    }
+
     updateEdgeStrips();
   } catch (error) {
     if (error.name === 'AbortError' || sequence !== requestSequence) return;
@@ -945,13 +1157,19 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend 
 async function loadEarlier() {
   if (state.loading || state.offset <= 0) return;
 
+  const scroller = elements.tableScroll;
+  const scrollTop = scroller.scrollTop;
+  const scrollHeight = scroller.scrollHeight;
   const offset = Math.max(0, state.offset - PAGE_SIZE);
   const limit = state.offset - offset;
-  const anchor = captureScrollAnchor();
 
   await loadPage({offset, limit, prepend: true});
 
-  restoreScrollAnchor(anchor);
+  // Only rows above the viewport were added, so shifting down by exactly the
+  // height that was added keeps the reader on the same line. Measuring the rows
+  // themselves is unreliable here: the browser's own scroll anchoring may have
+  // moved the window already.
+  scroller.scrollTop = scrollTop + (scroller.scrollHeight - scrollHeight);
 }
 
 // Scrolling quietly fetches the next stretch of rows, in either direction.
@@ -1134,12 +1352,66 @@ function connectLiveFeed() {
   });
 }
 
+// Where the reader was before a search, kept so clearing the box goes back there
+// instead of dropping them at the top of the archive.
+function captureView() {
+  const viewport = elements.tableScroll.getBoundingClientRect();
+  const rows = visibleRows();
+  const anchor = rows.find(row => row.getBoundingClientRect().bottom > viewport.top + 1) || rows[0] || null;
+
+  return {
+    offset: state.offset,
+    loaded: state.loaded,
+    scrollTop: elements.tableScroll.scrollTop,
+    anchorId: anchor ? anchor.dataset.id : null,
+    anchorOffset: anchor ? anchor.getBoundingClientRect().top - viewport.top : 0
+  };
+}
+
+async function restoreView(view) {
+  await loadPage({
+    offset: view.offset,
+    limit: Math.min(1000, Math.max(PAGE_SIZE, view.loaded || PAGE_SIZE))
+  });
+
+  if (state.loaded === 0) {
+    await loadPage({offset: 0});
+    return;
+  }
+
+  const scroller = elements.tableScroll;
+  const row = view.anchorId
+    ? elements.body.querySelector(`tr.chat-row[data-id="${view.anchorId}"]`)
+    : null;
+
+  if (row) {
+    const viewport = scroller.getBoundingClientRect();
+    scroller.scrollTop += (row.getBoundingClientRect().top - viewport.top) - view.anchorOffset;
+  } else {
+    scroller.scrollTop = view.scrollTop;
+  }
+
+  updateEdgeStrips();
+}
+
 elements.search.addEventListener('input', () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    state.search = elements.search.value.trim();
+  searchTimer = setTimeout(async () => {
+    const value = elements.search.value.trim();
+    const wasActive = Boolean(state.search);
+
+    if (!wasActive && value) state.savedView = captureView();
+    state.search = value;
     hidePill();
-    loadPage({offset: 0});
+
+    if (!value && wasActive && state.savedView) {
+      const view = state.savedView;
+      state.savedView = null;
+      await restoreView(view);
+      return;
+    }
+
+    await openWindow();
   }, 150);
 });
 
@@ -1147,10 +1419,9 @@ for (const input of [elements.rangeStart, elements.rangeEnd]) {
   input.addEventListener('change', () => {
     syncRangeBounds();
 
-    if (readRange()) {
-      hidePill();
-      loadPage({offset: 0});
-    }
+    if (!readRange()) return;
+    hidePill();
+    openWindow();
   });
 }
 
@@ -1162,7 +1433,7 @@ elements.rangeClear.addEventListener('click', () => {
   state.end = null;
   setError('');
   hidePill();
-  loadPage({offset: 0});
+  openWindow();
 });
 
 elements.pill.addEventListener('click', refreshCurrent);
@@ -1236,38 +1507,36 @@ window.addEventListener('hashchange', async () => {
     return;
   }
 
-  clearFiltersForPermalink();
+  clearFilters();
   await loadPage({focus: id});
   await landOnMessage(id);
 });
 
 refreshLatestText();
 
-const focusId = hashFocusId();
-if (focusId != null) {
-  // A permalink is about that message, not today's range, so show the archive.
-  clearFiltersForPermalink();
-} else {
-  applyDefaultRange();
-  readRange();
-  syncRangeBounds();
-}
-
 state.follow = readFollowPreference();
 updateFollowControls();
-updateEdgeStrips();
+
+const focusId = hashFocusId();
+
+if (focusId != null) {
+  // A permalink is about that message, not today's anchor or the last search.
+  clearFilters();
+  updateEdgeStrips();
+
+  loadPage({focus: focusId}).then(async () => {
+    await landOnMessage(focusId);
+    updateEdgeStrips();
+  });
+} else {
+  // The date boxes and the search start empty, so the page opens on today's
+  // first message, or on the newest line when following was remembered.
+  clearFilters();
+  syncRangeBounds();
+  updateEdgeStrips();
+  openWindow().then(updateEdgeStrips);
+}
 
 connectLiveFeed();
-
-// A remembered follow is honoured once the first page is on screen, but never
-// at the cost of a permalink that asks for one particular message.
-loadPage({focus: focusId}).then(async () => {
-  if (focusId != null) {
-    await landOnMessage(focusId);
-  } else if (state.follow) {
-    scrollToNewest();
-  }
-  updateEdgeStrips();
-});
 
 setInterval(refreshLatestText, 60000);
