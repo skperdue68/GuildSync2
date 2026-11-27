@@ -7640,3 +7640,14 @@ body {
   height: 15px;
   display: block;
 }
+
+
+/* Inline action icons: accept (check), unblock (restore) and the unlink chain all
+   share one 15px size inside the round report and dialog buttons. */
+.member-link-report-action svg,
+.member-link-trash-button svg,
+.member-link-approve-button svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}

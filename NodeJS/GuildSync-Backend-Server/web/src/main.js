@@ -3489,9 +3489,9 @@ function renderMemberLinksRows() {
         <td class="member-links-method-col">${escapeHtml(method || '')}${Number(link.locked || 0) === 1 ? ' 🔒' : ''}</td>
         <td class="member-links-action-col">
           <div class="member-link-actions">
-            ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
+            ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg></button>` : ''}
             ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="${escapeAttribute(unlinkLabel)}" title="${escapeAttribute(unlinkLabel)}"><svg class="member-link-unlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/></svg></button>` : ''}
-            ${canManageGuildSyncLinks() && blocked ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block">↺</button>` : ''}
+            ${canManageGuildSyncLinks() && blocked ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>` : ''}
           </div>
           ${canManageGuildSyncLinks() && status === 'linked' ? `<span class="member-link-unlink-outcome${unlinkBlocked ? ' becomes-block' : ' becomes-candidate'}" title="${escapeAttribute(unlinkLabel)}">${unlinkOutcome}</span>` : ''}
         </td>
@@ -4131,7 +4131,7 @@ function renderMemberLinkCurrentCard(link) {
         data-unlink-dialog-member-link
         data-unlink-eso-account="${escapeAttribute(link.eso_account_name || '')}"
         data-unlink-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
-      >🗑</button>`
+      ><svg class="member-link-unlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/></svg></button>`
     : isCandidate
       ? `<button
           class="member-link-approve-button"
@@ -4140,7 +4140,7 @@ function renderMemberLinkCurrentCard(link) {
           title="Approve suggested link"
           data-accept-dialog-member-candidate="${escapeAttribute(link.eso_account_name || '')}"
           data-accept-dialog-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
-        >✓</button>`
+        ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg></button>`
       : (Number(link.locked || 0) === 1 || status === 'blocked')
         ? `<button
             class="member-link-approve-button member-link-unblock-button"
@@ -4150,7 +4150,7 @@ function renderMemberLinkCurrentCard(link) {
             data-unblock-dialog-member-auto-link
             data-unblock-eso-account="${escapeAttribute(link.eso_account_name || '')}"
             data-unblock-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
-          >↺</button>`
+          ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>`
         : '';
 
   return `
