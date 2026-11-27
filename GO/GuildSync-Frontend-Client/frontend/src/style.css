@@ -7630,7 +7630,6 @@ body {
   flex: 0 0 auto;
 }
 
-
 /* The Action column spells out what removing a link will do, so it needs room for
    the short outcome line under the trash button. */
 .member-links-table .member-links-action-col {
@@ -7657,15 +7656,6 @@ body {
 .member-link-unlink-outcome.becomes-block {
   color: #fca5a5;
 }
-
-
-/* Broken-chain glyph inside the report unlink button. */
-.member-link-report-trash .member-link-unlink-icon {
-  width: 15px;
-  height: 15px;
-  display: block;
-}
-
 
 /* Inline action icons: accept (check), unblock (restore) and the unlink chain all
    share one 15px size inside the round report and dialog buttons. */

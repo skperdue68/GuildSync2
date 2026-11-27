@@ -7633,15 +7633,6 @@ body {
   color: #fca5a5;
 }
 
-
-/* Broken-chain glyph inside the report unlink button. */
-.member-link-report-trash .member-link-unlink-icon {
-  width: 15px;
-  height: 15px;
-  display: block;
-}
-
-
 /* Inline action icons: accept (check), unblock (restore) and the unlink chain all
    share one 15px size inside the round report and dialog buttons. */
 .member-link-report-action svg,
