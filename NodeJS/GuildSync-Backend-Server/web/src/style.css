@@ -7542,10 +7542,11 @@ body {
   flex: 0 0 auto;
 }
 
-/* Report modals use the window height; only the toolbar and filters stay fixed. */
+/* Report modals fill the overlay (which keeps its own padding); only the toolbar
+   and filters stay fixed, so the tables get every spare pixel of the window. */
 .report-results-dialog {
-  height: min(1200px, calc(100vh - 40px), calc(100% - 16px)) !important;
-  max-height: min(1200px, calc(100vh - 40px), calc(100% - 16px)) !important;
+  height: min(1200px, calc(100vh - 108px), calc(100% - 8px)) !important;
+  max-height: min(1200px, calc(100vh - 108px), calc(100% - 8px)) !important;
 }
 
 /* The member links tables get most of that height instead of the fixed 260px cap. */
