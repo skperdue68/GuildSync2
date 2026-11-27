@@ -2133,7 +2133,7 @@ function renderReportsPanel() {
           <article class="report-option-card">
             <div class="report-option-copy">
               <h3>Discord Rank Audit</h3>
-              <p>Find Discord members whose rank role is above or below their linked ESO roster rank. Members without any linked ESO account are included automatically.</p>
+              <p>Find Discord members whose rank role is above or below their linked ESO roster rank. Members without any linked ESO account are included automatically. A member whose linked ESO account has left the roster is marked as not playing ESO instead of being listed.</p>
             </div>
             <button id="runDiscordRankAuditReportButton" class="refresh-discord-button report-run-button" type="button" ${discordRankAuditReportLoading ? 'disabled' : ''}>
               ${discordRankAuditReportLoading ? 'Running...' : 'Run'}

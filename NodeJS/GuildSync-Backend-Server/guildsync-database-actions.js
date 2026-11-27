@@ -5,7 +5,7 @@ import {initializeCommunityStatisticsSchema} from './community-statistics.js';
 import {initializeUserSettingsSchema} from './user-settings.js';
 import {initializeSheetsExportQueue, enqueueSheetsExports, createSheetsExportStore} from './sheets-export-queue.js';
 import { notifyDiscordConfirmedLink } from './discord-onboarding.js';
-import { clearMembershipContactForConfirmedLink, isConfirmedMemberLink } from './membership-dms.js';
+import { clearMembershipContactForConfirmedLink, isConfirmedMemberLink, reconcileOffRosterMemberMarks } from './membership-dms.js';
 import {validateEsoGuildImport} from './eso-guild-origin.js';
 import { normalizeRaffleDate } from './raffle-date.js';
 import { initializeDiscordOnboardingSchema } from './discord-onboarding-schema.js';
@@ -3628,6 +3628,12 @@ async function processRosterDataUnlocked(applicationDB, payload = {}) {
   }
 
   await runMemberAutoLinking(applicationDB);
+  // The roster just changed, so a link whose ESO account left is marked as not
+  // playing ESO, and a mark whose account came back clears itself. A roster import
+  // must still finish when this bookkeeping is unavailable.
+  try{
+    await reconcileOffRosterMemberMarks(applicationDB);
+  }catch{}
 
   const roster = await getRosterDataJSON(applicationDB);
   result.roster_members_returned = roster.length;
@@ -3872,7 +3878,9 @@ export async function getDiscordRankAuditReport(applicationDB) {
         COALESCE(linked_roster.highest_eso_rank_order, 999) AS eso_rank_order,
         CASE
           WHEN COALESCE(linked_roster.linked_account_count, 0) = 0 THEN 'no_linked_eso_account'
-          WHEN COALESCE(linked_roster.active_roster_count, 0) = 0 THEN 'linked_eso_not_on_roster'
+          -- A link to an account that has left the roster is not a rank difference:
+          -- the member is marked as not playing ESO instead, and left out of the report.
+          WHEN COALESCE(linked_roster.active_roster_count, 0) = 0 THEN NULL
           WHEN COALESCE(discord_rank.discord_rank_order, 999) < COALESCE(linked_roster.highest_eso_rank_order, 999) THEN 'discord_role_above_roster_rank'
           WHEN COALESCE(discord_rank.discord_rank_order, 999) > COALESCE(linked_roster.highest_eso_rank_order, 999) THEN 'discord_role_below_roster_rank'
           ELSE NULL
@@ -3989,9 +3997,8 @@ export async function getDiscordRankAuditReport(applicationDB) {
     ORDER BY
       CASE issue_type
         WHEN 'no_linked_eso_account' THEN 0
-        WHEN 'linked_eso_not_on_roster' THEN 1
-        WHEN 'discord_role_above_roster_rank' THEN 2
-        WHEN 'discord_role_below_roster_rank' THEN 3
+        WHEN 'discord_role_above_roster_rank' THEN 1
+        WHEN 'discord_role_below_roster_rank' THEN 2
         ELSE 9
       END,
       LOWER(COALESCE(server_nickname, global_name, username, discord_id)) ASC

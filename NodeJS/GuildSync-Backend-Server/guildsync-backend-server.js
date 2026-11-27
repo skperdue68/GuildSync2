@@ -1,5 +1,5 @@
 import {initializeDiscordReminders,createDiscordReminders,registerDiscordReminderSocket,hasOfficerRole} from './discord-reminders.js';
-import {initializeMembershipDMs,createMembershipDMService,registerMembershipDMSocket,registerMembershipDMPreferenceSocket,membershipDMManaged} from './membership-dms.js';
+import {initializeMembershipDMs,createMembershipDMService,registerMembershipDMSocket,registerMembershipDMPreferenceSocket,membershipDMManaged,reconcileOffRosterMemberMarks} from './membership-dms.js';
 import {dmConfig} from './membership-dm-config.js';
 import {createEsoAccountRenames,registerEsoAccountRenameSocket} from './eso-account-identity.js';
 import {registerTraderSalesSubscriptionSocket, planTraderSaleNotices, announceTraderSaleNotices, markTraderSaleNoticesDelivered} from './trader-sales-subscriptions.js';
@@ -2531,6 +2531,11 @@ function registerGuildSyncConnection(socket) {
     }
 
     try {
+      // Running the audit also settles the members it leaves out: a link whose ESO
+      // account has left the roster is marked as not playing ESO, and a mark whose
+      // account is back on the roster clears itself.
+      try { await reconcileOffRosterMemberMarks(applicationDB); }
+      catch (error) { Log('Failed to reconcile off-roster membership marks:', error); }
       const rows = await excludeOptedOutDiscordRankAuditRows(
         applicationDB,
         await getDiscordRankAuditReport(applicationDB)

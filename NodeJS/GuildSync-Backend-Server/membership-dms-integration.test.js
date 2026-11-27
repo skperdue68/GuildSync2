@@ -474,3 +474,18 @@ test('marking a Discord member unavailable removes their ESO/Discord link',async
  await f.service.setPreference('1','30','');
  assert.deepEqual(f.links(),[],'clearing the answer does not invent a link');
 });
+
+test('clearing the tick for a departed member keeps the roster mark from coming back',async()=>{
+ const f=fixture({legacy:{preferences:{'10':'opt_out'},events:[],offRosterMarks:{'10':1800000000}}});
+ await f.service.setPreference('1','10','');
+ assert.equal(f.state().preferences['10'],undefined);
+ assert.equal(f.state().offRosterMarks['10'],undefined);
+ assert.equal(typeof f.state().offRosterCleared['10'],'number');
+});
+
+test('choosing a preference replaces the roster mark instead of stacking on it',async()=>{
+ const f=fixture({legacy:{preferences:{},events:[],offRosterMarks:{'20':1800000000}}});
+ await f.service.setPreference('1','20','not_playing');
+ assert.equal(f.state().offRosterMarks['20'],undefined);
+ assert.equal(f.state().offRosterCleared,undefined);
+});
