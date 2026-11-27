@@ -2940,6 +2940,16 @@ function registerGuildSyncConnection(socket) {
     }
   });
 
+  // The history names the officer who made the change, so the payload carries the
+  // signed-in identity from the socket rather than trusting the client to send it.
+  function getMemberLinkHistoryActor(activeSocket) {
+    const user = activeSocket.guildSyncUser || {};
+    return {
+      actorName: user.display_name || user.guild_member_name || user.username || '',
+      actorUserId: user.discord_user_id || ''
+    };
+  }
+
   socket.on('guildsync:request-member-link-history', async (payload = {}, callback) => {
     if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
       sendSocketResponse(socket, 'guildsync:member-link-history-result', callback, {
@@ -3014,7 +3024,7 @@ function registerGuildSyncConnection(socket) {
     }
 
     try {
-      await acceptMemberLinkCandidate(applicationDB, payload || {});
+      await acceptMemberLinkCandidate(applicationDB, { ...(payload || {}), ...getMemberLinkHistoryActor(socket) });
       const links = await getMemberLinks(applicationDB);
       await broadcastMemberLinksUpdate(links);
       sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
@@ -3044,7 +3054,7 @@ function registerGuildSyncConnection(socket) {
     }
 
     try {
-      await manualLinkMember(applicationDB, payload || {});
+      await manualLinkMember(applicationDB, { ...(payload || {}), ...getMemberLinkHistoryActor(socket) });
       const links = await getMemberLinks(applicationDB);
       await broadcastMemberLinksUpdate(links);
       // A manual link clears the member's roster "does not use Discord" answer, so the
@@ -3077,7 +3087,7 @@ function registerGuildSyncConnection(socket) {
     }
 
     try {
-      const unlinkResult = await manualUnlinkMember(applicationDB, payload || {});
+      const unlinkResult = await manualUnlinkMember(applicationDB, { ...(payload || {}), ...getMemberLinkHistoryActor(socket) });
       const links = await getMemberLinks(applicationDB);
       await broadcastMemberLinksUpdate(links);
       sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
@@ -3110,7 +3120,7 @@ function registerGuildSyncConnection(socket) {
     }
 
     try {
-      const unblockResult = await unblockMemberAutoLink(applicationDB, payload || {});
+      const unblockResult = await unblockMemberAutoLink(applicationDB, { ...(payload || {}), ...getMemberLinkHistoryActor(socket) });
       const autoLinkResult = await runMemberAutoLinking(applicationDB);
       const links = await getMemberLinks(applicationDB);
       await broadcastMemberLinksUpdate(links);
