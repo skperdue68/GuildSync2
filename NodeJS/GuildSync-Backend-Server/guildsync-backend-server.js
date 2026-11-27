@@ -93,6 +93,7 @@ import {
   getRosterStreamHistoryForAccount,
   getMemberLinks,
   getMemberLinkHistory,
+  getMemberLinkMatchDiagnostics,
   upsertMemberLink,
   getMemberLinkOptions,
   acceptMemberLinkCandidate,
@@ -2977,6 +2978,34 @@ function registerGuildSyncConnection(socket) {
         message: error.message || 'Failed to retrieve member link history.',
         events: [],
         events_returned: 0,
+        at: new Date().toLocaleString()
+      });
+    }
+  });
+
+  socket.on('guildsync:request-member-link-diagnostics', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      sendSocketResponse(socket, 'guildsync:member-link-diagnostics-result', callback, {
+        ok: false,
+        message: 'You must be logged in to read match diagnostics.',
+        at: new Date().toLocaleString()
+      });
+      return;
+    }
+
+    try {
+      const diagnostics = await getMemberLinkMatchDiagnostics(applicationDB, payload || {});
+      sendSocketResponse(socket, 'guildsync:member-link-diagnostics-result', callback, {
+        ok: true,
+        message: 'Match diagnostics retrieved.',
+        diagnostics,
+        at: new Date().toLocaleString()
+      });
+    } catch (error) {
+      Log('Failed to process guildsync:request-member-link-diagnostics:', error);
+      sendSocketResponse(socket, 'guildsync:member-link-diagnostics-result', callback, {
+        ok: false,
+        message: error.message || 'Failed to retrieve match diagnostics.',
         at: new Date().toLocaleString()
       });
     }

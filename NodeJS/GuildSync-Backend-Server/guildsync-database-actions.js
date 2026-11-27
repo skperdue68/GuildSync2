@@ -343,6 +343,10 @@ export const MARIADB_CONNECTION_LIMIT = Number(
   process.env.MARIADB_CONNECTION_LIMIT || 10
 );
 
+// The matcher's candidate floor. Shared by the matcher and by match diagnostics so a
+// "below threshold" explanation can never drift from what the matcher actually does.
+export const MEMBER_LINK_CANDIDATE_THRESHOLD = 82;
+
 let guildSyncPoolPromise = null;
 
 export async function openGuildSyncDB() {
@@ -5661,7 +5665,7 @@ async function runMemberAutoLinkingUnlocked(applicationDB, options = {}) {
       }
     }
 
-    if (best && best.score >= 82 && isMemberLinkPairAutoUpgradeable(maps, esoName, best.discord.discord_id, best.score)) {
+    if (best && best.score >= MEMBER_LINK_CANDIDATE_THRESHOLD && isMemberLinkPairAutoUpgradeable(maps, esoName, best.discord.discord_id, best.score)) {
       await removeWeakerMemberAutoLinkCandidates(applicationDB, {
         esoAccountName: esoName,
         discordUserId: best.discord.discord_id,
@@ -6005,6 +6009,84 @@ export async function getMemberLinkHistory(applicationDB, payload = {}) {
   `, params);
 
   return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Match diagnostics: why the matcher did or did not offer a Discord member
+// ---------------------------------------------------------------------------
+
+// getMemberLinkMatchDiagnostics explains one ESO account against every Discord member:
+// the score per best name field, and whether the matcher would link, candidate, block or
+// skip it, so an officer can answer "why is this pair not linked?" without guessing.
+export async function getMemberLinkMatchDiagnostics(applicationDB, payload = {}) {
+  const esoAccountName = String(await resolveEsoAccountName(applicationDB, payload.esoAccountName || payload.eso_account_name || '')).trim().replace(/^@+/, '');
+  if (!esoAccountName) throw new Error('ESO account name is required for match diagnostics.');
+
+  const requested = Number(payload.limit ?? 8);
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 25) : 8;
+
+  const {rosterRows, discordRows, linkRows} = await loadMemberLinkInputs(applicationDB);
+  const roster = (rosterRows || []).find((row) => esoAccountKey(row.account_name) === esoAccountKey(esoAccountName));
+  if (!roster) throw new Error('ESO account was not found in the roster.');
+
+  const maps = buildExistingLinkMaps(linkRows || []);
+  const optOuts = await loadMemberLinkOptOuts(applicationDB);
+  const esoOptOut = optOuts.esoKeys.has(esoAccountKey(esoAccountName));
+
+  const existingRow = (id) => (linkRows || []).find((link) => (
+    esoAccountKey(link.eso_account_name) === esoAccountKey(esoAccountName)
+    && String(link.discord_user_id) === String(id)
+  ));
+
+  const rows = (discordRows || []).map((discord) => {
+    const top = getBestDiscordNameMatch(esoAccountName, discord) || {score: 0, field: '', priority: 99};
+    const blocked = isMemberLinkPairBlocked(maps, esoAccountName, discord.discord_id);
+    const linked = isMemberLinkPairLinked(maps, esoAccountName, discord.discord_id);
+    const autoUpgradeable = isMemberLinkPairAutoUpgradeable(maps, esoAccountName, discord.discord_id, top.score);
+    const discordOptOut = optOuts.discordIds.has(String(discord.discord_id || '').trim());
+    const existing = existingRow(discord.discord_id);
+
+    let decision = 'below_threshold';
+    if (linked) decision = 'already_linked';
+    else if (blocked) decision = 'blocked';
+    else if (esoOptOut || discordOptOut) decision = 'opted_out';
+    else if (top.score >= 100 && autoUpgradeable) decision = 'auto_link';
+    else if (top.score >= MEMBER_LINK_CANDIDATE_THRESHOLD && autoUpgradeable) decision = 'candidate';
+    // A score that would normally be offered, held back by an existing confirmed link
+    // or block on the pair: the reason an officer sees nothing rather than a duplicate.
+    else if (top.score >= MEMBER_LINK_CANDIDATE_THRESHOLD) decision = 'protected_by_existing_link';
+
+    return {
+      discord_user_id: String(discord.discord_id || ''),
+      username: discord.username || '',
+      global_name: discord.global_name || '',
+      server_nickname: discord.server_nickname || '',
+      score: top.score,
+      match_field: top.field || '',
+      decision,
+      discord_opt_out: discordOptOut ? 1 : 0,
+      existing_link: existing
+        ? {
+            link_status: existing.link_status || '',
+            link_method: existing.link_method || '',
+            match_confidence: Number(existing.match_confidence || 0),
+            auto_link_blocked: Number(existing.auto_link_blocked || 0)
+          }
+        : null
+    };
+  });
+
+  // Highest score first, so "the matcher should have offered this one" is obvious.
+  rows.sort((left, right) => right.score - left.score || left.discord_user_id.localeCompare(right.discord_user_id));
+
+  return {
+    eso_account_name: esoAccountName,
+    rank: roster.rank || '',
+    eso_opt_out: esoOptOut ? 1 : 0,
+    candidate_threshold: MEMBER_LINK_CANDIDATE_THRESHOLD,
+    discord_members_evaluated: rows.length,
+    candidates: rows.slice(0, limit)
+  };
 }
 
 export async function acceptMemberLinkCandidate(db, ...args) {

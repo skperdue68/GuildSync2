@@ -3,13 +3,16 @@ import vm from 'node:vm';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const source=readFileSync(new URL('./guildsync-database-actions.js',import.meta.url),'utf8');
+// Read the matcher's floor from the module so this test cannot drift from it.
+function candidateThreshold(){const value=Number(source.match(/export const MEMBER_LINK_CANDIDATE_THRESHOLD = (\d+);/)?.[1]);assert.ok(Number.isFinite(value),'MEMBER_LINK_CANDIDATE_THRESHOLD is missing');return value;}
 function fn(name){const start=source.search(new RegExp(`^(?:export )?(?:async )?function ${name}\\(`,'m'));assert.ok(start>=0,name);const tail=source.slice(start);const end=tail.slice(1).search(/^(?:export )?(?:async )?function /m);return (end<0?tail:tail.slice(0,end+1)).replace(/^export /,'');}
 function context(link_status='candidate'){
  const links=[{eso_account_name:'Auleric',discord_user_id:'42',link_status,link_method:link_status==='linked'?'exact':'fuzzy',auto_link_blocked:link_status==='blocked'?1:0,match_confidence:88}];
  const db={execute:async sql=>[sql.includes('FROM guildsync_roster_members')?[{account_name:'Auleric',rank:'Member'}]:sql.includes('FROM discord_members')?[{discord_id:'42',username:'joey123',server_nickname:'Auleric (Joey)'}]:links]};
  const ctx=vm.createContext({resolveEsoAccountName:async(_,name)=>name,
   loadMemberLinkOptOuts:async()=>({discordIds:new Set(),esoKeys:new Set()}),
-  esoAccountKey:s=>String(s??'').trim().replace(/^@+/,'').toLowerCase()});
+  esoAccountKey:s=>String(s??'').trim().replace(/^@+/,'').toLowerCase(),
+  MEMBER_LINK_CANDIDATE_THRESHOLD:candidateThreshold()});
  vm.runInContext(['normalizeRosterAccountName','normalizeMemberLinkName','getDiscordNameCandidates','levenshteinDistance','fuzzyNameScore','loadMemberLinkInputs','getMemberLinkPairKey','buildExistingLinkMaps','isMemberLinkPairBlocked','isMemberLinkPairLinked','isMemberLinkPairAutoUpgradeable','getMemberLinkOptions'].map(fn).join('\n'),ctx);
  return {ctx,db,links};
 }
@@ -50,7 +53,7 @@ test('unlinking an approved fuzzy link hands the pair back to the matcher as a f
  links.splice(0,links.length,{eso_account_name:'Auleric',discord_user_id:'42',link_status:'linked',link_method:'manual',match_confidence:88,auto_link_blocked:0});
  const writes=[];
   Object.assign(ctx,{loadMemberLinkOptOuts:async()=>({discordIds:new Set(),esoKeys:new Set()}),esoAccountKey:s=>s.toLowerCase(),upsertMemberLink:async(_,link)=>writes.push(link),removeWeakerMemberAutoLinkCandidates:async()=>{},recordMemberLinkChange:async()=>null});
-  vm.runInContext([fn('manualUnlinkMemberUnlocked'),fn('getBestDiscordNameMatch'),fn('runMemberAutoLinkingUnlocked')].join('\n'),ctx);
+  vm.runInContext(`const MEMBER_LINK_CANDIDATE_THRESHOLD = ${candidateThreshold()};\n`+[fn('manualUnlinkMemberUnlocked'),fn('getBestDiscordNameMatch'),fn('runMemberAutoLinkingUnlocked')].join('\n'),ctx);
  Object.assign(ctx,{runMemberAutoLinking:db=>ctx.runMemberAutoLinkingUnlocked(db)});
  const db={execute:async(sql)=>{
   const statement=sql.trim();
