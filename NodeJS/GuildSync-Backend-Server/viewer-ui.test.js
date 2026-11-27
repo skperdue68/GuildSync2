@@ -20,7 +20,10 @@ for(const file of ['./web/src/main.js','../../GO/GuildSync-Frontend-Client/front
   const ctx=context({canEditGuildSyncData:()=>false,memberLinksLoading:false,memberLinks:[{eso_account_name:'@Test',discord_user_id:'2',link_status:'candidate'},{link_status:'linked'},{link_status:'blocked',locked:1}],getSortedMemberLinksForReport:links=>links,getMemberLinkReportDiscordDisplay:()=> 'Discord member',getMemberLinksReportSearchText:()=> '@Test'});
   vm.runInContext(functions(['renderMemberLinksRows']),ctx);const html=vm.runInContext('renderMemberLinksRows()',ctx);
   assert.match(html,/@Test|Discord member/);assert.doesNotMatch(html,/data-accept-member-candidate|data-unlink-member-link|data-unblock-member-auto-link/);
-  ctx.canManageGuildSyncLinks=()=>true;assert.match(vm.runInContext('renderMemberLinksRows()',ctx),/data-accept-member-candidate/);
+  ctx.canManageGuildSyncLinks=()=>true;const managed=vm.runInContext('renderMemberLinksRows()',ctx);assert.match(managed,/data-accept-member-candidate/);
+  // Every report action is an inline SVG now: broken chain, check, restore.
+  assert.match(managed,/class="member-link-unlink-icon"/);assert.match(managed,/class="member-link-action-icon"/);
+  assert.doesNotMatch(managed,/🗑|✓|↺/);
  });
  test(`${file}: Viewer can read notes and linked identities without editing forms`,()=>{
   const ctx=context({canEditGuildSyncData:()=>false,rosterNotesDialogAccountName:'@Test',rosterNotesDialogError:'',renderRosterNotesRows:()=>'<tr><td>Existing note</td></tr>',renderRosterNotesForm:()=>'<textarea id="editNote"></textarea>',renderDiscordNames,getMemberLinkMatchedField:()=>'',renderMemberLinkCurrentStatus:()=> 'Linked',formatMemberLinkMethodForDisplay:String});

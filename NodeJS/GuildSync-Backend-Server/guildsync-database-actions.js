@@ -5482,8 +5482,10 @@ function isMemberLinkPairAutoUpgradeable(maps, esoAccountName, discordUserId, ne
   const existingConfidence = Number(existingPair.match_confidence || 0);
 
   if (status === 'blocked' || Number(existingPair.auto_link_blocked || 0) === 1) return false;
-  if (status === 'linked' && method === 'manual') return false;
-  if (status === 'linked' && method === 'exact') return false;
+  // A confirmed link stays confirmed. Officers accept fuzzy candidates and link
+  // members by hand, so a later matcher pass must never downgrade a `linked` row
+  // back to `candidate` just because it scored the same pair a little higher.
+  if (status === 'linked') return false;
 
   return ['candidate', 'unlinked'].includes(status) || (method === 'fuzzy' && newConfidence > existingConfidence);
 }
@@ -5879,9 +5881,11 @@ async function acceptMemberLinkCandidateUnlocked(applicationDB, payload = {}) {
     discordDisplayName: candidate.discord_display_name,
     discordServerNickname: candidate.discord_server_nickname,
     linkStatus: 'linked',
-    linkMethod: 'fuzzy',
+    // Accepting a fuzzy candidate is an officer decision, so the row is stored as a
+    // manual link: it is confirmed everywhere and the matcher can never re-rank it.
+    linkMethod: 'manual',
     matchConfidence: candidate.match_confidence,
-    matchReason: 'Accepted fuzzy candidate',
+    matchReason: 'Accepted fuzzy candidate as a confirmed link',
     matchField: candidate.match_field,
     auto_link_blocked: 0
   });

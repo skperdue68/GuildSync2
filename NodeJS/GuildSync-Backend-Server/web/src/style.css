@@ -7501,3 +7501,144 @@ body {
   width:auto;
   max-height:calc(100dvh - 150px)}
 }
+
+
+/* ---------------------------------------------------------------------------
+   GuildSync scrollbars: every scroll area (menus, tables, dialogs and the app
+   shell) uses the same slate rail, so a native light scrollbar never appears
+   inside a GuildSync panel.
+   --------------------------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #33415A #0B1424;
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #0B1424;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #33415A;
+  border: 2px solid #0B1424;
+  border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #4A5C7A;
+}
+
+*::-webkit-scrollbar-corner {
+  background: #0B1424;
+}
+
+/* Report sections keep their natural height and the dialog content scrolls
+   instead, so a candidate section can never collapse to a clipped sliver. */
+.report-result-section {
+  flex: 0 0 auto;
+}
+
+/* Report modals fill the overlay (which keeps its own padding); only the toolbar
+   and filters stay fixed, so the tables get every spare pixel of the window. */
+.report-results-dialog {
+  height: min(1200px, calc(100vh - 108px), calc(100% - 8px)) !important;
+  max-height: min(1200px, calc(100vh - 108px), calc(100% - 8px)) !important;
+}
+
+/* The member links tables get most of that height instead of the fixed 260px cap. */
+.member-links-report-dialog .member-links-table-shell {
+  max-height: min(58vh, 720px);
+}
+
+/* The User Settings entry is a plain full-width action button, so its label is
+   centered like the other buttons in the profile menu. */
+.profile-user-settings-button {
+  text-align: center;
+}
+
+
+/* Presence tooltip: the client type (desktop / web) reads as a small pill so the
+   login name stays on its own line of the row. */
+.guildsync-presence-who small.guildsync-presence-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.guildsync-presence-login {
+  color: #8f9cb0;
+}
+
+.guildsync-presence-client {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.18);
+  color: #c9d8f1;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.guildsync-presence-client.is-web {
+  border-color: rgba(45, 212, 191, 0.42);
+  background: rgba(13, 148, 136, 0.22);
+  color: #b8f0e6;
+}
+
+/* User Settings is a modal about the client itself, so it stacks above any report
+   modal that is already open behind it. */
+.roster-history-overlay.user-settings-overlay {
+  z-index: 60;
+}
+
+
+/* The Action column spells out what removing a link will do, so it needs room for
+   the short outcome line under the trash button. */
+.member-links-table .member-links-action-col {
+  width: 104px;
+  min-width: 104px;
+  max-width: 104px;
+}
+
+.member-link-unlink-outcome {
+  display: block;
+  margin-top: 3px;
+  color: #93a4bd;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.member-link-unlink-outcome.becomes-candidate {
+  color: #7dd3fc;
+}
+
+.member-link-unlink-outcome.becomes-block {
+  color: #fca5a5;
+}
+
+/* Inline action icons: accept (check), unblock (restore) and the unlink chain all
+   share one 15px size inside the round report and dialog buttons. */
+.member-link-report-action svg,
+.member-link-trash-button svg,
+.member-link-approve-button svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}

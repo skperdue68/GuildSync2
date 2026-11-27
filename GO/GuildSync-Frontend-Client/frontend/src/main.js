@@ -3020,6 +3020,14 @@ function renderMemberLinksRows() {
     const status = statusOf(link);
     const method = String(link.link_method || '').trim().toLowerCase();
     const blocked = isBlocked(link);
+    // Removing a confirmed link only unlinks the pair, so the action is a broken chain
+    // (Lucide "unlink") rather than a trash can. It also has two different outcomes, so
+    // both the button and the row say which one this pair will get.
+    const unlinkBlocked = method === 'exact';
+    const unlinkOutcome = unlinkBlocked ? '→ block' : '→ candidate';
+    const unlinkLabel = unlinkBlocked
+      ? 'Unlink this exact auto-link; the pair becomes a block you can remove later'
+      : 'Unlink this link; the pair returns to Possible links to make as a fuzzy candidate';
     return `
       <tr
         data-member-links-report-row
@@ -3034,10 +3042,11 @@ function renderMemberLinksRows() {
         <td class="member-links-method-col">${escapeHtml(method || '')}${Number(link.locked || 0) === 1 ? ' 🔒' : ''}</td>
         <td class="member-links-action-col">
           <div class="member-link-actions">
-            ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
-            ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Unlink this ESO/Discord pair" title="Unlink this ESO/Discord pair">🗑</button>` : ''}
-            ${canManageGuildSyncLinks() && blocked ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block">↺</button>` : ''}
+            ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg></button>` : ''}
+            ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="${escapeAttribute(unlinkLabel)}" title="${escapeAttribute(unlinkLabel)}"><svg class="member-link-unlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/></svg></button>` : ''}
+            ${canManageGuildSyncLinks() && blocked ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>` : ''}
           </div>
+          ${canManageGuildSyncLinks() && status === 'linked' ? `<span class="member-link-unlink-outcome${unlinkBlocked ? ' becomes-block' : ' becomes-candidate'}" title="${escapeAttribute(unlinkLabel)}">${unlinkOutcome}</span>` : ''}
         </td>
         <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
       </tr>
@@ -3081,7 +3090,7 @@ function renderMemberLinksRows() {
       'Auto-linking is blocked for these pairs. Remove a block to let the matcher consider them again.',
       blocks, 'No blocked pairs.')}
     ${renderSection('linked', 'Links we can unlink',
-      'Confirmed ESO / Discord links. Unlink a pair to break the connection.',
+      'Confirmed ESO / Discord links. Removing an approved fuzzy link puts the pair back in Possible links to make as a fuzzy candidate; removing an exact auto-link turns the pair into a block you can remove later.',
       linked, 'No confirmed links yet.')}
     ${excluded.length ? renderSection('excluded', 'Excluded from fuzzy matching',
       'Members who told us they do not use Discord, do not play ESO or are not guild members. These pairs are left out of matching until the answer changes; remove stale rows here.',
@@ -3676,7 +3685,7 @@ function renderMemberLinkCurrentCard(link) {
         data-unlink-dialog-member-link
         data-unlink-eso-account="${escapeAttribute(link.eso_account_name || '')}"
         data-unlink-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
-      >🗑</button>`
+      ><svg class="member-link-unlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/></svg></button>`
     : isCandidate
       ? `<button
           class="member-link-approve-button"
@@ -3685,7 +3694,7 @@ function renderMemberLinkCurrentCard(link) {
           title="Approve suggested link"
           data-accept-dialog-member-candidate="${escapeAttribute(link.eso_account_name || '')}"
           data-accept-dialog-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
-        >✓</button>`
+        ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg></button>`
       : (Number(link.locked || 0) === 1 || status === 'blocked')
         ? `<button
             class="member-link-approve-button member-link-unblock-button"
@@ -3695,7 +3704,7 @@ function renderMemberLinkCurrentCard(link) {
             data-unblock-dialog-member-auto-link
             data-unblock-eso-account="${escapeAttribute(link.eso_account_name || '')}"
             data-unblock-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
-          >↺</button>`
+          ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>`
         : '';
 
   return `
@@ -9441,6 +9450,10 @@ function renderOpenProfileMenuContents() {
         <span class="profile-label">Client Version</span>
         <span class="profile-value">${escapeHtml(GUILDSYNC_APP_VERSION)}</span>
       </div>
+      <label id="profileStartAtLoginRow" class="profile-row profile-start-at-login-row" hidden>
+        <span class="profile-label">Start GuildSync at login</span>
+        <input id="profileStartAtLogin" type="checkbox" aria-label="Start GuildSync when you log in to this computer" />
+      </label>
       <div class="profile-section profile-filewatch-section">
         <div class="profile-section-header">
           <span>File Watch</span>
@@ -9482,10 +9495,77 @@ function renderOpenProfileMenuContents() {
       toggle.addEventListener('change', handleProfileFileWatchToggleChange);
     });
 
-  document.querySelector('#openUserSettingsButton')?.addEventListener('click', () => {
-    closeProfileMenu(false);
-    openUserSettingsDialog();
+  // The menu re-renders its contents and the tools decorator moves this button, so
+  // the click is handled by the menu element itself instead of the button node.
+  if (!menu.dataset.userSettingsWired) {
+    menu.dataset.userSettingsWired = '1';
+    menu.addEventListener('click', (event) => {
+      if (!event.target.closest?.('#openUserSettingsButton')) return;
+      event.preventDefault();
+      closeProfileMenu(false);
+      openUserSettingsDialog();
+    });
+  }
+
+  // Login item: the profile menu is the one place this is set, and the host owns it.
+  menu.querySelector('#profileStartAtLogin')?.addEventListener('change', (event) => {
+    void saveStartAtLoginPreference(event.target.checked);
   });
+  void refreshStartAtLoginPreference();
+}
+
+// "Start GuildSync at login" registers the operating system login item (Windows Run
+// key, macOS LaunchAgent, XDG autostart entry), so the menu row only forwards the
+// choice and shows what the host reports. The web client has no such binding.
+function startAtLoginBridge() {
+  return typeof AppBridge?.GetDesktopPreferences === 'function' && typeof AppBridge?.SetStartAtLogin === 'function'
+    ? AppBridge
+    : null;
+}
+
+async function refreshStartAtLoginPreference() {
+  const row = document.querySelector('#profileStartAtLoginRow');
+  const input = document.querySelector('#profileStartAtLogin');
+  const bridge = startAtLoginBridge();
+
+  if (!row || !input || !bridge) {
+    return;
+  }
+
+  try {
+    const prefs = await bridge.GetDesktopPreferences();
+
+    if (!prefs?.startAtLoginSupported) {
+      return;
+    }
+
+    input.checked = Boolean(prefs.startAtLogin);
+    row.hidden = false;
+  } catch (error) {
+    // Leave the row hidden when the host cannot answer.
+    logGuildSyncFileWatcher('Start-at-login state could not be read.', formatError(error));
+  }
+}
+
+async function saveStartAtLoginPreference(enabled) {
+  const input = document.querySelector('#profileStartAtLogin');
+  const bridge = startAtLoginBridge();
+
+  if (!input || !bridge) {
+    return;
+  }
+
+  input.disabled = true;
+
+  try {
+    const prefs = await bridge.SetStartAtLogin(enabled);
+    input.checked = Boolean(prefs?.startAtLogin ?? enabled);
+  } catch (error) {
+    input.checked = !enabled;
+    addSystemMessage('start-at-login-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } finally {
+    input.disabled = false;
+  }
 }
 
 async function loadUserSwitchOptions() {
@@ -9838,7 +9918,7 @@ function renderUserSettingsDialog() {
   const defaultLabel = defaultValue || 'Documents\\Elder Scrolls Online\\live\\SavedVariables';
 
   return `
-    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="userSettingsDialogTitle">
+    <div class="roster-history-overlay user-settings-overlay" role="dialog" aria-modal="true" aria-labelledby="userSettingsDialogTitle">
       <div class="roster-history-dialog manual-ticket-dialog user-settings-dialog">
         <div class="roster-history-header">
           <div>
@@ -10695,9 +10775,9 @@ function setGuildSyncPresence(payload) {
   refreshGuildSyncPresence();
 }
 
-function guildSyncPresenceClientLabel(user) {
+function guildSyncPresenceClientTypes(user) {
   const types = Array.isArray(user?.client_types) ? user.client_types.filter(Boolean) : [];
-  return types.length ? types.join(' + ') : 'desktop';
+  return types.length ? types : ['desktop'];
 }
 
 function refreshGuildSyncPresence() {
@@ -10733,9 +10813,13 @@ function refreshGuildSyncPresence() {
 
   if (tooltip) {
     const rows = people.map(user => {
-      const detail = [user?.login, guildSyncPresenceClientLabel(user)].filter(Boolean).map(escapeHtml).join(' \u00b7 ');
+      const login = String(user?.login || '').trim();
+      // Each client is a pill so "desktop" / "web" reads as a tag, not extra name text.
+      const pills = guildSyncPresenceClientTypes(user)
+        .map(type => `<span class="guildsync-presence-client is-${escapeHtml(String(type).toLowerCase().replace(/[^a-z0-9]+/g, '-'))}">${escapeHtml(type)}</span>`)
+        .join('');
       const dotClass = user?.eso_running ? 'eso-on' : 'eso-off';
-      return `<div class="guildsync-presence-row"><span class="guildsync-presence-dot ${dotClass}" aria-hidden="true"></span><div class="guildsync-presence-who"><b>${escapeHtml(user?.name || user?.user_id || 'GuildSync user')}</b><small>${detail}</small></div></div>`;
+      return `<div class="guildsync-presence-row"><span class="guildsync-presence-dot ${dotClass}" aria-hidden="true"></span><div class="guildsync-presence-who"><b>${escapeHtml(user?.name || user?.user_id || 'GuildSync user')}</b><small class="guildsync-presence-meta">${login ? `<span class="guildsync-presence-login">${escapeHtml(login)}</span>` : ''}${pills}</small></div></div>`;
     }).join('');
     const count = `${people.length} ${people.length === 1 ? 'user' : 'users'}`;
     const summary = `${count} \u00b7 ${esoRunning} with ESO running`;

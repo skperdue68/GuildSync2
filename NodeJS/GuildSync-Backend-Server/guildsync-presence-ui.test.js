@@ -39,7 +39,7 @@ function render(client, payload, selfId) {
     escapeHtml
   });
   vm.runInContext([
-    pick(source, 'guildSyncPresenceClientLabel'),
+    pick(source, 'guildSyncPresenceClientTypes'),
     pick(source, 'refreshGuildSyncPresence'),
     pick(source, 'setGuildSyncPresence')
   ].join('\n'), context);
@@ -72,11 +72,13 @@ for (const client of Object.keys(clients)) {
     assert.match(view.tooltip, /Signed in to GuildSync/);
     assert.match(view.tooltip, /3 users · 1 with ESO running/);
     assert.match(view.tooltip, /Evan/, 'the reader is listed in their own tooltip too');
-    assert.match(view.tooltip, /@evainefaye · desktop/);
+    assert.match(view.tooltip, /@evainefaye<\/span><span class="guildsync-presence-client is-desktop">desktop<\/span>/);
     assert.match(view.tooltip, /Merlin/);
-    assert.match(view.tooltip, /@merlin6990 · desktop \+ web/);
+    assert.match(view.tooltip, /@merlin6990<\/span><span class="guildsync-presence-client is-desktop">desktop<\/span><span class="guildsync-presence-client is-web">web<\/span>/);
     assert.match(view.tooltip, /Tenthirty/);
-    assert.match(view.tooltip, /@tenthirty2 · web/);
+    assert.match(view.tooltip, /@tenthirty2<\/span><span class="guildsync-presence-client is-web">web<\/span>/);
+    assert.doesNotMatch(view.tooltip, /\u00b7 desktop/);
+    assert.doesNotMatch(view.tooltip, /\u00b7 web/);
   });
 
   test(`${client} tooltip colours the dot instead of spelling out the ESO state`, () => {
@@ -143,6 +145,17 @@ for (const client of Object.keys(clients)) {
     assert.ok(presence > messages, 'the presence line sits after the status messages, not before them');
   });
 }
+
+test('the client type is a pill and User Settings stacks above other modals', () => {
+  for (const client of Object.keys(clients)) {
+    const css = readFileSync(new URL(clients[client].replace('/main.js', '/style.css'), import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+
+    assert.match(css, /\.guildsync-presence-who small\.guildsync-presence-meta \{[^}]*display: flex;/, `${client}: the login and pills share a flex line`);
+    assert.match(css, /\.guildsync-presence-client \{[^}]*border-radius: 999px;/, `${client}: the client type is a pill`);
+    assert.match(css, /\.roster-history-overlay\.user-settings-overlay \{\n  z-index: 60;/, `${client}: User Settings stacks above report modals`);
+    assert.match(read(client), /class="roster-history-overlay user-settings-overlay"/, `${client}: the User Settings overlay carries its stacking class`);
+  }
+});
 
 test('the bar centres the line and caps the message area so the two cannot overlap', () => {
   for (const client of Object.keys(clients)) {
