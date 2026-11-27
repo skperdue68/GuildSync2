@@ -15,5 +15,5 @@
     "preview": "vite preview",
     "predev": "node ../../../tools/sync-manual.mjs"
   },
-  "version": "2.1.8-beta"
+  "version": "2.1.9-beta"
 }
