@@ -496,6 +496,15 @@ body {
   white-space: nowrap;
 }
 
+/* Six tabs no longer divide evenly: "Bank Deposits / Raffle Tickets" is far wider
+   than the rest, so each column keeps at least its label's width instead of an
+   equal sixth of the bar. Narrower windows use the compact labels below. */
+@media (min-width: 1181px) {
+  .guildsync-tabs {
+    grid-template-columns: repeat(6, minmax(max-content, 1fr));
+  }
+}
+
 
 #webSavedVarsUploadBannerHost {
   position: absolute;

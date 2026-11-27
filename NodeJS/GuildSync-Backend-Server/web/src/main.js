@@ -952,8 +952,8 @@ function refreshActiveTabData(tab = activeGuildSyncTab) {
     : tab === 'eso-members' ? rosterDataLoading : tab === 'more' ? bankingDataLoading : false;
   if (loading) { pendingTabDataRefreshes.add(tab); return; }
   pendingTabDataRefreshes.delete(tab);
-  // The Admin tab reloads Community Highlights on every tab click, even when collapsed.
-  if (tab === 'admin') communityStatisticsPanel.load(document);
+  // Reports reloads Community Highlights on every tab click, even when collapsed.
+  if (tab === 'settings') communityStatisticsPanel.load(document);
   if (tab === 'discord-members') refreshDiscordData({ silent: true });
   if (tab === 'eso-members') {
     rosterAutoRefreshAttempted = true;
@@ -973,9 +973,6 @@ function navigateGuildSyncTab(nextTab) {
   if (hadHistory) closeHistoryDialogsForNavigation();
   const changed = nextTab !== activeGuildSyncTab;
   activeGuildSyncTab = nextTab;
-  // Admin opens on Community Highlights; the accordion wires the section open and
-  // the panel loads its report as soon as that section is open.
-  if (nextTab === 'admin') reportsAccordion.open = 'community';
   refreshActiveTabData();
   if (changed || hadHistory) renderGuildSyncTabLayout();
 }
@@ -2107,6 +2104,7 @@ function renderReportsPanel() {
       </div>
 
       <div class="reports-scroll-area">
+        ${communityStatisticsPanel.render()}
         <section class="reports-list" aria-label="Available reports">
           <article class="report-option-card">
             <div class="report-option-copy">
@@ -2159,12 +2157,11 @@ function renderAdminPanel() {
       <div class="discord-data-header reports-header">
         <div>
           <h2 class="discord-data-title">Admin</h2>
-          <p class="discord-data-subtitle">Community highlights, raffle bonus settings and administrator configuration.</p>
+          <p class="discord-data-subtitle">Raffle bonus settings and administrator configuration.</p>
         </div>
       </div>
 
       <div class="reports-scroll-area">
-        ${communityStatisticsPanel.render()}
         ${renderRaffleBonusSettings()}
         ${adminConfigurationPanel.render()}
       </div>
@@ -2180,12 +2177,12 @@ function wireReportPanels() {
   wireReportAccordions(reportsAccordion, { refresh: true });
 
   if (activeGuildSyncTab === 'admin') {
-    communityStatisticsPanel.wire();
     adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
     wireRaffleBonusSettings();
     return;
   }
 
+  communityStatisticsPanel.wire();
   document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => openAssociatePromotionReportDialog());
   document.querySelector('#runDiscordRankAuditReportButton')?.addEventListener('click', () => openDiscordRankAuditReportDialog());
   document.querySelector('#runDiscordLastSeenReportButton')?.addEventListener('click', () => openDiscordLastSeenReportDialog());
@@ -10152,7 +10149,13 @@ async function logoutGuildSync() {
 }
 
 function connectSocket() {
-  const socketURL = guildSyncSession.socket_url || 'https://guildsync.perdues.me';
+  // The browser build is served by the backend it talks to, so it connects to its
+  // own origin. Only the desktop client, which has no page origin, uses the
+  // public production host.
+  const defaultSocketURL = isGuildSyncWebRuntime() && window.location?.origin
+    ? window.location.origin
+    : 'https://guildsync.perdues.me';
+  const socketURL = guildSyncSession.socket_url || defaultSocketURL;
 
   disconnectSocket(false);
 
