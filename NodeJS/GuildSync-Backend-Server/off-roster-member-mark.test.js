@@ -88,6 +88,39 @@ test('an officer preference already set for an off-roster member is left alone',
   assert.ok(!f.queries().some((query) => query.startsWith('UPDATE guildsync_membership_dm_state')));
 });
 
+test('an officer clearing the tick for a departed member keeps it cleared', async () => {
+  const f = fixture({
+    state: { preferences: {}, events: [], offRosterCleared: { '40': 1 } },
+    linked: [{ discord_user_id: '40', linked_accounts: 1, roster_accounts: 0 }]
+  });
+
+  assert.deepEqual(await reconcileOffRosterMemberMarks(f.db), { marked: 0, cleared: 0 });
+  assert.equal(f.state().preferences['40'], undefined);
+  assert.ok(!f.queries().some((query) => query.startsWith('UPDATE guildsync_membership_dm_state')));
+});
+
+test('a cleared tick is forgotten once the account is back on the roster', async () => {
+  const f = fixture({
+    state: { preferences: {}, events: [], offRosterCleared: { '40': 1 } },
+    linked: [{ discord_user_id: '40', linked_accounts: 1, roster_accounts: 1 }]
+  });
+
+  assert.deepEqual(await reconcileOffRosterMemberMarks(f.db), { marked: 0, cleared: 0 });
+  assert.deepEqual(f.state().offRosterCleared, {});
+  assert.ok(f.queries().some((query) => query.startsWith('UPDATE guildsync_membership_dm_state')));
+});
+
+test('a roster import marks departures without waiting for the report', async () => {
+  const source = fs.readFileSync(new URL('./guildsync-database-actions.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const start = source.indexOf('async function processRosterDataUnlocked(');
+  const end = source.indexOf('\nasync function ', start + 10);
+  const body = source.slice(start, end > start ? end : start + 20000);
+  const autoLink = body.indexOf('await runMemberAutoLinking(applicationDB);');
+  const reconcile = body.indexOf('await reconcileOffRosterMemberMarks(applicationDB);');
+  assert.ok(autoLink >= 0, 'the import still runs auto-linking');
+  assert.ok(reconcile > autoLink, 'the mark is settled as soon as the roster is saved');
+});
+
 test('without a configured Discord server nothing is read or written', async () => {
   const f = fixture({ guildId: '' });
 

@@ -282,13 +282,21 @@ export async function reconcileOffRosterMemberMarks(db,{now=()=>Math.floor(Date.
         [guildId,JSON.stringify({preferences:{},events:[]})]);
       const [stateRows]=await connection.execute('SELECT state_json FROM guildsync_membership_dm_state WHERE guild_id=? FOR UPDATE',[guildId]);
       const state=JSON.parse(stateRows[0].state_json);
-      state.preferences??={};state.offRosterMarks??={};
+      state.preferences??={};state.offRosterMarks??={};state.offRosterCleared??={};
       const history=[];
+      let dirty=false;
       for(const [userId,onRoster] of linked){
-        if(onRoster||state.preferences[userId])continue;
+        if(onRoster){
+          // A returning member starts fresh, so a later departure marks them again.
+          if(state.offRosterCleared[userId]){delete state.offRosterCleared[userId];dirty=true;}
+          continue;
+        }
+        // A preference wins, and an officer who cleared the tick for a departed
+        // member keeps it cleared until that member is back on the roster.
+        if(state.preferences[userId]||state.offRosterCleared[userId])continue;
         state.preferences[userId]='opt_out';
         state.offRosterMarks[userId]=now();
-        result.marked++;
+        result.marked++;dirty=true;
         history.push({discordId:userId,newValue:'Marked as “does not play ESO or is not in the ESO guild”; membership DMs stopped — linked ESO account is not on the current roster'});
       }
       for(const userId of Object.keys(state.offRosterMarks)){
@@ -297,10 +305,10 @@ export async function reconcileOffRosterMemberMarks(db,{now=()=>Math.floor(Date.
         // the meantime is their decision to keep.
         if(state.preferences[userId]==='opt_out')delete state.preferences[userId];
         delete state.offRosterMarks[userId];
-        result.cleared++;
+        result.cleared++;dirty=true;
         history.push({discordId:userId,newValue:'Linked ESO account is back on the roster — membership DMs are allowed again'});
       }
-      if(result.marked||result.cleared){
+      if(dirty){
         await connection.execute('UPDATE guildsync_membership_dm_state SET state_json=? WHERE guild_id=?',
           [JSON.stringify(state),guildId]);
         for(const event of history)try{
@@ -561,6 +569,14 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         throw Error('Choose a Discord member and a membership contact preference.');
       return atomic(guildId,async(state,connection)=>{
         if(value)state.preferences[key]=value;else delete state.preferences[key];
+        // The officer answered for this member, so the roster mark stops applying:
+        // clearing it also keeps it from coming back on the next roster sync, and
+        // choosing a preference replaces it outright.
+        if(state.offRosterMarks?.[key]){
+          delete state.offRosterMarks[key];
+          if(value)delete state.offRosterCleared?.[key];
+          else (state.offRosterCleared??={})[key]=now();
+        }
         const linksRemoved=value?await removeMemberLinks(connection,key):0;
         try{
           await recordDiscordMemberHistoryEvent(connection,{discordId:key,eventType:'membership_dm_preference',
