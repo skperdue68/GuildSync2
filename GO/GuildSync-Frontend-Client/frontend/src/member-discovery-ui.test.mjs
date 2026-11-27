@@ -1,4 +1,4 @@
-import {discordDisplayName,renderDiscordNames} from './member-discovery.js';
+import {discordDisplayName,renderDiscordNames,getMemberLinkMatchStrength} from './member-discovery.js';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
@@ -16,7 +16,7 @@ for(const path of ['./main.js','../../../../NodeJS/GuildSync-Backend-Server/web/
  test(`${path}: Discord choices show every name and emphasize the matching name in either direction`,()=>{
   const member={discord_id:'42',username:'joey123',global_name:'Joey',server_nickname:'Auleric (Joey)'};
   for(const mode of ['discord-to-eso','eso-to-discord']){
-   const ctx=vm.createContext({memberLinkDialogContext:{mode,discordUserId:'42'},discordMembers:[member],formatDiscordMatchFieldName:()=> 'Server Nickname',renderDiscordNames,escapeHtml:String,escapeAttribute:String});
+   const ctx=vm.createContext({getMemberLinkMatchStrength,memberLinkDialogContext:{mode,discordUserId:'42'},discordMembers:[member],formatDiscordMatchFieldName:()=> 'Server Nickname',renderDiscordNames,escapeHtml:String,escapeAttribute:String});
    vm.runInContext(fn('renderMemberLinkDialogOption'),ctx);const html=ctx.renderMemberLinkDialogOption({...member,account_name:'Auleric',rank:'Member',confidence:88,matchField:'discord_server_nickname'});
    assert.match(html,/Username:<\/span> <span>joey123/);assert.match(html,/Global Name:<\/span> <span>Joey/);assert.match(html,/member-name-match-fuzzy[^>]*>Auleric \(Joey\)/);
   }
