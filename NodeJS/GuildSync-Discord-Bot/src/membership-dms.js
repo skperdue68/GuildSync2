@@ -67,10 +67,15 @@ export function formatMembershipStatus({campaign,member}={}) {
 }
 
 const fenceText=value=>String(value||'').replace(/```/g,"'''");
-// Discord sizes an embed to its widest line, so a short answer renders narrower than
-// one with a code block. Trailing braille blanks are invisible, are not whitespace
-// Discord trims, and give every card in the reply channel the same width.
-const EMBED_WIDTH_PAD='\u2800'.repeat(80);
+// Discord sizes an embed to its longest line, so a card with a short answer renders
+// narrower than one carrying a member's text. Braille blanks are not whitespace
+// Discord trims, and they are about 0.68em wide, so this run fills the footer's
+// line to Discord's ~480px content width. The footer is the card's last element:
+// if a client wraps the run, the extra space lands under the footer instead of
+// opening a gap between the description and the fields. Tune the count if a client
+// still shows a width difference.
+const FOOTER_PAD='\u2800'.repeat(50);
+const footerText=label=>`${label}${FOOTER_PAD}`;
 // The embed's left bar carries the result, so an officer reads the outcome at a glance.
 const replyColors={linked:0x57f287,saved:0x5865f2,removal:0xed4245,review:0xfee75c,test:0x99aab5};
 const replyTone=event=>event.isTest?'test':event.result?.status==='linked'?'linked'
@@ -122,8 +127,8 @@ export function membershipReplyMessage(event,{guildName='Guild',repostedBy='',no
  const name=safeText(event.name||`User ${event.userId}`);
  const embed=new EmbedBuilder().setColor(replyColors[replyTone(event)])
   .setAuthor({name:event.isTest?'[TEST] Membership DM response':'Membership DM response'})
-  .setTitle(name).setDescription(`**${summary}**${EMBED_WIDTH_PAD}`)
-  .setFooter({text:'GuildSync'}).setTimestamp(new Date(event.at*1000))
+  .setTitle(name).setDescription(`**${summary}**`)
+  .setFooter({text:footerText('GuildSync')}).setTimestamp(new Date(event.at*1000))
   .addFields({name:'Server',value:safeText(guildName).slice(0,FIELD_LIMIT),inline:true},
    {name:'Discord',value:`${name} (${event.userId})`.slice(0,FIELD_LIMIT),inline:true});
  const payload={allowedMentions:{parse:[]},nonce:nonce(nonceKey||('forward-'+event.eventId)),enforceNonce:true,embeds:[embed]};
@@ -147,11 +152,11 @@ export function membershipReplyMessage(event,{guildName='Guild',repostedBy='',no
 export function membershipDeliveryExplain(status,detail) {
  const text=String(detail||'').trim();
  if(/mutual guilds|share a guild|cannot send messages to this user|\b50007\b/i.test(text))
-  return 'This member is still in the server, so they have most likely turned off “Direct Messages from server members” in Discord → Privacy & Safety, or they blocked the bot. Ask them to allow DMs, or message them directly; nothing is wrong with their membership record.';
+  return 'They are still in the server; most likely “Direct Messages from server members” is off in their Discord privacy settings. Message them directly, or ask them to turn DMs back on.';
  if(/\b50013\b|missing permissions/i.test(text))
-  return 'Discord refused the DM because the bot lacks permission to message this member. Check the bot’s roles and server permissions.';
+  return 'The bot is missing permission to message this member. Check its roles and server permissions.';
  if(status==='uncertain')
-  return `Discord did not confirm whether the DM arrived${text?` (${text})`:''}. Check with the member before the campaign contacts them again, or record the outcome with /membership-dm resolve.`;
+  return 'Discord did not confirm that this DM arrived. Check with the member, or record the outcome with /membership-dm resolve.';
  return text?`Discord reported: ${text}`:'Discord did not give a reason.';
 }
 // A member who never received the DM is invisible in the campaign totals, so each
@@ -162,13 +167,13 @@ export function membershipDeliveryFailureMessage({name,userId,status='failed',de
  const embed=new EmbedBuilder().setColor(deliveryColors[status]||deliveryColors.failed)
   .setAuthor({name:'GuildSync membership DM'})
   .setTitle(member)
-  .setDescription((status==='uncertain'
+  .setDescription(status==='uncertain'
     ?'**Delivery not confirmed — GuildSync could not tell whether this DM arrived**'
-    :'**GuildSync could not send this membership DM**')+EMBED_WIDTH_PAD)
+    :'**GuildSync could not send this membership DM**')
   .addFields({name:'Member',value:`${member} (${userId})`.slice(0,FIELD_LIMIT),inline:true},
    {name:'Status',value:status==='uncertain'?'Unconfirmed':'Not delivered',inline:true},
    {name:'Likely cause and next step',value:membershipDeliveryExplain(status,detail).slice(0,FIELD_LIMIT),inline:false})
-  .setFooter({text:'GuildSync'}).setTimestamp(new Date((at||Math.floor(Date.now()/1000))*1000));
+  .setFooter({text:footerText('GuildSync')}).setTimestamp(new Date((at||Math.floor(Date.now()/1000))*1000));
  return {allowedMentions:{parse:[]},embeds:[embed]};
 }
 export function createMembershipDMWorker({client,guildId,request,log=console.log,intake=createMemoryDMIntake()}) {

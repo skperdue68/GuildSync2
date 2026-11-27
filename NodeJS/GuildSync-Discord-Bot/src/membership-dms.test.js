@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {membershipDMMessage,membershipReplyMessage,membershipDeliveryFailureMessage,membershipDeliveryExplain,createMembershipDMWorker,formatMembershipStatus} from './membership-dms.js';
 import {createMemoryDMIntake,membershipIntakeKey} from './membership-dm-intake.js';
-// Every card carries an invisible width pad, so assertions read the visible text.
-const WIDTH_PAD='\u2800'.repeat(80);
+// Every card carries an invisible width pad in its footer, so assertions read the
+// visible text while the width test inspects the raw payload.
+const WIDTH_PAD='\u2800'.repeat(50);
 const unpadded=value=>String(value??'').replace(/\u2800+$/,'');
-const cardOf=payload=>{const raw=payload.embeds[0].toJSON();const embed={...raw,description:unpadded(raw.description)};
+const cardOf=payload=>{const raw=payload.embeds[0].toJSON();
+ const embed={...raw,footer:{...raw.footer,text:unpadded(raw.footer?.text)}};
  return {embed,fields:Object.fromEntries(embed.fields.map(field=>[field.name,field.value]))};};
 
 const job={id:'12345678-1234-1234-1234-123456789abc',userId:'10',name:'Member',token:'claim'};
@@ -358,13 +360,16 @@ test('status stays a short progress summary because each failure posts its own c
  assert.doesNotMatch(text,/Recent failures/);
  assert.doesNotMatch(text,/Cannot send messages to this user/);
 });
-test('every reply card carries the same invisible width pad',()=>{
+test('the width pad sits in the footer so it never opens a gap above the fields',()=>{
  for(const choice of ['community','other','remove']){
   const raw=membershipReplyMessage({eventId:'30',userId:'10',name:'Member',choice,text:'hi',at:100,result:{status:'review'}},{guildName:'Guild'}).embeds[0].toJSON();
-  assert.ok(raw.description.endsWith(WIDTH_PAD),choice);
+  assert.ok(raw.footer.text.endsWith(WIDTH_PAD),choice);
+  assert.equal(raw.footer.text.replace(WIDTH_PAD,''),'GuildSync',choice);
+  assert.equal(raw.description.includes('\u2800'),false,`${choice}: no pad in the description`);
  }
- const failure=membershipDeliveryFailureMessage({name:'Member',userId:'10',status:'failed',detail:'Cannot send messages to this user',at:100});
- assert.ok(failure.embeds[0].toJSON().description.endsWith(WIDTH_PAD));
+ const failure=membershipDeliveryFailureMessage({name:'Member',userId:'10',status:'failed',detail:'Cannot send messages to this user',at:100}).embeds[0].toJSON();
+ assert.ok(failure.footer.text.endsWith(WIDTH_PAD));
+ assert.equal(failure.description.includes('\u2800'),false);
 });
 test('a blocked DM is explained as the member\'s privacy setting, not a missing server',()=>{
  const explanation=membershipDeliveryExplain('failed','Cannot send messages to this user');
@@ -372,6 +377,8 @@ test('a blocked DM is explained as the member\'s privacy setting, not a missing 
  assert.match(explanation,/Direct Messages from server members/);
  assert.doesNotMatch(explanation,/mutual guild/i);
  assert.doesNotMatch(membershipDeliveryExplain('failed','no mutual guilds'),/mutual guild/i);
+ assert.ok((explanation.match(/\./g)||[]).length<=2,'two short sentences at most');
+ assert.ok(membershipDeliveryExplain('uncertain','socket hang up').split(/[.!?] /).length<=2);
  const {embed,fields}=cardOf(membershipDeliveryFailureMessage({name:'Member',userId:'10',status:'failed',detail:'Cannot send messages to this user',at:100}));
  assert.equal(embed.author.name,'GuildSync membership DM');
  assert.equal(embed.title,'Member');
