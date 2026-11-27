@@ -235,12 +235,14 @@ test('a bulk upload only asks the page to refresh', () => {
   assert.match(client, /showToast\(/);
 });
 
-test('new rows above the viewport raise a jump pill', () => {
-  assert.match(html, /id="new-messages-pill"[^>]*hidden/);
-  assert.match(client, /function showPill\(text\) \{/);
-  assert.match(client, /elements\.pill\.textContent = text;/);
+test('the message pill refreshes while the edge control handles jumping to the top', () => {
+  assert.match(html, /id="new-messages-pill"/);
+  const showPill = client.slice(client.indexOf('function showPill('), client.indexOf('function hidePill('));
+  assert.match(showPill, /elements\.pill\.textContent = text;/);
+  assert.match(showPill, /elements\.pill\.hidden = false;/);
+  assert.doesNotMatch(showPill, /dataset\.mode|scrollTop/);
   assert.match(client, /elements\.pill\.addEventListener\('click', refreshCurrent\)/);
-  assert.match(client, /showPill\(`\$\{fresh\.length\} new message/);
+  assert.match(client, /elements\.edgeTop\.addEventListener\('click', \(\) => \{\s+readerMoved = true;\s+elements\.tableScroll\.scrollTop = 0;/);
   assert.match(ruleBody('.new-pill'), /position:\s*absolute/);
 });
 

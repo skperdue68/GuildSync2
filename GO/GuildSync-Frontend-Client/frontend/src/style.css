@@ -7089,3 +7089,29 @@ body {
     overflow-y: auto !important;
   }
 }
+
+/* Keep the complete suggested-match heading and search below the sticky summary. */
+.member-link-suggestions-header {
+  position: sticky;
+  top: calc(var(--member-link-summary-height, 0px) + 16px);
+  z-index: 2;
+  flex: 0 0 auto;
+  padding: 10px 0;
+  background: #0b1429;
+  box-shadow: 0 8px 0 #0b1429;
+}
+.member-link-suggestions-header h4 { margin-top: 0; }
+.member-link-option-group { display: grid; gap: 8px; }
+.member-link-option-group[hidden] { display: none; }
+.member-link-option-group h5 { margin: 8px 0; color: #b8c7de; font-size: .8rem; }
+.member-name-match-low { color: #cbd5e1; background: rgba(148, 163, 184, .12); font-weight: 500; }
+
+.member-link-dialog-body {
+  scroll-padding-top: calc(var(--member-link-summary-height, 0px) + var(--member-link-search-height, 0px) + 24px);
+  scroll-padding-bottom: 8px;
+}
+
+@media (max-width: 720px) {
+  .member-link-option-discord { grid-column: 1 / -1; grid-row: 2; }
+  .member-link-option-confidence { grid-column: 2; grid-row: 1; }
+}

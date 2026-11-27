@@ -1,4 +1,4 @@
-import {renderDiscordNames} from './web/src/member-discovery.js';
+import {renderDiscordNames,getMemberLinkMatchStrength} from './web/src/member-discovery.js';
 import {canUseUserSwitch} from './web/src/user-switch-controls.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +29,7 @@ for(const file of ['./web/src/main.js','../../GO/GuildSync-Frontend-Client/front
   const link=vm.runInContext('renderMemberLinkCurrentCard({eso_account_name:"@Test",discord_username:"Member",link_status:"linked"})',ctx);assert.match(link,/@Test|Member/);assert.doesNotMatch(link,/data-unlink-dialog/);assert.equal(vm.runInContext('renderMemberLinkDialogOptions()',ctx),'');
  });
  test(`${file}: suggested matches name the ESO account and mark the Discord name that matched`,()=>{
-  const ctx=context({memberLinkDialogContext:{mode:'eso-to-discord',esoAccountName:'Alpha'},renderDiscordNames});
+  const ctx=context({getMemberLinkMatchStrength,memberLinkDialogContext:{mode:'eso-to-discord',esoAccountName:'Alpha'},renderDiscordNames});
   vm.runInContext(functions(['renderMemberLinkDialogOption','formatDiscordMatchFieldName']),ctx);
   const html=vm.runInContext('renderMemberLinkDialogOption({discord_id:"9",username:"Alpha",global_name:"Alpha G",server_nickname:"Old Name",confidence:88,matchField:"discord_username"})',ctx);
   assert.ok(html.includes('<span class="member-link-option-label">ESO Account:</span>'));assert.match(html,/>Alpha</);
