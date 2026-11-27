@@ -9441,6 +9441,10 @@ function renderOpenProfileMenuContents() {
         <span class="profile-label">Client Version</span>
         <span class="profile-value">${escapeHtml(GUILDSYNC_APP_VERSION)}</span>
       </div>
+      <label id="profileStartAtLoginRow" class="profile-row profile-start-at-login-row" hidden>
+        <span class="profile-label">Start GuildSync at login</span>
+        <input id="profileStartAtLogin" type="checkbox" aria-label="Start GuildSync when you log in to this computer" />
+      </label>
       <div class="profile-section profile-filewatch-section">
         <div class="profile-section-header">
           <span>File Watch</span>
@@ -9492,6 +9496,66 @@ function renderOpenProfileMenuContents() {
       closeProfileMenu(false);
       openUserSettingsDialog();
     });
+  }
+
+  // Login item: the profile menu is the one place this is set, and the host owns it.
+  menu.querySelector('#profileStartAtLogin')?.addEventListener('change', (event) => {
+    void saveStartAtLoginPreference(event.target.checked);
+  });
+  void refreshStartAtLoginPreference();
+}
+
+// "Start GuildSync at login" registers the operating system login item (Windows Run
+// key, macOS LaunchAgent, XDG autostart entry), so the menu row only forwards the
+// choice and shows what the host reports. The web client has no such binding.
+function startAtLoginBridge() {
+  return typeof AppBridge?.GetDesktopPreferences === 'function' && typeof AppBridge?.SetStartAtLogin === 'function'
+    ? AppBridge
+    : null;
+}
+
+async function refreshStartAtLoginPreference() {
+  const row = document.querySelector('#profileStartAtLoginRow');
+  const input = document.querySelector('#profileStartAtLogin');
+  const bridge = startAtLoginBridge();
+
+  if (!row || !input || !bridge) {
+    return;
+  }
+
+  try {
+    const prefs = await bridge.GetDesktopPreferences();
+
+    if (!prefs?.startAtLoginSupported) {
+      return;
+    }
+
+    input.checked = Boolean(prefs.startAtLogin);
+    row.hidden = false;
+  } catch (error) {
+    // Leave the row hidden when the host cannot answer.
+    logGuildSyncFileWatcher('Start-at-login state could not be read.', formatError(error));
+  }
+}
+
+async function saveStartAtLoginPreference(enabled) {
+  const input = document.querySelector('#profileStartAtLogin');
+  const bridge = startAtLoginBridge();
+
+  if (!input || !bridge) {
+    return;
+  }
+
+  input.disabled = true;
+
+  try {
+    const prefs = await bridge.SetStartAtLogin(enabled);
+    input.checked = Boolean(prefs?.startAtLogin ?? enabled);
+  } catch (error) {
+    input.checked = !enabled;
+    addSystemMessage('start-at-login-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } finally {
+    input.disabled = false;
   }
 }
 

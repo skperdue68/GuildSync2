@@ -7609,3 +7609,23 @@ body {
 .roster-history-overlay.user-settings-overlay {
   z-index: 60;
 }
+
+/* Login item row in the profile menu: the label sits on the left and the checkbox
+   on the right, so it matches the name/role/version rows above it. */
+.profile-start-at-login-row {
+  align-items: center;
+  cursor: pointer;
+}
+
+.profile-start-at-login-row[hidden] {
+  display: none;
+}
+
+.profile-start-at-login-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563EB;
+  cursor: pointer;
+  flex: 0 0 auto;
+}

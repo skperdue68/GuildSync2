@@ -39,12 +39,6 @@ export function createDesktopControls({ bridge, changed = () => {} }) {
     notify();
   }
 
-  async function saveStartAtLogin(enabled) {
-    try { prefs = await bridge.SetStartAtLogin(enabled); message = ''; }
-    catch (error) { message = String(error); }
-    notify();
-  }
-
   async function checkForUpdates() {
     busy = 'check'; message = 'Checking for updates...'; notify();
     try {
@@ -75,7 +69,7 @@ export function createDesktopControls({ bridge, changed = () => {} }) {
     const notesButton = available && update?.pageUrl
       ? '<button id="desktopReleaseNotes" type="button" class="voice-hotkey-capture-button">Release notes</button>'
       : '';
-    return `<div id="desktopControlsSection" class="profile-section"><div class="profile-section-header"><span>Desktop</span></div><label class="profile-row voice-hotkey-row"><span>Close button hides to tray <input id="desktopCloseToTray" type="checkbox" ${prefs.closeToTray ? 'checked' : ''} ${prefs.trayAvailable ? '' : 'disabled'}></span></label>${trayNote}<label class="profile-row voice-hotkey-row"><span>Start GuildSync at login <input id="desktopStartAtLogin" type="checkbox" ${prefs.startAtLogin ? 'checked' : ''} ${prefs.startAtLoginSupported ? '' : 'disabled'}></span></label><div class="profile-row voice-hotkey-row"><span>Updates</span><span class="voice-hotkey-keys">${updateState}</span><button id="desktopCheckUpdates" type="button" class="voice-hotkey-capture-button" ${busy ? 'disabled' : ''}>${busy === 'check' ? 'Checking...' : 'Check for updates'}</button></div>${downloadButton}${notesButton}<p id="desktopControlsStatus" class="voice-hotkey-help" role="status"></p></div>`;
+    return `<div id="desktopControlsSection" class="profile-section"><div class="profile-section-header"><span>Desktop</span></div><label class="profile-row voice-hotkey-row"><span>Close button hides to tray <input id="desktopCloseToTray" type="checkbox" ${prefs.closeToTray ? 'checked' : ''} ${prefs.trayAvailable ? '' : 'disabled'}></span></label>${trayNote}<div class="profile-row voice-hotkey-row"><span>Updates</span><span class="voice-hotkey-keys">${updateState}</span><button id="desktopCheckUpdates" type="button" class="voice-hotkey-capture-button" ${busy ? 'disabled' : ''}>${busy === 'check' ? 'Checking...' : 'Check for updates'}</button></div>${downloadButton}${notesButton}<p id="desktopControlsStatus" class="voice-hotkey-help" role="status"></p></div>`;
   }
 
   async function openNotes() {
@@ -85,7 +79,6 @@ export function createDesktopControls({ bridge, changed = () => {} }) {
 
   function wire(menu) {
     menu.querySelector('#desktopCloseToTray')?.addEventListener('change', event => void saveCloseToTray(event.target.checked));
-    menu.querySelector('#desktopStartAtLogin')?.addEventListener('change', event => void saveStartAtLogin(event.target.checked));
     menu.querySelector('#desktopCheckUpdates')?.addEventListener('click', () => void checkForUpdates());
     menu.querySelector('#desktopDownloadUpdate')?.addEventListener('click', () => void downloadUpdate());
     menu.querySelector('#desktopReleaseNotes')?.addEventListener('click', () => void openNotes());
