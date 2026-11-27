@@ -646,7 +646,8 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-/* Jump back to the newest rows when live inserts landed above the viewport. */
+/* Asks for a refresh when rows arrived while the socket was down, or when a
+   bulk upload only announced its size. */
 .new-pill {
   position: absolute;
   top: 10px;

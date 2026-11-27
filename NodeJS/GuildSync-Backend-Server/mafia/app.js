@@ -438,7 +438,7 @@ async function applyLiveMessages(messages) {
   try {
     positions = await fetchPositions(fresh);
   } catch {
-    showPill(`${fresh.length} new message${fresh.length === 1 ? '' : 's'} — refresh`, 'refresh');
+    showPill(`${fresh.length} new message${fresh.length === 1 ? '' : 's'} — refresh`);
     return 0;
   }
 
@@ -504,9 +504,10 @@ async function applyLiveMessages(messages) {
   return inserted;
 }
 
-function showPill(text, mode) {
+// The pill only ever asks for a refresh: rows that arrived while the socket was
+// down, or a bulk upload whose size is all it announced.
+function showPill(text) {
   elements.pill.textContent = text;
-  elements.pill.dataset.mode = mode;
   elements.pill.hidden = false;
 }
 
@@ -934,7 +935,7 @@ function connectLiveFeed() {
     setConnection('live', 'Live');
     if (connectedBefore) {
       // Rows saved while the socket was down were never delivered.
-      showPill('Reconnected — refresh for missed messages', 'refresh');
+      showPill('Reconnected — refresh for missed messages');
     }
     connectedBefore = true;
   });
@@ -953,7 +954,7 @@ function connectLiveFeed() {
     // A bulk upload only announces its size; the page reloads on request.
     if (detail?.bulk) {
       const count = Number(detail.inserted) || messages.length;
-      showPill(`${count} new message${count === 1 ? '' : 's'} — refresh`, 'refresh');
+      showPill(`${count} new message${count === 1 ? '' : 's'} — refresh`);
       showUpdateBanner(`${count} messages were saved. Refresh to show them.`);
       return;
     }
@@ -1000,16 +1001,7 @@ elements.rangeClear.addEventListener('click', () => {
   loadPage({offset: 0});
 });
 
-elements.pill.addEventListener('click', () => {
-  if (elements.pill.dataset.mode === 'refresh') {
-    refreshCurrent();
-    return;
-  }
-
-  readerMoved = true;
-  elements.tableScroll.scrollTop = 0;
-  hidePill();
-});
+elements.pill.addEventListener('click', refreshCurrent);
 
 elements.refresh.addEventListener('click', refreshCurrent);
 elements.bannerRefresh.addEventListener('click', refreshCurrent);
