@@ -374,7 +374,7 @@ body {
   right: 16px;
   height: 70px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   align-items: stretch;
   z-index: 2;
   border: 1px solid rgba(148, 163, 184, 0.34);
@@ -3692,7 +3692,7 @@ body {
   min-height: 100%;
 }
 
-/* Associates Promotion Eligible report: let the dialog content own vertical scrolling.
+/* Associate Members Eligible for Promotion report: let the dialog content own vertical scrolling.
    The section table shells are allowed to grow so rows are not trapped/clipped
    inside nested scroll areas. Horizontal overflow remains available for wide grids. */
 .associate-ticket-report-dialog {
@@ -3840,6 +3840,14 @@ body {
     font-size: 20px;
   }
 
+  .guildsync-tab-label-wide {
+    display: none;
+  }
+
+  .guildsync-tab-label-compact {
+    display: inline;
+  }
+
   .guildsync-tab-content {
     left: 14px;
     right: 14px;
@@ -3895,7 +3903,7 @@ body {
   .guildsync-tabs {
     top: 94px;
     height: auto;
-    min-height: 92px;
+    min-height: 138px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3909,7 +3917,7 @@ body {
   }
 
   .guildsync-tab-content {
-    top: 200px;
+    top: 246px;
     left: 10px;
     right: 10px;
     bottom: 58px;
@@ -5440,7 +5448,7 @@ body {
     bottom: 0;
     height: calc(72px + env(safe-area-inset-bottom));
     min-height: 0;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     align-items: stretch;
     border: 0;
     border-top: 1px solid rgba(148, 163, 184, 0.18);
