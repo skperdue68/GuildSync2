@@ -49,7 +49,7 @@ export function membershipPreferenceLabel(value) {
   return String(value||'');
 }
 
-export function formatMembershipStatus({campaign,member,recentFailures=[]}={}) {
+export function formatMembershipStatus({campaign,member}={}) {
   const who=value=>value?`${value.name} (<t:${value.at}:f>)`:'None';
   const lines=campaign?[
     `Campaign: ${campaign.status}`,
@@ -61,16 +61,16 @@ export function formatMembershipStatus({campaign,member,recentFailures=[]}={}) {
   if(member)lines.push(`User ${member.userId}: last confirmed DM ${member.history?.sentAt?`<t:${member.history.sentAt}:f>`:'Never'}; ${member.preference?`preference: ${membershipPreferenceLabel(member.preference)}`:'preference: None'}${member.history?.uncertain?'; delivery uncertain—review before retrying':''}${!member.history?.sentAt&&member.history?.status?`; last attempt ${member.history.status}${member.history.reason?`: ${safeText(member.history.reason)}`:''}`:''}`);
   if(member?.lastResponse)lines.push(`Last response: ${membershipChoiceSummary(member.lastResponse.choice)}${member.lastResponse.accountName?` — ESO @${safeText(member.lastResponse.accountName)}`:''}${member.lastResponse.at?` (<t:${member.lastResponse.at}:f>)`:''}`);
   if(campaign?.uncertainMembers?.length)lines.push(`Uncertain deliveries: ${campaign.uncertainMembers.map(entry=>`${safeText(entry.name)} (${entry.userId})`).join(', ')}. Resolve each with /membership-dm resolve.`);
-  // Failed, uncertain and skipped attempts keep their reason and time, so an
-  // officer can see which members never received a DM instead of only that the
-  // last send did not match.
-  const failures=(recentFailures||[]).filter(entry=>['failed','uncertain','skipped'].includes(entry.status)).slice(0,10);
-  if(failures.length)lines.push(`Recent failures and skips (${failures.length}):`,...failures.map(entry=>
-    `• ${safeText(entry.name||'Unknown member')} (${entry.userId}) — ${entry.status}: ${safeText(entry.reason||'no reason recorded')}${entry.at?` at <t:${entry.at}:f>`:''}`));
+  // Every failed or uncertain delivery posts its own card in the reply channel as
+  // it happens, so the status reply stays a short progress summary.
   return lines.join('\n');
 }
 
 const fenceText=value=>String(value||'').replace(/```/g,"'''");
+// Discord sizes an embed to its widest line, so a short answer renders narrower than
+// one with a code block. Trailing braille blanks are invisible, are not whitespace
+// Discord trims, and give every card in the reply channel the same width.
+const EMBED_WIDTH_PAD='\u2800'.repeat(80);
 // The embed's left bar carries the result, so an officer reads the outcome at a glance.
 const replyColors={linked:0x57f287,saved:0x5865f2,removal:0xed4245,review:0xfee75c,test:0x99aab5};
 const replyTone=event=>event.isTest?'test':event.result?.status==='linked'?'linked'
@@ -122,7 +122,7 @@ export function membershipReplyMessage(event,{guildName='Guild',repostedBy='',no
  const name=safeText(event.name||`User ${event.userId}`);
  const embed=new EmbedBuilder().setColor(replyColors[replyTone(event)])
   .setAuthor({name:event.isTest?'[TEST] Membership DM response':'Membership DM response'})
-  .setTitle(name).setDescription(`**${summary}**`)
+  .setTitle(name).setDescription(`**${summary}**${EMBED_WIDTH_PAD}`)
   .setFooter({text:'GuildSync'}).setTimestamp(new Date(event.at*1000))
   .addFields({name:'Server',value:safeText(guildName).slice(0,FIELD_LIMIT),inline:true},
    {name:'Discord',value:`${name} (${event.userId})`.slice(0,FIELD_LIMIT),inline:true});
@@ -141,8 +141,49 @@ export function membershipReplyMessage(event,{guildName='Guild',repostedBy='',no
  if(repostedBy)embed.addFields({name:'Reposted by',value:safeText(repostedBy).slice(0,FIELD_LIMIT),inline:false});
  return payload;
 }
+// Discord's own DM errors are terse and easy to misread: a member who is still in
+// the server can simply have DMs from server members turned off, so the card says
+// what that means and what an officer can do instead.
+export function membershipDeliveryExplain(status,detail) {
+ const text=String(detail||'').trim();
+ if(/mutual guilds|share a guild|cannot send messages to this user|\b50007\b/i.test(text))
+  return 'This member is still in the server, so they have most likely turned off “Direct Messages from server members” in Discord → Privacy & Safety, or they blocked the bot. Ask them to allow DMs, or message them directly; nothing is wrong with their membership record.';
+ if(/\b50013\b|missing permissions/i.test(text))
+  return 'Discord refused the DM because the bot lacks permission to message this member. Check the bot’s roles and server permissions.';
+ if(status==='uncertain')
+  return `Discord did not confirm whether the DM arrived${text?` (${text})`:''}. Check with the member before the campaign contacts them again, or record the outcome with /membership-dm resolve.`;
+ return text?`Discord reported: ${text}`:'Discord did not give a reason.';
+}
+// A member who never received the DM is invisible in the campaign totals, so each
+// failed or unconfirmed attempt posts a card where officers already watch replies.
+const deliveryColors={failed:0xed4245,uncertain:0xfee75c};
+export function membershipDeliveryFailureMessage({name,userId,status='failed',detail='',at}={}) {
+ const member=safeText(name||`User ${userId}`);
+ const embed=new EmbedBuilder().setColor(deliveryColors[status]||deliveryColors.failed)
+  .setAuthor({name:'GuildSync membership DM'})
+  .setTitle(member)
+  .setDescription((status==='uncertain'
+    ?'**Delivery not confirmed — GuildSync could not tell whether this DM arrived**'
+    :'**GuildSync could not send this membership DM**')+EMBED_WIDTH_PAD)
+  .addFields({name:'Member',value:`${member} (${userId})`.slice(0,FIELD_LIMIT),inline:true},
+   {name:'Status',value:status==='uncertain'?'Unconfirmed':'Not delivered',inline:true},
+   {name:'Likely cause and next step',value:membershipDeliveryExplain(status,detail).slice(0,FIELD_LIMIT),inline:false})
+  .setFooter({text:'GuildSync'}).setTimestamp(new Date((at||Math.floor(Date.now()/1000))*1000));
+ return {allowedMentions:{parse:[]},embeds:[embed]};
+}
 export function createMembershipDMWorker({client,guildId,request,log=console.log,intake=createMemoryDMIntake()}) {
   let busy=false;
+  async function announceFailure({job,config,status,detail,member}) {
+    // A test DM reports its outcome to the officer who asked for it instead.
+    if(job.isTest||!config?.destinationId)return;
+    try{
+      const destination=config.destinationType==='user'?await client.users.fetch(config.destinationId):await client.channels.fetch(config.destinationId);
+      if(config.destinationType==='channel'&&destination?.guildId!==guildId)throw Error('Reply destination must be in the configured Discord server.');
+      if(typeof destination?.send!=='function')throw Error('Reply destination cannot receive messages.');
+      await destination.send(membershipDeliveryFailureMessage({name:member?.displayName||job.name,
+        userId:job.userId,status,detail,at:Math.floor(Date.now()/1000)}));
+    }catch(error){log('Membership DM failure card could not be posted: '+error.message);}
+  }
   async function deliver({job,config}) {
     const finish=result=>request('finish',{deliveryId:job.id,token:job.token,result});
     let member,payload;
@@ -160,6 +201,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       // failure is a definite failure and can never be an uncertain delivery.
       try{await finish({status:'failed',detail:error.message});}catch(finishError){log('Membership DM result could not be saved: '+finishError.message);}
       log(`Membership DM ${job.id} could not be prepared: ${error.message}`);
+      await announceFailure({job,config,status:'failed',detail:error.message,member});
       return {status:'failed',detail:error.message};
     }
     try {
@@ -173,9 +215,11 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       // Discord API rejection proves failure; network/unknown outcomes may have
       // delivered successfully and are deliberately not retried automatically.
       const definite=Number.isInteger(error.code)&&error.code>=10000;
-      try{await finish({status:definite?'failed':'uncertain',detail:error.message});}catch(finishError){log('Membership DM result could not be saved: '+finishError.message);}
+      const status=definite?'failed':'uncertain';
+      try{await finish({status,detail:error.message});}catch(finishError){log('Membership DM result could not be saved: '+finishError.message);}
       log(`Membership DM ${job.id}: ${error.message}`);
-      return {status:definite?'failed':'uncertain',detail:error.message};
+      await announceFailure({job,config,status,detail:error.message,member});
+      return {status,detail:error.message};
     }
   }
   async function sendNext() {
