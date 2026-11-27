@@ -41,8 +41,8 @@ function fixture({legacy,roster:seedRoster}={}) {
    }
    if(sql.startsWith('SELECT * FROM discord_members'))return [[{discord_id:args[0],username:'Alice'}]];
    if(sql.startsWith('INSERT INTO guildsync_membership_dm_responses')){
-    const [guild,user,displayName,eso,choice,text,at]=args,key=guild+':'+user,previous=responses.get(key);
-    responses.set(key,{guild_id:guild,discord_user_id:user,display_name:displayName,eso_account_name:eso??previous?.eso_account_name??null,choice,response_text:text,responded_at:at});
+    const [guild,user,displayName,eso,choice,text,at,rosterMatch]=args,key=guild+':'+user,previous=responses.get(key);
+    responses.set(key,{guild_id:guild,discord_user_id:user,display_name:displayName,eso_account_name:eso??previous?.eso_account_name??null,choice,response_text:text,responded_at:at,roster_match:rosterMatch??null});
     return [{affectedRows:1}];
    }
    if(sql.startsWith('UPDATE guildsync_membership_dm_responses')){
@@ -233,6 +233,12 @@ test('an ESO name missing from the current Alphabet Mafia roster is reported for
  const fields=Object.fromEntries(f.forwards[0].embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
  assert.equal(fields.Outcome,'Name not found on the current ESO roster — officer review needed');
  assert.match(fields['Member response'],/@NotOnRoster/);
+ // The stored answer keeps the roster result, so a repost says the same thing.
+ const repost=await f.request('repost',{actorId:'officer',userId:'10'});
+ assert.equal(repost.response.result.rosterMatch,'missing');
+ await f.worker.repost(repost,'Officer');
+ const reposted=Object.fromEntries(f.forwards.at(-1).embeds[0].toJSON().fields.map(field=>[field.name,field.value]));
+ assert.equal(reposted.Outcome,'Name not found on the current ESO roster — officer review needed');
 });
 
 test('the roster check matches a current member typed with or without @, including a stored @',async()=>{

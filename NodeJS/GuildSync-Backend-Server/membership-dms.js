@@ -36,15 +36,14 @@ const REMOVAL_STATUSES=new Set(['kicked','gone','failed','declined']);
 const NICKNAME_STATUSES=new Set(['set','skipped','failed','declined']);
 const outcomeText=value=>String(value??'').trim().slice(0,300);
 
-// The roster normally stores the bare account name, but a member may type the @ they
-// see in game and an older snapshot can keep one. Both spellings are compared against
-// both stored spellings, so an answer finds the same current member either way.
-const ROSTER_LOOKUP=`SELECT account_name FROM guildsync_roster_members WHERE in_roster=1 AND (
-  LOWER(TRIM(LEADING '@' FROM TRIM(account_name))) IN (?,?)
-  OR LOWER(TRIM(account_name)) IN (?,?))`;
+// The roster normally stores the bare account name, but an older snapshot can keep the
+// @ a member types in game. Stripping a leading @ from the stored name and from the
+// answer leaves one comparison, so either spelling finds the same current member.
+const ROSTER_LOOKUP=`SELECT account_name FROM guildsync_roster_members
+  WHERE in_roster=1 AND LOWER(TRIM(LEADING '@' FROM TRIM(account_name)))=?`;
 const rosterLookupArgs=value=>{
   const bare=esoAccountKey(value);
-  return bare?[bare,'@'+bare,bare,'@'+bare]:null;
+  return bare?[bare]:null;
 };
 // Saying the name was not found is more useful than a generic review notice: the
 // member learns an officer will still look, instead of guessing whether it saved.
@@ -266,7 +265,8 @@ export async function initializeMembershipDMs(db) {
     ADD COLUMN IF NOT EXISTS removal_reason VARCHAR(300) DEFAULT NULL,
     ADD COLUMN IF NOT EXISTS nickname_status VARCHAR(16) DEFAULT NULL,
     ADD COLUMN IF NOT EXISTS nickname_name VARCHAR(64) DEFAULT NULL,
-    ADD COLUMN IF NOT EXISTS nickname_reason VARCHAR(300) DEFAULT NULL`);
+    ADD COLUMN IF NOT EXISTS nickname_reason VARCHAR(300) DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS roster_match VARCHAR(16) DEFAULT NULL`);
 }
 
 // The per-guild JSON keeps only operational state (the campaign queue, preferences
@@ -556,9 +556,10 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
       }
       const removal=row.removal_status?{status:String(row.removal_status),reason:row.removal_reason||null}:null;
       const nickname=row.nickname_status?{status:String(row.nickname_status),name:row.nickname_name||null,reason:row.nickname_reason||null}:null;
+      const rosterMatch=row.choice==='eso'&&row.roster_match?String(row.roster_match):null;
       return {response:{userId:key,name:row.display_name||'',choice:row.choice,text:row.response_text||'',
         at:Math.floor(new Date(row.responded_at).getTime()/1000),
-        result:{status,accountName,...(removal?{removal}:{}),...(nickname?{nickname}:{})}},
+        result:{status,accountName,...(rosterMatch?{rosterMatch}:{}),...(removal?{removal}:{}),...(nickname?{nickname}:{})}},
         destinationType:config.destinationType,destinationId:config.destinationId};
     },
     async claim(guildId){return atomic(guildId,async(state,connection,config)=>{
@@ -639,11 +640,13 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         if(!job.isTest&&(['community','not_playing','remove'].includes(choice)||result.status==='linked')){
           for(const previous of state.events)if(previous.userId===userId&&previous.roleStatus==='pending')previous.roleStatus='superseded';
         }
-        if(!job.isTest)await connection.execute(`INSERT INTO guildsync_membership_dm_responses(guild_id,discord_user_id,display_name,eso_account_name,choice,response_text,responded_at)
-          VALUES(?,?,?,?,?,?,?)
+        // The roster result is stored with the answer, so a repost repeats the same
+        // not-found or ambiguous wording after the queued event has been pruned.
+        if(!job.isTest)await connection.execute(`INSERT INTO guildsync_membership_dm_responses(guild_id,discord_user_id,display_name,eso_account_name,choice,response_text,responded_at,roster_match)
+          VALUES(?,?,?,?,?,?,?,?)
           ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),eso_account_name=COALESCE(VALUES(eso_account_name),eso_account_name),
-          choice=VALUES(choice),response_text=VALUES(response_text),responded_at=VALUES(responded_at)`,
-          [guildId,userId,String(job.name||'').slice(0,255),result.accountName?String(result.accountName).slice(0,255):null,choice,String(text||'').slice(0,10000),new Date(now()*1000)]);
+          choice=VALUES(choice),response_text=VALUES(response_text),responded_at=VALUES(responded_at),roster_match=VALUES(roster_match)`,
+          [guildId,userId,String(job.name||'').slice(0,255),result.accountName?String(result.accountName).slice(0,255):null,choice,String(text||'').slice(0,10000),new Date(now()*1000),result.rosterMatch?String(result.rosterMatch).slice(0,16):null]);
         if(!job.isTest&&(result.removal||result.nickname))await saveResponseOutcome(connection,guildId,userId,result);
         if(!job.isTest)try{
           await recordDiscordMemberHistoryEvent(connection,{discordId:userId,eventType:'membership_dm_response',

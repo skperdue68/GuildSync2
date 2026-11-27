@@ -7,7 +7,9 @@ function fn(name){const start=source.search(new RegExp(`^(?:export )?(?:async )?
 function context(link_status='candidate'){
  const links=[{eso_account_name:'Auleric',discord_user_id:'42',link_status,link_method:link_status==='linked'?'exact':'fuzzy',auto_link_blocked:link_status==='blocked'?1:0,match_confidence:88}];
  const db={execute:async sql=>[sql.includes('FROM guildsync_roster_members')?[{account_name:'Auleric',rank:'Member'}]:sql.includes('FROM discord_members')?[{discord_id:'42',username:'joey123',server_nickname:'Auleric (Joey)'}]:links]};
- const ctx=vm.createContext({resolveEsoAccountName:async(_,name)=>name});
+ const ctx=vm.createContext({resolveEsoAccountName:async(_,name)=>name,
+  loadMemberLinkOptOuts:async()=>({discordIds:new Set(),esoKeys:new Set()}),
+  esoAccountKey:s=>String(s??'').trim().replace(/^@+/,'').toLowerCase()});
  vm.runInContext(['normalizeRosterAccountName','normalizeMemberLinkName','getDiscordNameCandidates','levenshteinDistance','fuzzyNameScore','loadMemberLinkInputs','getMemberLinkPairKey','buildExistingLinkMaps','isMemberLinkPairBlocked','isMemberLinkPairLinked','isMemberLinkPairAutoUpgradeable','getMemberLinkOptions'].map(fn).join('\n'),ctx);
  return {ctx,db,links};
 }

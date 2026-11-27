@@ -780,6 +780,13 @@ body {
   text-align: right;
 }
 
+/* Text-only ESO indicator beside Server Ready; it carries no status colour. */
+.eso-running-label {
+  color: rgba(203, 213, 225, 0.72);
+  font-weight: 600;
+  text-align: center;
+}
+
 .status-dot {
   width: 18px;
   height: 18px;
@@ -3020,6 +3027,36 @@ body {
   line-height: 1.45;
   padding-top: 0;
   align-self: center;
+}
+
+/* A suggested match reads as two facts: the ESO roster account, then the Discord
+   names it was compared with. */
+.member-link-option-eso,
+.member-link-option-discord {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.member-link-option-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.86);
+}
+
+.member-link-option-rank,
+.member-link-option-excluded-note {
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: rgba(148, 163, 184, 0.94);
+  overflow-wrap: anywhere;
+}
+
+.member-link-option-hint {
+  margin-top: 8px;
 }
 
 .member-link-dialog-wide-button {
@@ -7072,4 +7109,9 @@ body {
 .member-link-dialog-body {
   scroll-padding-top: calc(var(--member-link-summary-height, 0px) + var(--member-link-search-height, 0px) + 24px);
   scroll-padding-bottom: 8px;
+}
+
+@media (max-width: 720px) {
+  .member-link-option-discord { grid-column: 1 / -1; grid-row: 2; }
+  .member-link-option-confidence { grid-column: 2; grid-row: 1; }
 }

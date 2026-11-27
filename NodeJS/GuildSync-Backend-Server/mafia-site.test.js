@@ -135,7 +135,7 @@ test('Refresh reloads the window on screen instead of jumping to the first page'
   );
   assert.match(client, /elements\.refresh\.addEventListener\('click', refreshCurrent\)/);
   assert.match(client, /elements\.bannerRefresh\.addEventListener\('click', refreshCurrent\)/);
-  assert.match(client, /if \(elements\.pill\.dataset\.mode === 'refresh'\) \{\n    refreshCurrent\(\);/);
+  assert.match(client, /elements\.pill\.addEventListener\('click', refreshCurrent\)/);
 
   // The refresh itself never scrolls the page or rewrites the URL.
   const refreshBody = client.slice(
@@ -234,12 +234,14 @@ test('a bulk upload only asks the page to refresh', () => {
   assert.match(client, /showPill\(`\$\{count\} new message/);
 });
 
-test('new rows above the viewport raise a jump pill', () => {
+test('the message pill refreshes while the edge control handles jumping to the top', () => {
   assert.match(html, /id="new-messages-pill"/);
-  assert.match(client, /elements\.pill\.dataset\.mode = mode;/);
-  assert.match(client, /elements\.tableScroll\.scrollTop = 0;/);
-  assert.match(client, /if \(elements\.pill\.dataset\.mode === 'refresh'\)/);
-  assert.match(client, /state\.pendingAbove \+= inserted;/);
+  const showPill = client.slice(client.indexOf('function showPill('), client.indexOf('function hidePill('));
+  assert.match(showPill, /elements\.pill\.textContent = text;/);
+  assert.match(showPill, /elements\.pill\.hidden = false;/);
+  assert.doesNotMatch(showPill, /dataset\.mode|scrollTop/);
+  assert.match(client, /elements\.pill\.addEventListener\('click', refreshCurrent\)/);
+  assert.match(client, /elements\.edgeTop\.addEventListener\('click', \(\) => \{\s+readerMoved = true;\s+elements\.tableScroll\.scrollTop = 0;/);
   assert.match(ruleBody('.new-pill'), /position:\s*absolute/);
 });
 

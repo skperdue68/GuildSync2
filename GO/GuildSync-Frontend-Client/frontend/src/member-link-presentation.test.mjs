@@ -32,4 +32,12 @@ for(const path of ['./main.js','../../../../NodeJS/GuildSync-Backend-Server/web/
   ctx.memberLinkDialogSearchTerm='Nobody';ctx.applyMemberLinkSuggestionFilter();assert.equal(groups.every(group=>group.hidden),true);assert.equal(empty.hidden,false);
  });
 
+ test(`${path}: merged ESO labels and opted-out search rules preserve low-similarity presentation`,()=>{
+  const ctx=vm.createContext({getMemberLinkMatchStrength,renderDiscordNames,memberLinkDialogContext:{mode:'eso-to-discord',esoAccountName:'Onlesi'},formatDiscordMatchFieldName:()=> 'Server Nickname',escapeHtml:String,escapeAttribute:String});
+  vm.runInContext(fn('renderMemberLinkDialogOption'),ctx);const html=ctx.renderMemberLinkDialogOption({discord_id:'42',server_nickname:'Auleric',confidence:43,matchField:'discord_server_nickname',excluded:true,excludeReason:'Does not play ESO'});
+  assert.match(html,/ESO Account:/);assert.match(html,/>Onlesi</);assert.match(html,/Compared with Server Nickname/);assert.match(html,/Low similarity/);assert.doesNotMatch(html,/Matched on|Fuzzy match/);assert.match(html,/data-member-link-option-excluded="1"/);assert.match(html,/ hidden>/);
+  const row={dataset:{memberLinkOptionSearch:'Onlesi Auleric',memberLinkOptionExcluded:'1'},classList:{remove(){}}};const group={querySelectorAll:()=>[row]};Object.assign(ctx,{normalizeSimpleMemberName:s=>s.toLowerCase(),memberLinkDialogSearchTerm:'',document:{querySelectorAll:selector=>selector==='[data-member-link-option-group]'?[group]:[row],querySelector:()=>null}});
+  vm.runInContext(fn('applyMemberLinkSuggestionFilter'),ctx);ctx.applyMemberLinkSuggestionFilter();assert.equal(row.hidden,true);assert.equal(group.hidden,true);ctx.memberLinkDialogSearchTerm='Auleric';ctx.applyMemberLinkSuggestionFilter();assert.equal(row.hidden,false);assert.equal(group.hidden,false);
+ });
+
 }

@@ -18,6 +18,7 @@
       </div>
       <div class="header-actions">
         <span id="connection-status" class="connection-badge" data-state="connecting">Connecting…</span>
+        <button id="follow-button" class="follow-button" type="button" aria-pressed="false" data-following="false" data-paused="false">Follow newest</button>
         <button id="refresh-button" class="refresh-button" type="button">REFRESH</button>
       </div>
     </header>
@@ -50,17 +51,25 @@
 
     <section class="table-card">
       <button id="new-messages-pill" class="new-pill" type="button" hidden></button>
-      <div class="table-scroll" id="table-scroll">
-        <table class="chat-table">
-          <thead>
-            <tr>
-              <th scope="col" class="align-right">Local time</th>
-              <th scope="col" class="align-right">Sender</th>
-              <th scope="col">Message</th>
-            </tr>
-          </thead>
-          <tbody id="chat-body"></tbody>
-        </table>
+      <div class="table-viewport">
+        <div class="table-scroll" id="table-scroll">
+          <table class="chat-table">
+            <thead>
+              <tr>
+                <th scope="col" class="align-right">Local time</th>
+                <th scope="col" class="align-right">Sender</th>
+                <th scope="col">Message</th>
+              </tr>
+            </thead>
+            <tbody id="chat-body"></tbody>
+          </table>
+        </div>
+        <button id="edge-top" class="edge-strip edge-strip-top" type="button" hidden>
+          <span id="edge-top-text"></span>
+        </button>
+        <button id="edge-bottom" class="edge-strip edge-strip-bottom" type="button" hidden>
+          <span id="edge-bottom-text"></span>
+        </button>
       </div>
       <div class="table-footer">
         <span class="footer-left">

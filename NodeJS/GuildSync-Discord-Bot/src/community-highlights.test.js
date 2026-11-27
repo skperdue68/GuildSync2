@@ -10,8 +10,8 @@ const report = {
   overview: [{ label: 'Current ESO members', value: 120 }],
   traderLatestAt: 1795305600,
   highlights: [
-    { id: 'trader-sales', title: 'Market Moguls (current 50/50 raffle, Top 5)', unit: 'gold', hideValue: true, rows: [{ name: 'Alice' }, { name: 'Bob' }] },
-    { id: 'trader-items', title: 'Pack Mules (current 50/50 raffle, Top 5)', unit: 'items', rows: [{ name: 'Bob', value: 40 }, { name: 'Alice', value: 7 }] },
+    { id: 'trader-sales', title: 'Market Moguls — this 50/50 raffle (Top 5)', unit: 'gold', hideValue: true, rows: [{ name: 'Alice' }, { name: 'Bob' }] },
+    { id: 'trader-items', title: 'Pack Mules — this 50/50 raffle (Top 5)', unit: 'items', rows: [{ name: 'Bob', value: 40 }, { name: 'Alice', value: 7 }] },
     { id: 'discord-posts', title: 'Most Posts', unit: 'posts', rows: [] }
   ]
 };
