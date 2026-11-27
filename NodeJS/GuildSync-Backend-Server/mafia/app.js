@@ -281,7 +281,6 @@ function buildRow(message) {
   row.dataset.time = String(Number(message.message_timestamp) || 0);
   row.dataset.receivedAt = message.received_at || '';
   row.dataset.uploadedBy = message.uploaded_by || '';
-  row.title = 'Double-click to copy a link to this message';
 
   // Officer chat belongs to the same guild but is a private conversation, so
   // the row is marked instead of being mixed in silently.

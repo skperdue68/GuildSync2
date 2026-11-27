@@ -73,6 +73,10 @@ test('every row carries the provenance tooltip', () => {
   assert.match(client, /tooltipLine\('Uploaded by'/);
   assert.doesNotMatch(client, /tooltipLine\('Data source'/);
   assert.match(ruleBody('.chat-table tbody tr'), /cursor:\s*help/);
+
+  // The provenance tooltip is the row's only hover text: a native title would
+  // draw a second box over it, and the copy hint lives at the bottom instead.
+  assert.doesNotMatch(client, /row\.title/);
 });
 
 test('rows are striped so a message is easy to follow across', () => {
