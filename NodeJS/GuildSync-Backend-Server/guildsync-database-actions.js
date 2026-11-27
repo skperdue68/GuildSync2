@@ -3769,6 +3769,7 @@ function normalizeGuildListMembers(guildMembers) {
 
 export async function getAssociateTicketReport(applicationDB) {
   const twoWeeksAgo = Math.floor(Date.now() / 1000) - (14 * 24 * 60 * 60);
+  const optOutFlags = await loadMemberLinkOptOuts(applicationDB).catch(() => ({ esoKeys: new Set(), discordIds: new Set() }));
 
   const [rows] = await applicationDB.execute(
     `
@@ -3841,6 +3842,10 @@ export async function getAssociateTicketReport(applicationDB) {
       earliest_deposit_timestamp: row.earliest_deposit_timestamp,
       earliest_deposit_type: row.earliest_deposit_type
     })
+    })).map((row) => ({
+    ...row,
+    // A member who told us they do not use Discord is not waiting on a link.
+    discord_opt_out: optOutFlags.esoKeys.has(esoAccountKey(row.account_name)) ? 1 : 0
   }));
 }
 
@@ -3860,6 +3865,9 @@ export async function getDiscordRankAuditReport(applicationDB) {
         COALESCE(linked_roster.linked_account_count, 0) AS linked_account_count,
         COALESCE(linked_roster.active_roster_count, 0) AS active_roster_count,
         COALESCE(linked_roster.eso_accounts, '') AS eso_accounts,
+        COALESCE(linked_roster.linked_server_nickname, '') AS linked_server_nickname,
+        COALESCE(linked_roster.linked_display_name, '') AS linked_display_name,
+        COALESCE(linked_roster.linked_username, '') AS linked_username,
         COALESCE(linked_roster.highest_eso_rank_name, '') AS eso_rank,
         COALESCE(linked_roster.highest_eso_rank_order, 999) AS eso_rank_order,
         CASE
@@ -3919,6 +3927,9 @@ export async function getDiscordRankAuditReport(applicationDB) {
           links.discord_user_id,
           COUNT(DISTINCT links.eso_account_name) AS linked_account_count,
           COUNT(DISTINCT roster.account_name) AS active_roster_count,
+          SUBSTRING_INDEX(GROUP_CONCAT(NULLIF(links.discord_server_nickname, '') ORDER BY links.updated_at DESC SEPARATOR '||'), '||', 1) AS linked_server_nickname,
+          SUBSTRING_INDEX(GROUP_CONCAT(NULLIF(links.discord_display_name, '') ORDER BY links.updated_at DESC SEPARATOR '||'), '||', 1) AS linked_display_name,
+          SUBSTRING_INDEX(GROUP_CONCAT(NULLIF(links.discord_username, '') ORDER BY links.updated_at DESC SEPARATOR '||'), '||', 1) AS linked_username,
           GROUP_CONCAT(
             DISTINCT CONCAT(
               links.eso_account_name,
@@ -3987,6 +3998,27 @@ export async function getDiscordRankAuditReport(applicationDB) {
   `);
 
   return rows;
+}
+
+// The rank audit chases Discord members whose role and ESO rank disagree. A member
+// who told us they do not use Discord, do not play ESO or are not in the guild is
+// not a rank problem to chase: their answers, and any links behind them, are stale
+// rather than wrong, so those rows are left out of the report.
+export async function excludeOptedOutDiscordRankAuditRows(applicationDB, rows = []) {
+  const optOuts = await loadMemberLinkOptOuts(applicationDB);
+  if (optOuts.esoKeys.size === 0 && optOuts.discordIds.size === 0) return rows;
+  return rows.filter((row) => {
+    const discordId = String(row.discord_id || '').trim();
+    if (discordId && optOuts.discordIds.has(discordId)) return false;
+    const accounts = String(row.eso_accounts || '')
+      .split(',')
+      .map((entry) => entry.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase().replace(/^@+/, ''))
+      .filter(Boolean);
+    if (accounts.length === 0) return true;
+    // Only a Discord member whose every linked account said "does not use Discord"
+    // is out; one stale link next to live ones is still worth reviewing.
+    return !accounts.every((account) => optOuts.esoKeys.has(account));
+  });
 }
 
 
@@ -5715,7 +5747,15 @@ export async function getMemberLinks(applicationDB) {
       LOWER(links.eso_account_name) ASC,
       LOWER(COALESCE(links.discord_server_nickname, links.discord_display_name, links.discord_username, links.discord_user_id)) ASC
   `);
-  return rows;
+  // Answers "does not use Discord" (roster) and "not playing ESO / not a guild
+  // member" (membership DM) travel with each pair so the link report can keep them
+  // out of fuzzy matching and still show a stale row to clean up.
+  const optOuts = await loadMemberLinkOptOuts(applicationDB);
+  return rows.map((row) => ({
+    ...row,
+    eso_opt_out: optOuts.esoKeys.has(esoAccountKey(row.eso_account_name)) ? 1 : 0,
+    discord_opt_out: optOuts.discordIds.has(String(row.discord_user_id || '').trim()) ? 1 : 0
+  }));
 }
 
 export async function getMemberLinkOptions(applicationDB, payload = {}) {
