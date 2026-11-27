@@ -18,6 +18,10 @@ const FOLLOW_STORAGE_KEY = 'mafia-follow-newest';
 // New rows settle for a moment after they land, so "am I still at the bottom?"
 // is not settled either. This is how long that is ignored.
 const FOLLOW_SETTLE_MS = 700;
+// How long the row a permalink asked for stays marked once it is on screen.
+const TARGET_HIGHLIGHT_MS = 6000;
+// A toast lingers this long before it fades out.
+const TOAST_MS = 3200;
 
 const state = {
   search: '',
@@ -46,20 +50,18 @@ const elements = {
   rangeClear: document.getElementById('range-clear'),
   pill: document.getElementById('new-messages-pill'),
   refresh: document.getElementById('refresh-button'),
-  banner: document.getElementById('update-banner'),
-  bannerText: document.getElementById('update-banner-text'),
-  bannerRefresh: document.getElementById('update-banner-refresh'),
   connection: document.getElementById('connection-status'),
   tooltip: document.getElementById('row-tooltip'),
   follow: document.getElementById('follow-button'),
   edgeTop: document.getElementById('edge-top'),
   edgeTopText: document.getElementById('edge-top-text'),
   edgeBottom: document.getElementById('edge-bottom'),
-  edgeBottomText: document.getElementById('edge-bottom-text')
+  edgeBottomText: document.getElementById('edge-bottom-text'),
+  toasts: document.getElementById('toast-stack')
 };
 
 let searchTimer = null;
-let bannerTimer = null;
+let highlightTimer = null;
 let requestController = null;
 let requestSequence = 0;
 // Following: how long "not at the bottom" is ignored after we scrolled the
@@ -167,20 +169,23 @@ function markLatest(timestamp) {
   refreshLatestText();
 }
 
-function showUpdateBanner(message, {action = true} = {}) {
-  elements.bannerText.textContent = message;
-  elements.banner.hidden = false;
-  elements.bannerRefresh.hidden = !action;
-  elements.refresh.classList.add('refresh-button-attention');
+// What just happened — a copied link, rows that arrived live — reported as a
+// toast above the hint, so nothing the reader is looking at moves.
+function showToast(text) {
+  if (!elements.toasts) return;
 
-  clearTimeout(bannerTimer);
-  bannerTimer = setTimeout(clearUpdateBanner, 6000);
-}
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = text;
+  elements.toasts.append(toast);
 
-function clearUpdateBanner() {
-  clearTimeout(bannerTimer);
-  elements.banner.hidden = true;
-  elements.refresh.classList.remove('refresh-button-attention');
+  // Three is enough to say the same thing twice without covering the table.
+  while (elements.toasts.children.length > 3) elements.toasts.firstElementChild.remove();
+
+  setTimeout(() => {
+    toast.classList.add('toast-leaving');
+    setTimeout(() => toast.remove(), 240);
+  }, TOAST_MS);
 }
 
 // The to date may equal the from date (that day still runs to 23:59:59) but it
@@ -276,7 +281,7 @@ function buildRow(message) {
   row.dataset.time = String(Number(message.message_timestamp) || 0);
   row.dataset.receivedAt = message.received_at || '';
   row.dataset.uploadedBy = message.uploaded_by || '';
-  row.title = 'Click to copy a link to this message';
+  row.title = 'Double-click to copy a link to this message';
 
   // Officer chat belongs to the same guild but is a private conversation, so
   // the row is marked instead of being mixed in silently.
@@ -362,6 +367,28 @@ function appendMessages(messages) {
   elements.body.append(...rows);
   state.loaded = visibleRows().length;
   updateSummary();
+}
+
+// Rows from before the current window: a permalink lands mid-archive, so the
+// conversation above the linked line is loaded rather than missing.
+function prependMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
+
+  const rows = messages
+    .filter(message => !state.ids.has(String(message.id)))
+    .map(message => {
+      const row = buildRow(message);
+      state.ids.add(row.dataset.id);
+      return row;
+    });
+
+  if (rows.length === 0) return 0;
+
+  elements.body.prepend(...rows);
+  state.loaded = visibleRows().length;
+  updateSummary();
+
+  return rows.length;
 }
 
 // A live row is only shown when it would survive the filters the reader set.
@@ -692,7 +719,7 @@ function updateEdgeStrips() {
     elements.edgeTopText.textContent = `↑ ${messages(above, freshAbove ? 'new message' : 'earlier message')} above`;
   }
 
-  const unloaded = Math.max(0, Number(state.total) - state.loaded);
+  const unloaded = Math.max(0, Number(state.total) - state.offset - state.loaded);
   const paused = state.follow && !isFollowingBottom();
 
   if (below === 0 && unloaded === 0) {
@@ -735,17 +762,50 @@ function scheduleEdgeUpdate() {
   });
 }
 
-function revealFocusedRow(id) {
-  const row = elements.body.querySelector(`tr.chat-row[data-id="${id}"]`);
-  if (!row) return;
+// The row a link pointed at keeps a visible marker for a few seconds, so the
+// reader can see which line the link was about after it scrolls into view.
+function highlightRow(row) {
+  for (const previous of elements.body.querySelectorAll('tr.row-target')) {
+    if (previous !== row) previous.classList.remove('row-target');
+  }
 
-  row.classList.add('row-flash');
-  readerMoved = true;
-  row.scrollIntoView({block: 'center'});
-  setTimeout(() => row.classList.remove('row-flash'), 2400);
+  row.classList.add('row-target');
+  clearTimeout(highlightTimer);
+  highlightTimer = setTimeout(() => row.classList.remove('row-target'), TARGET_HIGHLIGHT_MS);
 }
 
-async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, focus = null} = {}) {
+function revealFocusedRow(id) {
+  const row = elements.body.querySelector(`tr.chat-row[data-id="${id}"]`);
+  if (!row) return false;
+
+  // A permalink is about one line, so it is not following the newest row.
+  readerMoved = true;
+  row.scrollIntoView({block: 'center'});
+  highlightRow(row);
+
+  return true;
+}
+
+// Land on the message a permalink asks for, with the rows above it in place.
+async function landOnMessage(id) {
+  revealFocusedRow(id);
+  await loadEarlier();
+  updateEdgeStrips();
+}
+
+// A permalink is about one message, not today's range or the last search.
+function clearFiltersForPermalink() {
+  elements.search.value = '';
+  elements.rangeStart.value = '';
+  elements.rangeEnd.value = '';
+  elements.rangeEnd.removeAttribute('min');
+  state.search = '';
+  state.start = null;
+  state.end = null;
+  hidePill();
+}
+
+async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend = false, focus = null} = {}) {
   const sequence = ++requestSequence;
   // Read before the fetch: whether the reader was watching the bottom.
   const followFromBottom = isFollowingBottom();
@@ -781,20 +841,25 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, focus = 
     }
 
     state.total = Number(payload.total) || 0;
-    // On append the window start stays put; the payload offset is the start of
-    // the batch just added.
+    // Appending keeps the window start where it is; every other load starts the
+    // window at the offset the server answered with, which is also where a
+    // permalink-focused or an earlier batch begins.
     if (!append) state.offset = Number(payload.offset) || 0;
     markLatest(payload.latest);
 
-    if (append) appendMessages(payload.messages);
-    else renderMessages(payload.messages);
+    if (prepend) prependMessages(payload.messages);
+    else if (append) {
+      appendMessages(payload.messages);
+      // An empty batch means the window already reaches the end of the results,
+      // even if the rows above it are still unloaded; without this the page
+      // would keep asking for that same empty page.
+      if (payload.messages.length === 0) state.total = state.offset + state.loaded;
+    } else renderMessages(payload.messages);
 
     markUpdated();
 
     if (followFromBottom) scrollToNewest();
     updateEdgeStrips();
-
-    if (focus != null && payload.messages?.[0]) revealFocusedRow(payload.messages[0].id);
   } catch (error) {
     if (error.name === 'AbortError' || sequence !== requestSequence) return;
     if (!append) {
@@ -809,11 +874,35 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, focus = 
   }
 }
 
-// Scrolling toward the end quietly fetches the next stretch of rows.
+// The rows before the current window, fetched with the reading position kept:
+// a permalink can land in the middle of the archive, and scrolling up from
+// there has to keep walking the conversation backwards.
+async function loadEarlier() {
+  if (state.loading || state.offset <= 0) return;
+
+  const offset = Math.max(0, state.offset - PAGE_SIZE);
+  const limit = state.offset - offset;
+  const anchor = captureScrollAnchor();
+
+  await loadPage({offset, limit, prepend: true});
+
+  restoreScrollAnchor(anchor);
+}
+
+// Scrolling quietly fetches the next stretch of rows, in either direction.
 function maybeLoadMore() {
-  if (state.loading || state.loaded >= state.total) return;
+  if (state.loading) return;
 
   const scroller = elements.tableScroll;
+
+  if (scroller.scrollTop <= PREFETCH_PX && state.offset > 0) {
+    loadEarlier();
+    return;
+  }
+
+  // The window can start anywhere, so it is the end of the window that counts.
+  if (state.offset + state.loaded >= state.total) return;
+
   const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
   if (remaining > PREFETCH_PX) return;
 
@@ -824,7 +913,6 @@ function maybeLoadMore() {
 // archive is never undone by pressing Refresh.
 async function refreshCurrent() {
   hidePill();
-  clearUpdateBanner();
 
   const scrollTop = elements.tableScroll.scrollTop;
   const followFromBottom = isFollowingBottom();
@@ -914,7 +1002,10 @@ async function copyMessageLink(row) {
     }
   }
 
-  showUpdateBanner(`Link copied: ${link}`, {action: false});
+  // A double-click leaves the word under the pointer selected; that is noise
+  // once the link is on the clipboard.
+  window.getSelection()?.removeAllRanges();
+  showToast('Link copied to clipboard');
 }
 
 function hashFocusId() {
@@ -955,7 +1046,7 @@ function connectLiveFeed() {
     if (detail?.bulk) {
       const count = Number(detail.inserted) || messages.length;
       showPill(`${count} new message${count === 1 ? '' : 's'} — refresh`);
-      showUpdateBanner(`${count} messages were saved. Refresh to show them.`);
+      showToast(`${count} new message${count === 1 ? '' : 's'} arrived — refresh to show them`);
       return;
     }
 
@@ -965,7 +1056,7 @@ function connectLiveFeed() {
 
     if (inserted > 0) {
       markUpdated();
-      showUpdateBanner(`${inserted} new message${inserted === 1 ? '' : 's'} added.`);
+      showToast(`${inserted} new message${inserted === 1 ? '' : 's'} added`);
     }
   });
 }
@@ -1004,7 +1095,6 @@ elements.rangeClear.addEventListener('click', () => {
 elements.pill.addEventListener('click', refreshCurrent);
 
 elements.refresh.addEventListener('click', refreshCurrent);
-elements.bannerRefresh.addEventListener('click', refreshCurrent);
 elements.follow.addEventListener('click', toggleFollow);
 elements.edgeTop.addEventListener('click', () => {
   readerMoved = true;
@@ -1049,12 +1139,29 @@ elements.tableScroll.addEventListener('scroll', maybeLoadMore, {passive: true});
 elements.tableScroll.addEventListener('scroll', scheduleEdgeUpdate, {passive: true});
 window.addEventListener('resize', scheduleEdgeUpdate);
 
-// Clicking a row copies a permalink to that message.
-elements.body.addEventListener('click', event => {
+// Double-clicking a row copies a permalink to that message; a single click is
+// left alone for reading and selecting text.
+elements.body.addEventListener('dblclick', event => {
   const row = event.target.closest('tr.chat-row');
   if (!row) return;
-  if (String(window.getSelection() || '').trim()) return;
   copyMessageLink(row);
+});
+
+// A link pasted into the address bar of the page already open has to land on
+// its message too, with the same rows above it.
+window.addEventListener('hashchange', async () => {
+  const id = hashFocusId();
+  if (id == null) return;
+
+  if (elements.body.querySelector(`tr.chat-row[data-id="${id}"]`)) {
+    revealFocusedRow(id);
+    updateEdgeStrips();
+    return;
+  }
+
+  clearFiltersForPermalink();
+  await loadPage({focus: id});
+  await landOnMessage(id);
 });
 
 refreshLatestText();
@@ -1062,11 +1169,7 @@ refreshLatestText();
 const focusId = hashFocusId();
 if (focusId != null) {
   // A permalink is about that message, not today's range, so show the archive.
-  elements.rangeStart.value = '';
-  elements.rangeEnd.value = '';
-  state.start = null;
-  state.end = null;
-  elements.rangeEnd.removeAttribute('min');
+  clearFiltersForPermalink();
 } else {
   applyDefaultRange();
   readRange();
@@ -1081,8 +1184,12 @@ connectLiveFeed();
 
 // A remembered follow is honoured once the first page is on screen, but never
 // at the cost of a permalink that asks for one particular message.
-loadPage({focus: focusId}).then(() => {
-  if (state.follow && focusId == null) scrollToNewest();
+loadPage({focus: focusId}).then(async () => {
+  if (focusId != null) {
+    await landOnMessage(focusId);
+  } else if (state.follow) {
+    scrollToNewest();
+  }
   updateEdgeStrips();
 });
 

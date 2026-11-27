@@ -23,11 +23,6 @@
       </div>
     </header>
 
-    <div id="update-banner" class="update-banner" role="status" hidden>
-      <span id="update-banner-text">New guild chat messages were saved.</span>
-      <button id="update-banner-refresh" class="refresh-button refresh-button-small" type="button">REFRESH</button>
-    </div>
-
     <section class="toolbar" aria-label="Chat filters">
       <label class="search-field">
         <span class="field-label">Search</span>
@@ -85,6 +80,9 @@
   </div>
 
   <div id="row-tooltip" class="row-tooltip" role="tooltip" hidden></div>
+
+  <div id="toast-stack" class="toast-stack" role="status" aria-live="polite"></div>
+  <p class="row-hint">Double-click a line to copy a link to it</p>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="app.js"></script>

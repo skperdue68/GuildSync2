@@ -120,7 +120,7 @@ test('the to date can never be earlier than the from date', () => {
 test('the range label is centred and the buttons read CLEAR and REFRESH', () => {
   assert.match(ruleBody('.range-field'), /align-items:\s*center/);
   assert.match(html, />CLEAR</);
-  assert.equal((html.match(/>REFRESH</g) || []).length, 2);
+  assert.equal((html.match(/>REFRESH</g) || []).length, 1);
   assert.match(ruleBody('.clear-button'), /text-transform:\s*uppercase/);
   assert.match(ruleBody('.refresh-button'), /text-transform:\s*uppercase/);
 });
@@ -134,8 +134,8 @@ test('Refresh reloads the window on screen instead of jumping to the first page'
     /await loadPage\(\{offset: start \+ \(first \? 0 : state\.loaded\), limit, append: !first\}\);/
   );
   assert.match(client, /elements\.refresh\.addEventListener\('click', refreshCurrent\)/);
-  assert.match(client, /elements\.bannerRefresh\.addEventListener\('click', refreshCurrent\)/);
-  assert.match(client, /if \(elements\.pill\.dataset\.mode === 'refresh'\) \{\n    refreshCurrent\(\);/);
+  assert.match(client, /elements\.pill\.addEventListener\('click', refreshCurrent\)/);
+  assert.doesNotMatch(client, /showUpdateBanner|bannerRefresh|update-banner/);
 
   // The refresh itself never scrolls the page or rewrites the URL.
   const refreshBody = client.slice(
@@ -205,7 +205,7 @@ test('more rows stream in before the reader reaches the bottom', () => {
 
   const loader = client.slice(client.indexOf('async function loadPage'), client.indexOf('// Scrolling toward the end'));
   assert.match(loader, /markUpdated\(\)/);
-  assert.match(loader, /if \(append\) appendMessages\(payload\.messages\);/);
+  assert.match(loader, /else if \(append\) \{\n      appendMessages\(payload\.messages\);/);
 });
 
 test('pushed rows join only the page they belong to', () => {
@@ -232,25 +232,42 @@ test('a bulk upload only asks the page to refresh', () => {
 
   assert.match(client, /if \(detail\?\.bulk\)/);
   assert.match(client, /showPill\(`\$\{count\} new message/);
+  assert.match(client, /showToast\(/);
 });
 
 test('new rows above the viewport raise a jump pill', () => {
-  assert.match(html, /id="new-messages-pill"/);
-  assert.match(client, /elements\.pill\.dataset\.mode = mode;/);
-  assert.match(client, /elements\.tableScroll\.scrollTop = 0;/);
-  assert.match(client, /if \(elements\.pill\.dataset\.mode === 'refresh'\)/);
-  assert.match(client, /state\.pendingAbove \+= inserted;/);
+  assert.match(html, /id="new-messages-pill"[^>]*hidden/);
+  assert.match(client, /function showPill\(text\) \{/);
+  assert.match(client, /elements\.pill\.textContent = text;/);
+  assert.match(client, /elements\.pill\.addEventListener\('click', refreshCurrent\)/);
+  assert.match(client, /showPill\(`\$\{fresh\.length\} new message/);
   assert.match(ruleBody('.new-pill'), /position:\s*absolute/);
 });
 
-test('rows are permalinks that open and highlight the message', () => {
+test('rows are permalinks that open, mark and keep their context', () => {
   assert.match(client, /const HASH_MESSAGE = \/\^#msg-\(\\d\{1,15\}\)\$\/;/);
   assert.match(client, /row\.id = `msg-\$\{message\.id\}`;/);
   assert.match(client, /navigator\.clipboard\.writeText\(link\)/);
   assert.match(client, /params\.set\('focus', String\(focus\)\)/);
   assert.match(client, /function revealFocusedRow\(id\)/);
-  assert.match(client, /row\.classList\.add\('row-flash'\)/);
-  assert.match(css, /\.chat-row\.row-flash td/);
+  assert.match(client, /row\.classList\.add\('row-target'\)/);
+  assert.match(css, /\.chat-table tbody tr\.row-target td/);
+
+  // The linked line is not the top of the page: the rows above it load too, and
+  // scrolling up keeps walking the archive backwards.
+  assert.match(client, /async function landOnMessage\(id\)/);
+  assert.match(client, /async function loadEarlier\(\)/);
+  assert.match(client, /await loadPage\(\{offset, limit, prepend: true\}\)/);
+  assert.match(client, /scroller\.scrollTop <= PREFETCH_PX && state\.offset > 0/);
+  assert.match(client, /function prependMessages\(messages\)/);
+  assert.match(client, /window\.addEventListener\('hashchange'/);
+
+  // A single click reads; a double-click copies and says so.
+  assert.match(client, /elements\.body\.addEventListener\('dblclick'/);
+  assert.match(html, /Double-click a line to copy a link to it/);
+  assert.match(html, /id="toast-stack"/);
+  assert.match(client, /showToast\('Link copied to clipboard'\)/);
+  assert.match(ruleBody('.row-hint'), /position:\s*fixed/);
 });
 
 test('the backend runs the site on its own listener at port 3018', () => {
