@@ -7,14 +7,41 @@ import vm from 'node:vm';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 
-const browser = [process.env.GUILDSYNC_TEST_BROWSER,
+// An installed browser is not always a usable one: the Edge launcher on this
+// machine exits 0 and prints nothing for --headless --dump-dom, which used to
+// fail the layout checks with "no measurements" while CI's Chromium was fine.
+// Each candidate is asked to dump a blank page first and only a browser that
+// answers is used, so the checks run wherever a browser can really measure and
+// skip with a stated reason where none can.
+const standardBrowsers = ['C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  '/usr/bin/chromium', '/usr/bin/google-chrome'].find(file => file && fs.existsSync(file));
+  '/usr/bin/chromium', '/usr/bin/google-chrome'];
+const override = process.env.GUILDSYNC_TEST_BROWSER;
+const candidates = (override ? [override] : standardBrowsers).filter(file => file && fs.existsSync(file));
+
+function dumpsAPage(file) {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'guildsync-layout-probe-'));
+  try {
+    const result = spawnSync(file, ['--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+      ...(process.env.CI ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
+      `--user-data-dir=${profile}`, '--virtual-time-budget=1000', '--dump-dom', 'about:blank'],
+      {encoding: 'utf8', timeout: 60000, maxBuffer: 4 * 1024 * 1024});
+    return result.status === 0 && /<html/i.test(String(result.stdout));
+  } catch {
+    return false;
+  } finally {
+    try { fs.rmSync(profile, {recursive: true, force: true, maxRetries: 5, retryDelay: 100}); } catch {}
+  }
+}
+
+const browser = candidates.find(dumpsAPage);
+const missing = !candidates.length ? 'no Chromium browser found'
+  : browser ? false : `${candidates.join(', ')} did not answer --headless --dump-dom with a page`;
 const escape = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 
 for (const [client, directory] of [['web', './web/src/'], ['desktop', '../../GO/GuildSync-Frontend-Client/frontend/src/']]) {
-  test(`${client} banking history keeps ticket columns readable and notes aligned at wide and narrow widths`, {skip: !browser}, () => {
+  test(`${client} banking history keeps ticket columns readable and notes aligned at wide and narrow widths`, {skip: missing}, () => {
     const source = fs.readFileSync(new URL(directory + 'main.js', import.meta.url), 'utf8');
     const css = fs.readFileSync(new URL(directory + 'style.css', import.meta.url), 'utf8');
     const render = source.match(/function renderBankingHistoryRecords\([^]*?(?=\nfunction )/)[0];

@@ -7,11 +7,17 @@ import express from 'express';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const mafiaDirectory = path.join(directory, 'mafia');
-const html = fs.readFileSync(path.join(mafiaDirectory, 'index.html'), 'utf8');
-const css = fs.readFileSync(path.join(mafiaDirectory, 'styles.css'), 'utf8');
-const client = fs.readFileSync(path.join(mafiaDirectory, 'app.js'), 'utf8');
-const server = fs.readFileSync(path.join(directory, 'guildsync-backend-server.js'), 'utf8');
-const chatApi = fs.readFileSync(path.join(directory, 'mafia-chat-api.js'), 'utf8');
+
+// A Windows checkout can hand these files over with CRLF line endings (the
+// repository stores LF, and core.autocrlf rewrites them on the way out), while
+// the checks below match "\n". Read every source with one line ending so the
+// suite behaves the same on any machine.
+const readSource = file => fs.readFileSync(file, 'utf8').replace(/\r\n?/g, '\n');
+const html = readSource(path.join(mafiaDirectory, 'index.html'));
+const css = readSource(path.join(mafiaDirectory, 'styles.css'));
+const client = readSource(path.join(mafiaDirectory, 'app.js'));
+const server = readSource(path.join(directory, 'guildsync-backend-server.js'));
+const chatApi = readSource(path.join(directory, 'mafia-chat-api.js'));
 
 function ruleBody(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

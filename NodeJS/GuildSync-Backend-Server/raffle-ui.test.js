@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', './web/src/main.js']) {
   const source = fs.readFileSync(new URL(path, import.meta.url), 'utf8');
-  const names = ['normalizeBankingEntries', 'renderBankDepositRow', 'getBankingExportTsv', 'formatTsvCell', 'isBankingRaffleBonusEnabled', 'renderRaffleBonusSettings', 'wireReportsPanel', 'wireRaffleBonusSettings'];
+  const names = ['normalizeBankingEntries', 'renderBankDepositRow', 'getBankingExportTsv', 'formatTsvCell', 'isBankingRaffleBonusEnabled', 'renderRaffleBonusSettings', 'wireReportPanels', 'wireRaffleBonusSettings'];
   const functions = names.map(name => source.match(new RegExp(`function ${name}\\([^]*?(?=\\n(?:async )?function |$)`))?.[0] || '').join('\n');
   function context() {
     return vm.createContext({
@@ -68,13 +68,13 @@ for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', '
     const ctx = context();
     const listeners = {};
     Object.assign(ctx, {
-      activeGuildSyncTab: 'settings', saveRaffleBonusSettings() {},
+      activeGuildSyncTab: 'admin', saveRaffleBonusSettings() {},
       FormData: class { constructor(form) { return form; } },
       document: { querySelector: selector => selector === '#raffleBonusSettingsForm'
         ? { addEventListener: (event, handler) => { listeners[event] = handler; } } : null }
     });
     vm.runInContext(functions, ctx);
-    vm.runInContext('wireReportsPanel()', ctx);
+    vm.runInContext('wireReportPanels()', ctx);
     const form = new Map([['monthly-enabled', 'on'], ['biweekly-0-hours', '48'], ['biweekly-0-percent', '0'], ['monthly-0-hours', '24'], ['monthly-0-percent', '0']]);
     listeners.input?.({ currentTarget: form });
     const html = vm.runInContext('renderRaffleBonusSettings()', ctx);
@@ -114,10 +114,10 @@ for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', '
   test(`${path}: Return to defaults previews all bonus settings and Save resets the selected scope`,async()=>{
     const ctx=context(),sent=[],listeners={};
     ctx.raffleBonusSettings.envDefaults={enabledByType:{biweekly:false,monthly:true},biweekly:[{hours:120,percent:20},{hours:24,percent:0}],monthly:[{hours:168,percent:40},{hours:24,percent:0}]};
-    Object.assign(ctx,{activeGuildSyncTab:'settings',document:{querySelector:selector=>selector==='#resetBonusDefaults'?{addEventListener:(_,fn)=>listeners.reset=fn}:null},FormData:class{constructor(form){return form}},emitSocketWithAck:async(event,payload)=>{sent.push(payload);return {ok:true,bonusSettings:ctx.raffleBonusSettings}},refreshBankingDataFromBackend:async()=>{},addSystemMessage(){},TRANSIENT_MESSAGE_TTL_MS:100,formatError:String});
+    Object.assign(ctx,{activeGuildSyncTab:'admin',document:{querySelector:selector=>selector==='#resetBonusDefaults'?{addEventListener:(_,fn)=>listeners.reset=fn}:null},FormData:class{constructor(form){return form}},emitSocketWithAck:async(event,payload)=>{sent.push(payload);return {ok:true,bonusSettings:ctx.raffleBonusSettings}},refreshBankingDataFromBackend:async()=>{},addSystemMessage(){},TRANSIENT_MESSAGE_TTL_MS:100,formatError:String});
     vm.runInContext(functions+'\n'+source.match(/async function saveRaffleBonusSettings\([^]*?(?=\n(?:async )?function )/)[0],ctx);
     assert.match(vm.runInContext('renderRaffleBonusSettings()',ctx),/id="resetBonusDefaults">Return to defaults<\/button>/);
-    vm.runInContext('wireReportsPanel()',ctx);listeners.reset();
+    vm.runInContext('wireReportPanels()',ctx);listeners.reset();
     let html=vm.runInContext('renderRaffleBonusSettings()',ctx);
     assert.doesNotMatch(html,/name="biweekly-enabled"[^>]*checked/);assert.match(html,/name="monthly-enabled"[^>]*checked/);
     assert.match(html,/name="biweekly-0-hours"[^>]*value="120"/);assert.match(html,/name="biweekly-0-percent"[^>]*value="20"/);

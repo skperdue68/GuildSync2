@@ -60,7 +60,7 @@ export function createCommunityStatisticsPanel({request,getSessionKey=()=>'defau
   const isOpen=()=>toggle.getAttribute('aria-expanded')==='true';
   toggle.addEventListener('click',()=>{if(isOpen())return load(root);});
   card.querySelector('[data-community-refresh]').addEventListener('click',()=>load(root));
-  // Accordion state can also be restored when returning to Reports & Admin.
+  // Accordion state can also be restored when returning to the Admin tab.
   if(isOpen())return load(root);
  };
  return {render,wire,load};
