@@ -1,4 +1,4 @@
-import {discordDisplayName,renderDiscordNames,createMemberHistoryFallback} from './member-discovery.js';
+import {discordDisplayName,renderDiscordNames,createMemberHistoryFallback,getMemberLinkMatchStrength,observeMemberLinkSummary} from './member-discovery.js';
 import './discord-reminders.css';
 import {createDiscordReminderControls} from './discord-reminders.js';
 import './eso-account-rename.css';
@@ -329,6 +329,7 @@ const GUILDSYNC_TABS = [
 
 let activeGuildSyncTab = GUILDSYNC_TABS[0].id;
 let bankingHistoryGeneration = 0;
+let stopMemberLinkSummaryObserver = null;
 const memberHistoryFallback = createMemberHistoryFallback({
   context: getMemberHistoryFallbackContext,
   request: (kind, query) => emitSocketWithAck(kind === 'discord' ? 'guildsync:request-discord-member-history' : 'guildsync:request-roster-rank-history', { query }, 30000),
@@ -3648,12 +3649,21 @@ function renderMemberLinkDialogOptions() {
     return '<div class="member-link-options-muted">No additional suggested matches found.</div>';
   }
 
+  const suggestions = sortedOptions.filter(option => ['exact', 'fuzzy'].includes(getMemberLinkMatchStrength(option.confidence)));
+  const otherAccounts = sortedOptions.filter(option => !['exact', 'fuzzy'].includes(getMemberLinkMatchStrength(option.confidence)));
   // Members who said they do not use Discord, or that they are not in the guild or no
   // longer play ESO, stay out of the automatic list but remain searchable here.
   const hasExcluded = sortedOptions.some((option) => option.excluded === true);
   return `
     <div class="member-link-option-list">
-      ${sortedOptions.map((option) => renderMemberLinkDialogOption(option)).join('')}
+      ${suggestions.length ? `<div class="member-link-option-group" data-member-link-option-group="suggested">
+        <h5>Suggested matches · 82% or higher</h5>
+        ${suggestions.map(option => renderMemberLinkDialogOption(option)).join('')}
+      </div>` : '<div class="member-link-options-muted">No suggested matches at 82% or higher.</div>'}
+      ${otherAccounts.length ? `<div class="member-link-option-group" data-member-link-option-group="other">
+        <h5>Other accounts · low similarity · manual linking</h5>
+        ${otherAccounts.map(option => renderMemberLinkDialogOption(option)).join('')}
+      </div>` : ''}
     </div>
     <div id="memberLinkSuggestionSearchEmpty" class="member-link-options-muted" hidden>No suggested matches match your search.</div>
     ${hasExcluded ? '<div class="member-link-options-muted member-link-option-hint">Members marked as “does not use Discord”, “not playing ESO” or “not a guild member” are hidden until you search for them.</div>' : ''}
@@ -3673,10 +3683,14 @@ function renderMemberLinkDialogOption(option, options = {}) {
   const rankText = option.rank ? `Rank: ${option.rank}` : '';
   // The same two facts on every row: the ESO roster account, then the Discord names it
   // was compared with. renderDiscordNames marks the name that produced the score.
+  const strength = getMemberLinkMatchStrength(option.confidence);
+  const suggested = strength === 'exact' || strength === 'fuzzy';
+  const comparison = matchField ? `${suggested ? 'Matched on' : 'Compared with'} ${matchField}` : '';
+  const similarityLabel = !suggested ? 'Low similarity' : '';
   const discord = mode === 'discord-to-eso'
     ? discordMembers.find(member => String(member.discord_id) === String(memberLinkDialogContext?.discordUserId)) || getMemberLinksForDialog()[0] || {}
     : option;
-  const names = renderDiscordNames(discord, {matchField, fuzzy: Number(option.confidence || 0) > 0 && Number(option.confidence || 0) < 100});
+  const names = renderDiscordNames(discord, {matchField: strength === 'none' ? '' : matchField, fuzzy: strength === 'fuzzy', lowSimilarity: strength === 'low'});
   const value = mode === 'discord-to-eso' ? option.account_name : option.discord_id;
   const disabled = options.disabled === true;
   const excluded = option.excluded === true;
@@ -3689,7 +3703,7 @@ function renderMemberLinkDialogOption(option, options = {}) {
     .join(' ');
 
   const fullDisplayText = [esoName ? `ESO Account: ${esoName}` : '', rankText,
-    matchField ? `Matched on ${matchField}` : '',
+    comparison, similarityLabel,
     excludeReason ? `Not shown automatically — ${excludeReason}` : '', `${option.confidence ?? 0}%`]
     .filter(Boolean)
     .join(' • ');
@@ -3703,6 +3717,7 @@ function renderMemberLinkDialogOption(option, options = {}) {
       </span>
       <span class="member-link-option-discord" title="${escapeAttribute(fullDisplayText)}">
         <span class="member-link-option-label">Discord:</span>
+        ${comparison || similarityLabel ? `<span class="member-link-option-comparison">${escapeHtml([comparison, similarityLabel].filter(Boolean).join(' • '))}</span>` : ''}
         ${names}
         ${excluded ? `<span class="member-link-option-excluded-note">Not shown automatically — ${escapeHtml(excludeReason)}</span>` : ''}
       </span>
@@ -3894,7 +3909,8 @@ function renderMemberLinkDialog() {
 
           ${renderMemberLinkMembershipSection()}
 
-          <section class="member-link-dialog-section" ${canManageGuildSyncLinks() ? '' : 'hidden inert'}>
+          <section class="member-link-dialog-section member-link-suggestions-section" ${canManageGuildSyncLinks() ? '' : 'hidden inert'}>
+            <div class="member-link-suggestions-header">
             <h4>Suggested Matches</h4>
             <input
               id="memberLinkSuggestionSearchInput"
@@ -3905,6 +3921,7 @@ function renderMemberLinkDialog() {
               placeholder="Search suggested matches..."
               value="${escapeAttribute(memberLinkDialogSearchTerm)}"
             />
+            </div>
             ${renderMemberLinkDialogOptions()}
           </section>
         </div>
@@ -3999,6 +4016,10 @@ function applyMemberLinkSuggestionFilter() {
     row.hidden = !visible;
     row.classList.remove('member-link-option-row-active');
     if (visible) visibleCount += 1;
+  });
+
+  document.querySelectorAll('[data-member-link-option-group]').forEach(group => {
+    group.hidden = ![...group.querySelectorAll('.member-link-option-row')].some(row => !row.hidden);
   });
 
   const emptyMessage = document.querySelector('#memberLinkSuggestionSearchEmpty');
@@ -4151,7 +4172,10 @@ async function saveMemberLinkReminderOptOut(input) {
 }
 
 function wireMemberLinkDialog() {
+  stopMemberLinkSummaryObserver?.();
+  stopMemberLinkSummaryObserver = null;
   if (!memberLinkDialogOpen) return;
+  stopMemberLinkSummaryObserver = observeMemberLinkSummary(document.querySelector('.member-link-dialog-body'));
 
   document.removeEventListener('keydown', handleMemberLinkDialogKeydown);
   document.addEventListener('keydown', handleMemberLinkDialogKeydown);
