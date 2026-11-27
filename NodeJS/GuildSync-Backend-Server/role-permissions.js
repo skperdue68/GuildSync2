@@ -49,6 +49,10 @@ const readEvents = new Set([
   'guildsync:request-member-link-options',
   'guildsync:request-admin-configuration',
   'guildsync:request-active-raffles',
-  'guildsync:request-raffle-archives'
+  'guildsync:request-raffle-archives',
+  // Presence is a read-only snapshot of who is connected, plus a client's own
+  // ESO state; every approved role may take part.
+  'guildsync:presence-request',
+  'guildsync:report-eso-status'
 ]);
 export const isReadOnlyGuildSyncEvent = event => readEvents.has(event);

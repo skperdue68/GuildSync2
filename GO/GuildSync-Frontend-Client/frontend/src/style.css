@@ -815,6 +815,172 @@ body {
     0 0 12px rgba(34, 197, 94, 0.45);
 }
 
+/* Signed-in people on the server, shown left of the connection state. */
+.guildsync-presence {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-right: 16px;
+  color: rgba(203, 213, 225, 0.92);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.guildsync-presence[hidden] {
+  display: none;
+}
+
+.guildsync-presence-pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+}
+
+.guildsync-presence-tooltip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  width: 288px;
+  padding: 11px 12px 9px;
+  background: rgba(13, 21, 36, 0.985);
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 10px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: #cbd5e1;
+  font-weight: 400;
+  text-align: left;
+  z-index: 40;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: none;
+}
+
+.guildsync-presence:hover .guildsync-presence-tooltip,
+.guildsync-presence:focus-within .guildsync-presence-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.guildsync-presence-tooltip::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  background: rgba(13, 21, 36, 0.985);
+  border-right: 1px solid rgba(148, 163, 184, 0.34);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.34);
+  transform: rotate(45deg);
+}
+
+.guildsync-presence-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.guildsync-presence-title strong {
+  font-size: 12px;
+  color: #f1f5f9;
+  white-space: nowrap;
+}
+
+.guildsync-presence-title span {
+  font-size: 11px;
+  color: #8f9cb0;
+}
+
+.guildsync-presence-list {
+  max-height: 232px;
+  overflow-y: auto;
+}
+
+.guildsync-presence-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 2px;
+}
+
+.guildsync-presence-row + .guildsync-presence-row {
+  border-top: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.guildsync-presence-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.guildsync-presence-dot.eso-on {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.55);
+}
+
+.guildsync-presence-dot.eso-off {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+}
+
+.guildsync-presence-who {
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.guildsync-presence-who b {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #e8eef8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guildsync-presence-who small {
+  display: block;
+  font-size: 10.5px;
+  color: #8f9cb0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The presence line is centred in the bar: clear of the transient status
+   messages on the left and clear of the connection states on the right. */
+@media (min-width: 900px) {
+  .guildsync-presence {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    height: 100%;
+    margin: 0;
+    transform: translateX(-50%);
+  }
+
+  /* Only while the line is showing: the bar right-aligns its items, so the capped
+     message area has to hold the left edge or it would slide under the line. */
+  .status-bar.has-guildsync-presence .status-message-viewport {
+    max-width: calc(50% - 200px);
+    margin-right: auto;
+  }
+}
+
 @keyframes guildsync-status-fade-in {
   from {
     opacity: 0;
@@ -5897,6 +6063,16 @@ body {
   .status-connection-label {
     font-size: 11px;
   }
+
+.guildsync-presence {
+  font-size: 11px;
+  margin-right: 10px;
+  flex: 0 0 auto;
+}
+
+.guildsync-presence-tooltip {
+  width: 260px;
+}
 
   .status-dot {
     width: 14px;
