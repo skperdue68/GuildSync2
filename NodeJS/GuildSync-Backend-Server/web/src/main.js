@@ -9650,10 +9650,17 @@ function renderOpenProfileMenuContents() {
       toggle.addEventListener('change', handleProfileFileWatchToggleChange);
     });
 
-  document.querySelector('#openUserSettingsButton')?.addEventListener('click', () => {
-    closeProfileMenu(false);
-    openUserSettingsDialog();
-  });
+  // The menu re-renders its contents and the tools decorator moves this button, so
+  // the click is handled by the menu element itself instead of the button node.
+  if (!menu.dataset.userSettingsWired) {
+    menu.dataset.userSettingsWired = '1';
+    menu.addEventListener('click', (event) => {
+      if (!event.target.closest?.('#openUserSettingsButton')) return;
+      event.preventDefault();
+      closeProfileMenu(false);
+      openUserSettingsDialog();
+    });
+  }
 }
 
 async function loadUserSwitchOptions() {

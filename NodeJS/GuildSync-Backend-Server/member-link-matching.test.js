@@ -27,3 +27,30 @@ test('auto-link pass creates the 88% nickname candidate and preserves confirmed 
   else assert.equal(writes.length,0);
  }
 });
+
+test('an accepted fuzzy link is never downgraded back to a candidate',()=>{
+ const links=[{eso_account_name:'Auleric',discord_user_id:'42',link_status:'linked',link_method:'fuzzy',match_confidence:43,auto_link_blocked:0}];
+ const {ctx}=context();
+ assert.equal(ctx.isMemberLinkPairAutoUpgradeable(ctx.buildExistingLinkMaps(links),'Auleric','42',88),false);
+});
+
+test('the auto-link pass leaves an accepted fuzzy link linked',async()=>{
+ const {ctx,db,links}=context('linked');
+ links[0].link_method='fuzzy';links[0].match_confidence=43;
+ const writes=[];Object.assign(ctx,{loadMemberLinkOptOuts:async()=>({discordIds:new Set(),esoKeys:new Set()}),esoAccountKey:s=>s.toLowerCase(),upsertMemberLink:async(_,link)=>writes.push(link),removeWeakerMemberAutoLinkCandidates:async()=>{}});
+ vm.runInContext(fn('getBestDiscordNameMatch')+'\n'+fn('runMemberAutoLinkingUnlocked'),ctx);
+ await ctx.runMemberAutoLinkingUnlocked(db);
+ assert.equal(writes.length,0);
+});
+
+test('accepting a fuzzy candidate stores an officer-confirmed manual link',async()=>{
+ const ctx=vm.createContext({resolveEsoAccountName:async(_,name)=>name,upsertMemberLink:async(_,link)=>writes.push(link)});
+ const writes=[];
+ const db={execute:async()=>[[{eso_account_name:'Auleric',discord_user_id:'42',discord_username:'joey123',discord_display_name:'Joey',discord_server_nickname:'Auleric (Joey)',link_status:'candidate',match_confidence:88,match_field:'discord_server_nickname'}]]};
+ vm.runInContext(fn('acceptMemberLinkCandidateUnlocked'),ctx);
+ await ctx.acceptMemberLinkCandidateUnlocked(db,{esoAccountName:'Auleric',discordUserId:'42'});
+ assert.equal(writes.length,1);
+ assert.equal(writes[0].linkStatus,'linked');
+ assert.equal(writes[0].linkMethod,'manual');
+ assert.equal(writes[0].matchConfidence,88);
+});

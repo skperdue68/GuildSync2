@@ -2981,7 +2981,7 @@ function registerGuildSyncConnection(socket) {
       await broadcastMemberLinksUpdate(links);
       sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
         ok: true,
-        message: 'Candidate accepted as an automatic link.',
+        message: 'Candidate accepted as a confirmed link.',
         links,
         at: new Date().toLocaleString()
       });
