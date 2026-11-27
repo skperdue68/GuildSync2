@@ -429,16 +429,6 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
     const [rows]=await db.execute('SELECT state_json FROM guildsync_membership_dm_state WHERE guild_id=?',[guildId]);
     return rows[0]?JSON.parse(rows[0].state_json).preferences||{}:{};
   }
-  // Recent unsuccessful outcomes are the officer-facing answer to "who never got a
-  // DM, and why". Failed, uncertain and skipped attempts are kept per member with
-  // their reason and attempt time, and listed here newest first.
-  async function recentFailures(connection,guildId) {
-    const [rows]=await connection.execute(`SELECT discord_user_id,display_name,status,reason,attempted_at
-      FROM guildsync_membership_dm_results WHERE guild_id=? AND status IN ('failed','uncertain','skipped')
-      ORDER BY attempted_at DESC LIMIT 10`,[guildId]);
-    return rows.map(row=>({userId:String(row.discord_user_id),name:row.display_name||'',status:row.status,
-      reason:row.reason||'',at:row.attempted_at==null?null:Number(row.attempted_at)}));
-  }
   return {
     async command(guildId,actorId,action,targetId) {
       if(!await authorizeOfficer(actorId))throw Error('Approved GuildSync User or Admin access is required.');
@@ -449,12 +439,10 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         else if(action==='resume')engine.resume(state);
         else if(action!=='status')throw Error('Unknown membership DM command.');
         const c=state.campaign;
-        const failures=await recentFailures(connection,guildId);
         const record=targetId?state.results[targetId]:null;
         return {campaign:c?{id:c.id,status:c.status,lastAttempted:c.lastAttempted,lastSent:c.lastSent,nextAt:c.nextAt,
           remaining:c.queue.filter(q=>q.status==='pending').length,uncertain:c.queue.filter(q=>q.status==='uncertain').length,
-          uncertainMembers:c.queue.filter(q=>q.status==='uncertain').map(q=>({userId:q.userId,name:q.name})).slice(0,25),
-          recentFailures:failures}:null,recentFailures:failures,
+          uncertainMembers:c.queue.filter(q=>q.status==='uncertain').map(q=>({userId:q.userId,name:q.name})).slice(0,25)}:null,
           member:targetId?{userId:targetId,history:record?{lastAttemptAt:record.attemptedAt,sentAt:record.sentAt??null,
             uncertain:Boolean(record.uncertain),status:record.status,reason:record.reason||null,deliveryId:record.deliveryId||null}:null,
             result:record?{status:record.status,reason:record.reason||null,messageId:record.messageId||null,

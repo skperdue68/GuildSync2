@@ -1,5 +1,5 @@
 import {SlashCommandBuilder,MessageFlags} from 'discord.js';
-import {membershipDMRequest,formatMembershipStatus} from '../membership-dms.js';
+import {membershipDMRequest,formatMembershipStatus,discordErrorSummary} from '../membership-dms.js';
 import {syncDiscordRolesAndMembers} from '../discord-sync.js';
 
 // Campaign controls belong to guild officers: members holding the Consigliere or
@@ -54,5 +54,5 @@ export async function execute(interaction,socket) {
     }
     const result=await membershipDMRequest(socket,interaction.guildId,'command',{actorId:interaction.user.id,command,targetId:target?.id});
     await interaction.editReply({content:formatMembershipStatus(result),allowedMentions:{parse:[]}});
-  }catch(error){await interaction.editReply('Membership DMs: '+error.message);}
+  }catch(error){await interaction.editReply('Membership DMs: '+discordErrorSummary(error,error.message));}
 }

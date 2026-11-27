@@ -44,6 +44,19 @@ test('repost asks the backend for the stored reply and sends it in the card form
  assert.match(replies[0].content,/Reposted Target's latest stored membership reply/);
 });
 
+test('a Discord error from a membership command is reported in plain words',async()=>{
+ const replies=[];
+ const socket={connected:true,timeout:()=>({emit:(event,payload,callback)=>callback(null,{ok:true,
+  result:{response:{userId:'10',name:'Member',choice:'other',text:'',at:1,result:{status:'review'}},
+    destinationType:'channel',destinationId:'99'}})})};
+ const interaction={guildId:'1',member:{displayName:'Officer',roles:{cache:[{name:'Kingpin'}]}},user:{id:'officer',username:'officer'},
+  options:{getSubcommand:()=>'repost',getUser:()=>({id:'10',username:'Target'})},
+  client:{membershipDM:{repost:async()=>{throw Object.assign(Error('DiscordAPIError[10003]: Unknown Channel'),{code:10003});}}},
+  deferReply:async()=>{},editReply:async reply=>replies.push(reply)};
+ await execute(interaction,socket);
+ assert.match(replies[0],/cannot reach that channel or role/);
+ assert.doesNotMatch(replies[0],/DiscordAPIError|10003/);
+});
 test('reminder commands require the Consigliere or Kingpin role',async()=>{
  assert.equal(isReminderOfficer({roles:{cache:[{name:' consigliere '}]}}),true);
  assert.equal(isReminderOfficer({roles:{cache:[{name:'Kingpins'}]}}),true);
