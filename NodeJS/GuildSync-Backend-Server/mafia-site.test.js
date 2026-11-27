@@ -11,6 +11,7 @@ const html = fs.readFileSync(path.join(mafiaDirectory, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(mafiaDirectory, 'styles.css'), 'utf8');
 const client = fs.readFileSync(path.join(mafiaDirectory, 'app.js'), 'utf8');
 const server = fs.readFileSync(path.join(directory, 'guildsync-backend-server.js'), 'utf8');
+const chatApi = fs.readFileSync(path.join(directory, 'mafia-chat-api.js'), 'utf8');
 
 function ruleBody(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -73,6 +74,10 @@ test('every row carries the provenance tooltip', () => {
   assert.match(client, /tooltipLine\('Uploaded by'/);
   assert.doesNotMatch(client, /tooltipLine\('Data source'/);
   assert.match(ruleBody('.chat-table tbody tr'), /cursor:\s*help/);
+
+  // The provenance tooltip is the row's only hover text: a native title would
+  // draw a second box over it, and the copy hint lives at the bottom instead.
+  assert.doesNotMatch(client, /row\.title/);
 });
 
 test('rows are striped so a message is easy to follow across', () => {
@@ -266,6 +271,16 @@ test('rows are permalinks that open, mark and keep their context', () => {
   assert.match(client, /row\.classList\.add\('row-target'\)/);
   assert.match(css, /\.chat-table tbody tr\.row-target td/);
 
+  // The mark stays for as long as the page is open: no timer takes it away.
+  assert.doesNotMatch(client, /TARGET_HIGHLIGHT_MS|highlightTimer/);
+  // And the message is guaranteed to be on screen after the batch above it has
+  // been laid out, however that changes the scroll position.
+  assert.match(client, /function ensureFocusedMessage\(id\)/);
+  // The row is centred in the space under the sticky header, not left behind it.
+  assert.match(client, /function scrollRowIntoView\(row\)/);
+  assert.match(client, /const headerHeight = thead \? thead\.offsetHeight : 0;/);
+  assert.match(client, /const insideTable = rect\.top >= viewport\.top \+ headerHeight && rect\.bottom <= viewport\.bottom;/);
+
   // The linked line is not the top of the page: the rows above it load too, and
   // scrolling up keeps walking the archive backwards.
   assert.match(client, /async function landOnMessage\(id\)/);
@@ -303,6 +318,100 @@ test('the backend runs the site on its own listener at port 3018', () => {
   const callAt = server.indexOf('broadcastMafiaChatUpdate({inserted: insertedIds.length, ids: insertedIds});');
   assert.ok(guardAt > 0, 'the inserted-rows guard was not found');
   assert.ok(callAt > guardAt, 'the broadcast must sit behind the inserted-rows guard');
+});
+
+test('the date boxes start empty and the page opens on today unless following', () => {
+  assert.doesNotMatch(html, /id="range-start"[^>]*value=/);
+  assert.doesNotMatch(html, /id="range-end"[^>]*value=/);
+  assert.doesNotMatch(client, /applyDefaultRange/);
+
+  // Not following: find today's first message and open the window there.
+  assert.match(client, /function todayStart\(\)/);
+  assert.match(client, /async function fetchTodayAnchor\(\)/);
+  assert.match(client, /start: String\(todayStart\(\)\)/);
+  assert.match(client, /await loadPage\(\{focus: Number\(anchor\)\}\);/);
+
+  // Following: the last page, scrolled to its bottom.
+  assert.match(client, /async function openAtNewest\(\)/);
+  assert.match(client, /const total = await fetchFilteredTotal\(\);/);
+  assert.match(client, /await loadPage\(\{offset: Math\.max\(0, total - PAGE_SIZE\)\}\);\n  scrollToNewest\(\);/);
+  assert.match(client, /if \(state\.follow\) \{\n    await openAtNewest\(\);/);
+
+  // And the choice is remembered between visits.
+  assert.match(client, /const FOLLOW_STORAGE_KEY = 'mafia-follow-newest';/);
+  assert.match(client, /state\.follow = readFollowPreference\(\);/);
+});
+
+test('a follow-on load pins the newest message once, with rows and header in place', () => {
+  const loadBody = client.slice(client.indexOf('async function loadPage('), client.indexOf('async function loadEarlier('));
+
+  // One scroll after the render, the bands and the header: no retry timers.
+  assert.doesNotMatch(loadBody, /for \(const delay of \[/);
+  assert.equal(loadBody.split('scrollToNewest();').length - 1, 1);
+
+  const edgeAt = loadBody.indexOf('updateEdgeStrips();');
+  const pinAt = loadBody.indexOf('if (followFromBottom) scrollToNewest();');
+  assert.ok(pinAt > edgeAt, 'the single pin must come after the rows and header are updated');
+});
+
+test('date bands mark each day that has rows, and only those', () => {
+  assert.match(client, /function buildDateBand\(seconds\)/);
+  assert.match(client, /cell\.colSpan = 3;/);
+  assert.match(client, /function syncBands\(\)/);
+  assert.match(client, /row\.before\(buildDateBand\(time\)\)/);
+  assert.match(client, /band\.remove\(\)/);
+
+  assert.match(ruleBody('.chat-table tbody tr.date-row td'), /text-align:\s*center/);
+  assert.match(ruleBody('.chat-table tbody tr.date-row td'), /linear-gradient/);
+  assert.match(ruleBody('.chat-table tbody tr.date-row'), /cursor:\s*default/);
+
+  // Every way rows can change re-derives the bands from the rows themselves.
+  assert.match(client, /elements\.body\.replaceChildren\(\.\.\.rows\);\n  syncBands\(\);/);
+  assert.match(client, /elements\.body\.append\(\.\.\.rows\);\n  syncBands\(\);/);
+  assert.match(client, /elements\.body\.prepend\(\.\.\.rows\);\n  syncBands\(\);/);
+});
+
+test('the sticky header carries a tab naming the day on screen', () => {
+  assert.match(html, /id="date-tab-row"/);
+  assert.match(html, /id="date-tab"/);
+  assert.match(ruleBody('.chat-table thead tr.date-tab-row th'), /position:\s*sticky/);
+  assert.match(ruleBody('.chat-table thead tr.date-tab-row th'), /top:\s*38px/);
+  assert.match(ruleBody('.date-tab'), /border-radius:\s*0 0 10px 10px/);
+
+  // The strip under the header follows the height the header really has.
+  assert.match(ruleBody('.edge-strip-top'), /top:\s*var\(--mafia-header-height/);
+  assert.match(client, /setProperty\('--mafia-header-height'/);
+
+  assert.match(client, /function updateDateTab\(\)/);
+  assert.match(client, /elements\.dateTabText\.textContent = label/);
+  assert.match(client, /elements\.dateTab\.hidden = true;/);
+
+  // The tab follows the rows, so it is refreshed with the edge strips.
+  const edges = client.slice(client.indexOf('function updateEdgeStrips()'), client.indexOf('let edgeFrame'));
+  assert.match(edges, /updateDateTab\(\);/);
+});
+
+test('rows show only the clock time; the day comes from the band and the tab', () => {
+  assert.match(client, /function formatLocalClock\(seconds\)/);
+  assert.match(client, /timeText\.textContent = formatLocalClock\(message\.message_timestamp\);/);
+  assert.doesNotMatch(client, /timeText\.textContent = formatLocalTimestamp/);
+
+  // The full timestamp stays on the row, where sorting and the bands read it.
+  assert.match(client, /row\.dataset\.time = String\(Number\(message\.message_timestamp\) \|\| 0\);/);
+});
+
+test('clearing the search returns to the window the reader came from', () => {
+  assert.match(client, /function captureView\(\)/);
+  assert.match(client, /async function restoreView\(view\)/);
+  assert.match(client, /if \(!wasActive && value\) state\.savedView = captureView\(\);/);
+  assert.match(client, /if \(!value && wasActive && state\.savedView\)/);
+  assert.match(client, /scroller\.scrollTop \+= \(row\.getBoundingClientRect\(\)\.top - viewport\.top\) - view\.anchorOffset;/);
+
+  // Search runs in the database across the whole archive, bounded by the dates.
+  assert.match(client, /if \(state\.search\) params\.set\('q', state\.search\);/);
+  assert.match(chatApi, /message_text LIKE \?/);
+  assert.match(chatApi, /message_timestamp >= \?/);
+  assert.match(chatApi, /message_timestamp <= \?/);
 });
 
 test('the site files are served as a plain static app', async () => {
