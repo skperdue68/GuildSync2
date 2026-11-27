@@ -18,8 +18,6 @@ const FOLLOW_STORAGE_KEY = 'mafia-follow-newest';
 // New rows settle for a moment after they land, so "am I still at the bottom?"
 // is not settled either. This is how long that is ignored.
 const FOLLOW_SETTLE_MS = 700;
-// How long the row a permalink asked for stays marked once it is on screen.
-const TARGET_HIGHLIGHT_MS = 6000;
 // A toast lingers this long before it fades out.
 const TOAST_MS = 3200;
 
@@ -61,7 +59,6 @@ const elements = {
 };
 
 let searchTimer = null;
-let highlightTimer = null;
 let requestController = null;
 let requestSequence = 0;
 // Following: how long "not at the bottom" is ignored after we scrolled the
@@ -69,6 +66,10 @@ let requestSequence = 0;
 let followSettleUntil = 0;
 let readerMoved = false;
 let settleTimer = null;
+// A permalink is placed and then re-checked: the browser scrolls to a matching
+// fragment by itself once the row exists, which lands it at the very top of the
+// table after we have put it in view. A reader scrolling up stops the checks.
+let focusCorrectionCancelled = false;
 // Following only ever scrolls down, so a window that moved up was moved by the
 // reader — by wheel, keys, or dragging the scrollbar, which fires no input
 // events of its own.
@@ -774,16 +775,35 @@ function scheduleEdgeUpdate() {
   });
 }
 
-// The row a link pointed at keeps a visible marker for a few seconds, so the
-// reader can see which line the link was about after it scrolls into view.
+// The row a link pointed at stays marked until another link is followed, so it
+// never becomes a guess which line the page was opened for.
 function highlightRow(row) {
   for (const previous of elements.body.querySelectorAll('tr.row-target')) {
     if (previous !== row) previous.classList.remove('row-target');
   }
 
   row.classList.add('row-target');
-  clearTimeout(highlightTimer);
-  highlightTimer = setTimeout(() => row.classList.remove('row-target'), TARGET_HIGHLIGHT_MS);
+}
+
+// Where the row has to sit: inside the part of the table the sticky column
+// headers do not cover, and inside the browser window. The browser's own
+// centring clamps a row that is first in the loaded window to the very top,
+// which leaves it behind the headers.
+function scrollRowIntoView(row) {
+  const scroller = elements.tableScroll;
+  const thead = scroller.querySelector('thead');
+  const headerHeight = thead ? thead.offsetHeight : 0;
+  const viewport = scroller.getBoundingClientRect();
+  const rect = row.getBoundingClientRect();
+  const rowOffset = rect.top - viewport.top + scroller.scrollTop;
+  const freeHeight = Math.max(0, scroller.clientHeight - headerHeight);
+
+  scroller.scrollTop = Math.max(0, rowOffset - headerHeight - Math.max(0, (freeHeight - rect.height) / 2));
+
+  // The table itself has to be on screen too, not just the row inside it.
+  const placed = row.getBoundingClientRect();
+  if (placed.top < 8) window.scrollBy(0, placed.top - 8);
+  else if (placed.bottom > window.innerHeight - 8) window.scrollBy(0, placed.bottom - (window.innerHeight - 8));
 }
 
 function revealFocusedRow(id) {
@@ -792,16 +812,49 @@ function revealFocusedRow(id) {
 
   // A permalink is about one line, so it is not following the newest row.
   readerMoved = true;
-  row.scrollIntoView({block: 'center'});
+  scrollRowIntoView(row);
   highlightRow(row);
 
   return true;
 }
 
-// Land on the message a permalink asks for, with the rows above it in place.
+// A permalink has to leave its message on screen. The batch above it is laid out
+// after the first scroll, and row heights can settle again on the next frame, so
+// the position is checked once more and corrected if the row ended up outside
+// the window.
+function ensureFocusedMessage(id) {
+  const row = elements.body.querySelector(`tr.chat-row[data-id="${id}"]`);
+  if (!row) return;
+
+  focusCorrectionCancelled = false;
+
+  const keepVisible = () => {
+    if (focusCorrectionCancelled || !row.isConnected) return;
+
+    const scroller = elements.tableScroll;
+    const thead = scroller.querySelector('thead');
+    const headerHeight = thead ? thead.offsetHeight : 0;
+    const viewport = scroller.getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
+    const insideTable = rect.top >= viewport.top + headerHeight && rect.bottom <= viewport.bottom;
+    const insideWindow = rect.bottom > 0 && rect.top < window.innerHeight;
+    if (insideTable && insideWindow) return;
+
+    readerMoved = true;
+    scrollRowIntoView(row);
+  };
+
+  keepVisible();
+  window.requestAnimationFrame(keepVisible);
+  for (const delay of [120, 350, 700, 1200, 1800]) setTimeout(keepVisible, delay);
+}
+
+// Land on the message a permalink asks for, with the rows above it in place and
+// the message itself on screen.
 async function landOnMessage(id) {
   revealFocusedRow(id);
   await loadEarlier();
+  ensureFocusedMessage(id);
   updateEdgeStrips();
 }
 
@@ -1149,6 +1202,9 @@ elements.tableScroll.addEventListener('scroll', () => {
     // applies; the paused state has to be visible straight away.
     followSettleUntil = 0;
     clearTimeout(settleTimer);
+    // Scrolling up from a permalink means the reader is looking elsewhere, so
+    // stop re-placing the linked row under them.
+    focusCorrectionCancelled = true;
   }
 
   lastScrollTop = top;
@@ -1175,6 +1231,7 @@ window.addEventListener('hashchange', async () => {
 
   if (elements.body.querySelector(`tr.chat-row[data-id="${id}"]`)) {
     revealFocusedRow(id);
+    ensureFocusedMessage(id);
     updateEdgeStrips();
     return;
   }

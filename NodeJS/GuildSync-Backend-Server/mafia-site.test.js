@@ -270,6 +270,16 @@ test('rows are permalinks that open, mark and keep their context', () => {
   assert.match(client, /row\.classList\.add\('row-target'\)/);
   assert.match(css, /\.chat-table tbody tr\.row-target td/);
 
+  // The mark stays for as long as the page is open: no timer takes it away.
+  assert.doesNotMatch(client, /TARGET_HIGHLIGHT_MS|highlightTimer/);
+  // And the message is guaranteed to be on screen after the batch above it has
+  // been laid out, however that changes the scroll position.
+  assert.match(client, /function ensureFocusedMessage\(id\)/);
+  // The row is centred in the space under the sticky header, not left behind it.
+  assert.match(client, /function scrollRowIntoView\(row\)/);
+  assert.match(client, /const headerHeight = thead \? thead\.offsetHeight : 0;/);
+  assert.match(client, /const insideTable = rect\.top >= viewport\.top \+ headerHeight && rect\.bottom <= viewport\.bottom;/);
+
   // The linked line is not the top of the page: the rows above it load too, and
   // scrolling up keeps walking the archive backwards.
   assert.match(client, /async function landOnMessage\(id\)/);
