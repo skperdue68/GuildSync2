@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {membershipDMMessage,membershipReplyMessage,membershipDeliveryFailureMessage,membershipDeliveryExplain,createMembershipDMWorker,formatMembershipStatus} from './membership-dms.js';
+import {membershipDMMessage,membershipReplyMessage,membershipDeliveryFailureMessage,membershipDeliveryExplain,createMembershipDMWorker,formatMembershipStatus,CARD_WIDTH_PAD} from './membership-dms.js';
 import {createMemoryDMIntake,membershipIntakeKey} from './membership-dm-intake.js';
-// Every card carries an invisible width pad in its footer, so assertions read the
-// visible text while the width test inspects the raw payload.
-const WIDTH_PAD='\u2800'.repeat(50);
+// Every card carries an invisible width pad in its author line, so assertions read
+// the visible text while the width test inspects the raw payload.
 const unpadded=value=>String(value??'').replace(/\u2800+$/,'');
 const cardOf=payload=>{const raw=payload.embeds[0].toJSON();
- const embed={...raw,footer:{...raw.footer,text:unpadded(raw.footer?.text)}};
+ const embed={...raw,author:{...raw.author,name:unpadded(raw.author?.name)}};
  return {embed,fields:Object.fromEntries(embed.fields.map(field=>[field.name,field.value]))};};
 
 const job={id:'12345678-1234-1234-1234-123456789abc',userId:'10',name:'Member',token:'claim'};
@@ -354,22 +353,15 @@ test('lookup, validation and rendering failures are recorded as failed, never un
  }
 });
 
-test('status stays a short progress summary because each failure posts its own card',()=>{
- const text=formatMembershipStatus({campaign:null,recentFailures:[
-   {userId:'10',name:'Member',status:'failed',reason:'Cannot send messages to this user',at:70}]});
- assert.doesNotMatch(text,/Recent failures/);
- assert.doesNotMatch(text,/Cannot send messages to this user/);
-});
-test('the width pad sits in the footer so it never opens a gap above the fields',()=>{
+test('the width pad rides on the author line, the only line with room to spare',()=>{
  for(const choice of ['community','other','remove']){
   const raw=membershipReplyMessage({eventId:'30',userId:'10',name:'Member',choice,text:'hi',at:100,result:{status:'review'}},{guildName:'Guild'}).embeds[0].toJSON();
-  assert.ok(raw.footer.text.endsWith(WIDTH_PAD),choice);
-  assert.equal(raw.footer.text.replace(WIDTH_PAD,''),'GuildSync',choice);
-  assert.equal(raw.description.includes('\u2800'),false,`${choice}: no pad in the description`);
+  assert.equal(raw.author.name,'Membership DM response'+CARD_WIDTH_PAD,choice);
+  assert.equal(raw.footer.text,'GuildSync',choice);
+  assert.equal(`${raw.description}${JSON.stringify(raw.fields)}`.includes('\u2800'),false,`${choice}: no pad in the body`);
  }
  const failure=membershipDeliveryFailureMessage({name:'Member',userId:'10',status:'failed',detail:'Cannot send messages to this user',at:100}).embeds[0].toJSON();
- assert.ok(failure.footer.text.endsWith(WIDTH_PAD));
- assert.equal(failure.description.includes('\u2800'),false);
+ assert.equal(failure.author.name,'GuildSync membership DM'+CARD_WIDTH_PAD);
 });
 test('a blocked DM is explained as the member\'s privacy setting, not a missing server',()=>{
  const explanation=membershipDeliveryExplain('failed','Cannot send messages to this user');
@@ -384,7 +376,7 @@ test('a blocked DM is explained as the member\'s privacy setting, not a missing 
  assert.equal(embed.title,'Member');
  assert.equal(embed.color,0xed4245);
  assert.equal(embed.description,'**GuildSync could not send this membership DM**');
- assert.equal(fields.Member,'Member (10)');assert.equal(fields.Status,'Not delivered');
+ assert.equal(fields['Discord ID'],'10');assert.equal(fields.Status,undefined,'the description already carries the outcome');
  assert.match(fields['Likely cause and next step'],/Direct Messages from server members/);
  assert.equal(new Date(embed.timestamp).getTime(),100000);
 });
@@ -394,15 +386,16 @@ test('a failed DM posts one card to the reply channel and an unconfirmed one say
  await worker.sendNext();
  assert.equal(forwards.length,1,'the officer channel gets the failure card');
  const failed=cardOf(forwards[0]);
- assert.equal(failed.embed.title,'Member');assert.equal(failed.fields.Status,'Not delivered');
+ assert.equal(failed.embed.title,'Member');
+ assert.equal(failed.embed.description,'**GuildSync could not send this membership DM**');
  assert.match(failed.fields['Likely cause and next step'],/privacy/i);
  const unconfirmed=fixture(async action=>action==='claim'?{job,config}:action==='validate'?{valid:true}:{ok:true});
  unconfirmed.member.send=async()=>{throw Object.assign(Error('socket hang up'),{code:'ECONNRESET'});};
  await unconfirmed.worker.sendNext();
  assert.equal(unconfirmed.forwards.length,1);
  const card=cardOf(unconfirmed.forwards[0]);
- assert.equal(card.fields.Status,'Unconfirmed');
  assert.equal(card.embed.description,'**Delivery not confirmed — GuildSync could not tell whether this DM arrived**');
+ assert.equal(card.embed.color,0xfee75c);
 });
 test('a test delivery failure is reported to the officer without an officer card',async()=>{
  const {worker,member,forwards}=fixture(async action=>action==='claim'?{job:{...job,isTest:true},config}:action==='validate'?{valid:true}:{ok:true});

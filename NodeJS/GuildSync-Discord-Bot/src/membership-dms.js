@@ -69,13 +69,11 @@ export function formatMembershipStatus({campaign,member}={}) {
 const fenceText=value=>String(value||'').replace(/```/g,"'''");
 // Discord sizes an embed to its longest line, so a card with a short answer renders
 // narrower than one carrying a member's text. Braille blanks are not whitespace
-// Discord trims, and they are about 0.68em wide, so this run fills the footer's
-// line to Discord's ~480px content width. The footer is the card's last element:
-// if a client wraps the run, the extra space lands under the footer instead of
-// opening a gap between the description and the fields. Tune the count if a client
-// still shows a width difference.
-const FOOTER_PAD='\u2800'.repeat(50);
-const footerText=label=>`${label}${FOOTER_PAD}`;
+// Discord trims and cannot be underlined, so a run of them on the author line (the
+// only line with nothing pinned to its right) holds every card at the same width.
+// Measured at 14px: 9.11px per blank in a 488px line, with a 5% margin for font
+// substitution on other clients, 30 blanks fill the line without wrapping.
+export const CARD_WIDTH_PAD='\u2800'.repeat(30);
 // The embed's left bar carries the result, so an officer reads the outcome at a glance.
 const replyColors={linked:0x57f287,saved:0x5865f2,removal:0xed4245,review:0xfee75c,test:0x99aab5};
 const replyTone=event=>event.isTest?'test':event.result?.status==='linked'?'linked'
@@ -126,9 +124,9 @@ export function membershipReplyMessage(event,{guildName='Guild',repostedBy='',no
  const {summary,outcome,box:boxText}=replyFacts(event,guildName);
  const name=safeText(event.name||`User ${event.userId}`);
  const embed=new EmbedBuilder().setColor(replyColors[replyTone(event)])
-  .setAuthor({name:event.isTest?'[TEST] Membership DM response':'Membership DM response'})
+  .setAuthor({name:(event.isTest?'[TEST] Membership DM response':'Membership DM response')+CARD_WIDTH_PAD})
   .setTitle(name).setDescription(`**${summary}**`)
-  .setFooter({text:footerText('GuildSync')}).setTimestamp(new Date(event.at*1000))
+  .setFooter({text:'GuildSync'}).setTimestamp(new Date(event.at*1000))
   .addFields({name:'Server',value:safeText(guildName).slice(0,FIELD_LIMIT),inline:true},
    {name:'Discord',value:`${name} (${event.userId})`.slice(0,FIELD_LIMIT),inline:true});
  const payload={allowedMentions:{parse:[]},nonce:nonce(nonceKey||('forward-'+event.eventId)),enforceNonce:true,embeds:[embed]};
@@ -165,26 +163,31 @@ const deliveryColors={failed:0xed4245,uncertain:0xfee75c};
 export function membershipDeliveryFailureMessage({name,userId,status='failed',detail='',at}={}) {
  const member=safeText(name||`User ${userId}`);
  const embed=new EmbedBuilder().setColor(deliveryColors[status]||deliveryColors.failed)
-  .setAuthor({name:'GuildSync membership DM'})
+  .setAuthor({name:'GuildSync membership DM'+CARD_WIDTH_PAD})
   .setTitle(member)
   .setDescription(status==='uncertain'
     ?'**Delivery not confirmed — GuildSync could not tell whether this DM arrived**'
     :'**GuildSync could not send this membership DM**')
-  .addFields({name:'Member',value:`${member} (${userId})`.slice(0,FIELD_LIMIT),inline:true},
-   {name:'Status',value:status==='uncertain'?'Unconfirmed':'Not delivered',inline:true},
+  .addFields({name:'Discord ID',value:String(userId).slice(0,FIELD_LIMIT),inline:false},
    {name:'Likely cause and next step',value:membershipDeliveryExplain(status,detail).slice(0,FIELD_LIMIT),inline:false})
-  .setFooter({text:footerText('GuildSync')}).setTimestamp(new Date((at||Math.floor(Date.now()/1000))*1000));
+  .setFooter({text:'GuildSync'}).setTimestamp(new Date((at||Math.floor(Date.now()/1000))*1000));
  return {allowedMentions:{parse:[]},embeds:[embed]};
 }
 export function createMembershipDMWorker({client,guildId,request,log=console.log,intake=createMemoryDMIntake()}) {
   let busy=false;
+  // Replies, reposts and failure cards all go to the configured destination, so the
+  // lookup and its two guards live in one place.
+  async function replyDestination({destinationType,destinationId}) {
+    const destination=destinationType==='user'?await client.users.fetch(destinationId):await client.channels.fetch(destinationId);
+    if(destinationType==='channel'&&destination?.guildId!==guildId)throw Error('Reply destination must be in the configured Discord server.');
+    if(typeof destination?.send!=='function')throw Error('Reply destination cannot receive messages.');
+    return destination;
+  }
   async function announceFailure({job,config,status,detail,member}) {
     // A test DM reports its outcome to the officer who asked for it instead.
     if(job.isTest||!config?.destinationId)return;
     try{
-      const destination=config.destinationType==='user'?await client.users.fetch(config.destinationId):await client.channels.fetch(config.destinationId);
-      if(config.destinationType==='channel'&&destination?.guildId!==guildId)throw Error('Reply destination must be in the configured Discord server.');
-      if(typeof destination?.send!=='function')throw Error('Reply destination cannot receive messages.');
+      const destination=await replyDestination(config);
       await destination.send(membershipDeliveryFailureMessage({name:member?.displayName||job.name,
         userId:job.userId,status,detail,at:Math.floor(Date.now()/1000)}));
     }catch(error){log('Membership DM failure card could not be posted: '+error.message);}
@@ -253,9 +256,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
         }catch(error){roleNote=`\nCommunity role update failed: ${String(error.message).slice(0,300)}`;}
       }
       if(success)return;
-      const destination=event.destinationType==='user'?await client.users.fetch(event.destinationId):await client.channels.fetch(event.destinationId);
-      if(event.destinationType==='channel'&&destination?.guildId!==guildId)throw Error('Reply destination must be in the configured Discord server.');
-      if(typeof destination?.send!=='function')throw Error('Reply destination cannot receive messages.');
+      const destination=await replyDestination(event);
       let displayName=event.name;
       try{displayName=(await guild?.members?.fetch?.(event.userId))?.displayName||displayName;}catch{}
       const guildName=guild?.name||String(guildId);
@@ -295,9 +296,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
   }
   async function repost({response,destinationType,destinationId},officerName) {
     const guild=await client.guilds.fetch(guildId);
-    const destination=destinationType==='user'?await client.users.fetch(destinationId):await client.channels.fetch(destinationId);
-    if(destinationType==='channel'&&destination?.guildId!==guildId)throw Error('Reply destination must be in the configured Discord server.');
-    if(typeof destination?.send!=='function')throw Error('Reply destination cannot receive messages.');
+    const destination=await replyDestination({destinationType,destinationId});
     return destination.send(membershipReplyMessage(response,{guildName:guild?.name||String(guildId),repostedBy:officerName,
       nonceKey:`repost-${response.userId}-${response.at}-${Date.now()}`}));
   }
