@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {membershipDMMessage,membershipReplyMessage,membershipDeliveryFailureMessage,membershipDeliveryExplain,createMembershipDMWorker,formatMembershipStatus,CARD_WIDTH_PAD} from './membership-dms.js';
+import {membershipDMMessage,membershipReplyMessage,membershipDeliveryFailureMessage,membershipDeliveryExplain,discordErrorSummary,createMembershipDMWorker,formatMembershipStatus,CARD_WIDTH_PAD} from './membership-dms.js';
 import {createMemoryDMIntake,membershipIntakeKey} from './membership-dm-intake.js';
 // Every card carries an invisible width pad in its author line, so assertions read
 // the visible text while the width test inspects the raw payload.
@@ -360,18 +360,24 @@ test('the width pad rides on the author line, the only line with room to spare',
   assert.equal(raw.footer.text,'GuildSync',choice);
   assert.equal(`${raw.description}${JSON.stringify(raw.fields)}`.includes('\u2800'),false,`${choice}: no pad in the body`);
  }
- const failure=membershipDeliveryFailureMessage({name:'Member',userId:'10',status:'failed',detail:'Cannot send messages to this user',at:100}).embeds[0].toJSON();
+ const failure=membershipDeliveryFailureMessage({name:'Member',userId:'10',status:'failed',detail:membershipDeliveryExplain({code:50007}),at:100}).embeds[0].toJSON();
  assert.equal(failure.author.name,'GuildSync membership DM'+CARD_WIDTH_PAD);
 });
-test('a blocked DM is explained as the member\'s privacy setting, not a missing server',()=>{
- const explanation=membershipDeliveryExplain('failed','Cannot send messages to this user');
- assert.match(explanation,/still in the server/);
- assert.match(explanation,/Direct Messages from server members/);
- assert.doesNotMatch(explanation,/mutual guild/i);
- assert.doesNotMatch(membershipDeliveryExplain('failed','no mutual guilds'),/mutual guild/i);
- assert.ok((explanation.match(/\./g)||[]).length<=2,'two short sentences at most');
- assert.ok(membershipDeliveryExplain('uncertain','socket hang up').split(/[.!?] /).length<=2);
- const {embed,fields}=cardOf(membershipDeliveryFailureMessage({name:'Member',userId:'10',status:'failed',detail:'Cannot send messages to this user',at:100}));
+test('Discord errors reach officers as plain sentences, never raw API text',()=>{
+ const closed=membershipDeliveryExplain({code:50007,message:'Cannot send messages to this user'});
+ assert.match(closed,/still in the server/);
+ assert.match(closed,/Direct Messages from server members/);
+ assert.doesNotMatch(membershipDeliveryExplain({code:50007,message:'no mutual guilds'}),/mutual guild/i);
+ assert.ok((closed.match(/\./g)||[]).length<=2,'two short sentences at most');
+ assert.match(membershipDeliveryExplain({code:50013,message:'Missing Permissions'}),/missing permission/i);
+ assert.match(membershipDeliveryExplain(new Error('socket hang up'),{uncertain:true}),/did not confirm/);
+ assert.match(discordErrorSummary({code:10007},'x'),/no longer in the server/);
+ assert.match(discordErrorSummary({code:50001},'x'),/cannot reach that channel or role/);
+ assert.equal(discordErrorSummary({code:99999,message:'DiscordAPIError[99999]'}),
+  'Discord refused the request. The bot log has the full error.');
+ assert.equal(discordErrorSummary(new Error('Backend disconnected'),'Backend disconnected'),
+  'Backend disconnected','our own wording is kept');
+ const {embed,fields}=cardOf(membershipDeliveryFailureMessage({name:'Member',userId:'10',status:'failed',detail:closed,at:100}));
  assert.equal(embed.author.name,'GuildSync membership DM');
  assert.equal(embed.title,'Member');
  assert.equal(embed.color,0xed4245);
@@ -379,6 +385,38 @@ test('a blocked DM is explained as the member\'s privacy setting, not a missing 
  assert.equal(fields['Discord ID'],'10');assert.equal(fields.Status,undefined,'the description already carries the outcome');
  assert.match(fields['Likely cause and next step'],/Direct Messages from server members/);
  assert.equal(new Date(embed.timestamp).getTime(),100000);
+});
+test('kick, nickname and role failures never put Discord\'s error text on a card',async()=>{
+ const kickCalls=[];
+ const kicked=fixture(async(action,payload)=>{kickCalls.push([action,payload]);
+  return action==='response'?{status:'removal requested',message:'Sent.'}:{ok:true};});
+ kicked.member.kick=async()=>{throw Object.assign(Error('DiscordAPIError[99999]: odd'),{code:99999});};
+ await kicked.worker.interaction({customId:`gs-membership-confirm:${job.id}:remove`,isButton:()=>true,isModalSubmit:()=>false,
+  inGuild:()=>false,user:{id:'10'},id:'1200',deferReply:async()=>{},editReply:async()=>{}});
+ const removal=kickCalls.find(([action])=>action==='outcome')[1].removal;
+ assert.equal(removal.status,'failed');
+ assert.doesNotMatch(removal.reason,/DiscordAPIError|99999/);
+ assert.match(removal.reason,/bot log has the full error/);
+
+ const nickCalls=[];
+ const renamed=fixture(async(action,payload)=>{nickCalls.push([action,payload]);
+  return action==='response'?{status:'linked',message:'Linked.',rename:{allowed:true,name:'ESOName'}}:{ok:true};});
+ renamed.member.setNickname=async()=>{throw Object.assign(Error('DiscordAPIError[88888]: odd'),{code:88888});};
+ await renamed.worker.interaction({customId:`gs-membership-rename:${job.id}:eso:ESOName`,isButton:()=>true,isModalSubmit:()=>false,
+  inGuild:()=>false,user:{id:'10'},id:'1201',deferReply:async()=>{},editReply:async()=>{}});
+ const nickname=nickCalls.find(([action])=>action==='outcome')[1].nickname;
+ assert.equal(nickname.status,'failed');
+ assert.doesNotMatch(nickname.reason,/DiscordAPIError|88888/);
+
+ const roleCalls=[];
+ const roleFailed=fixture(async(action,payload)=>{roleCalls.push([action,payload]);
+  return action==='claim-forward'?{event:{eventId:'77',userId:'10',name:'Member',choice:'community',text:'',at:100,
+    result:{status:'community'},destinationType:'channel',destinationId:'99',token:'t',roleId:'555',roleAction:'add',roleStatus:'pending'}}:{ok:true};});
+ roleFailed.member.roles.add=async()=>{throw Object.assign(Error('DiscordAPIError[77777]: odd'),{code:77777});};
+ await roleFailed.worker.forwardOne();
+ const roleCard=cardOf(roleFailed.forwards[0]);
+ assert.match(roleCard.fields['Community role'],/bot log has the full error/);
+ assert.doesNotMatch(roleCard.fields['Community role'],/DiscordAPIError|77777/);
 });
 test('a failed DM posts one card to the reply channel and an unconfirmed one says so',async()=>{
  const {worker,member,forwards}=fixture(async action=>action==='claim'?{job,config}:action==='validate'?{valid:true}:{ok:true});

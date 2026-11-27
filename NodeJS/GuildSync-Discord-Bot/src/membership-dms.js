@@ -144,18 +144,35 @@ export function membershipReplyMessage(event,{guildName='Guild',repostedBy='',no
  if(repostedBy)embed.addFields({name:'Reposted by',value:safeText(repostedBy).slice(0,FIELD_LIMIT),inline:false});
  return payload;
 }
-// Discord's own DM errors are terse and easy to misread: a member who is still in
-// the server can simply have DMs from server members turned off, so the card says
-// what that means and what an officer can do instead.
-export function membershipDeliveryExplain(status,detail) {
- const text=String(detail||'').trim();
- if(/mutual guilds|share a guild|cannot send messages to this user|\b50007\b/i.test(text))
-  return 'They are still in the server; most likely “Direct Messages from server members” is off in their Discord privacy settings. Message them directly, or ask them to turn DMs back on.';
- if(/\b50013\b|missing permissions/i.test(text))
+// Discord's raw error text is terse and sometimes misleading, and an officer should
+// never have to read "DiscordAPIError[50013]" to know what to do. Numeric Discord
+// codes are mapped to one plain sentence; a code with no mapping still gets a
+// neutral sentence rather than the API's wording. Errors without a numeric code (a
+// dropped backend, a socket) are already in our own words, so the caller's text is
+// kept.
+const discordErrorTexts={
+ 50007:'They are still in the server; most likely “Direct Messages from server members” is off in their Discord privacy settings. Message them directly, or ask them to turn DMs back on.',
+ 50013:'The bot is missing a Discord permission for this. Check its roles and server permissions.',
+ 50001:'The bot cannot reach that channel or role. Check its access in the server.',
+ 10003:'The bot cannot reach that channel or role. Check its access in the server.',
+ 10004:'The bot cannot reach that channel or role. Check its access in the server.',
+ 10011:'The bot cannot reach that channel or role. Check its access in the server.',
+ 10007:'That member is no longer in the server.',
+ 429:'Discord rate-limited the request. Try again in a minute.'
+};
+export function discordErrorSummary(error,fallback='Discord refused the request.') {
+ const code=Number(error?.code);
+ if(!code)return fallback;
+ return discordErrorTexts[code]||'Discord refused the request. The bot log has the full error.';
+}
+// A DM failure keeps the two things an officer needs: what Discord's error actually
+// means for this member, and what to do next.
+export function membershipDeliveryExplain(error,{uncertain=false}={}) {
+ if(Number(error?.code)===50013)
   return 'The bot is missing permission to message this member. Check its roles and server permissions.';
- if(status==='uncertain')
-  return 'Discord did not confirm that this DM arrived. Check with the member, or record the outcome with /membership-dm resolve.';
- return text?`Discord reported: ${text}`:'Discord did not give a reason.';
+ return discordErrorSummary(error,uncertain
+  ?'Discord did not confirm whether the DM arrived.'
+  :'Discord did not say why the DM was refused.');
 }
 // A member who never received the DM is invisible in the campaign totals, so each
 // failed or unconfirmed attempt posts a card where officers already watch replies.
@@ -169,7 +186,9 @@ export function membershipDeliveryFailureMessage({name,userId,status='failed',de
     ?'**Delivery not confirmed — GuildSync could not tell whether this DM arrived**'
     :'**GuildSync could not send this membership DM**')
   .addFields({name:'Discord ID',value:String(userId).slice(0,FIELD_LIMIT),inline:false},
-   {name:'Likely cause and next step',value:membershipDeliveryExplain(status,detail).slice(0,FIELD_LIMIT),inline:false})
+   {name:'Likely cause and next step',value:(status==='uncertain'
+     ?'Discord did not confirm that this DM arrived. Check with the member, or record the outcome with /membership-dm resolve.'
+     :detail).slice(0,FIELD_LIMIT),inline:false})
   .setFooter({text:'GuildSync'}).setTimestamp(new Date((at||Math.floor(Date.now()/1000))*1000));
  return {allowedMentions:{parse:[]},embeds:[embed]};
 }
@@ -207,10 +226,11 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
     }catch(error){
       // Nothing has reached the member yet, so a lookup, validation or rendering
       // failure is a definite failure and can never be an uncertain delivery.
-      try{await finish({status:'failed',detail:error.message});}catch(finishError){log('Membership DM result could not be saved: '+finishError.message);}
+      const detail=discordErrorSummary(error,error.message);
+      try{await finish({status:'failed',detail});}catch(finishError){log('Membership DM result could not be saved: '+finishError.message);}
       log(`Membership DM ${job.id} could not be prepared: ${error.message}`);
-      await announceFailure({job,config,status:'failed',detail:error.message,member});
-      return {status:'failed',detail:error.message};
+      await announceFailure({job,config,status:'failed',detail,member});
+      return {status:'failed',detail};
     }
     try {
       const message=await member.send(payload);
@@ -224,10 +244,11 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
       // delivered successfully and are deliberately not retried automatically.
       const definite=Number.isInteger(error.code)&&error.code>=10000;
       const status=definite?'failed':'uncertain';
-      try{await finish({status,detail:error.message});}catch(finishError){log('Membership DM result could not be saved: '+finishError.message);}
+      const detail=membershipDeliveryExplain(error,{uncertain:status==='uncertain'});
+      try{await finish({status,detail});}catch(finishError){log('Membership DM result could not be saved: '+finishError.message);}
       log(`Membership DM ${job.id}: ${error.message}`);
-      await announceFailure({job,config,status,detail:error.message,member});
-      return {status,detail:error.message};
+      await announceFailure({job,config,status,detail,member});
+      return {status,detail};
     }
   }
   async function sendNext() {
@@ -253,7 +274,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
           if(event.roleAction==='remove')await member.roles.remove(event.roleId,'GuildSync membership response');
           else await member.roles.add(event.roleId,'GuildSync membership response');
           roleSuccess=true;
-        }catch(error){roleNote=`\nCommunity role update failed: ${String(error.message).slice(0,300)}`;}
+        }catch(error){roleNote=`\nCommunity role update failed: ${discordErrorSummary(error,'Discord refused the role change.')}`;}
       }
       if(success)return;
       const destination=await replyDestination(event);
@@ -320,7 +341,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
     } catch(error) {
       if(error?.code===10007)return {status:'gone'};
       if(error?.code===50013)return {status:'failed',reason:'The bot needs Kick Members and a role above this member.'};
-      return {status:'failed',reason:String(error?.message||'The kick failed.').slice(0,300)};
+      return {status:'failed',reason:discordErrorSummary(error,'The kick could not be completed.')};
     }
   }
   // Discord allows duplicate nicknames, so the guild itself has to be checked before
@@ -345,7 +366,7 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
     } catch(error) {
       if(error?.code===10007)return {status:'skipped',reason:'No longer in the Discord server.'};
       if(error?.code===50013)return {status:'failed',reason:'The bot needs Manage Nicknames and a role above this member.'};
-      return {status:'failed',reason:String(error?.message||'The nickname could not be set.').slice(0,300)};
+      return {status:'failed',reason:discordErrorSummary(error,'The nickname could not be set.')};
     }
   }
   // The kick or rename has already happened in Discord, so its report must survive a
