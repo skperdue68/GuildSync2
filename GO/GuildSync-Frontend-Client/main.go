@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"os"
 	"runtime"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -20,6 +21,8 @@ var trayIcon []byte
 func main() {
 	loadOptionalEnvFile()
 	service := NewApp(appIcon, trayIcon)
+	// A login item starts the client with the window hidden, from the tray.
+	service.startHidden = hasStartHiddenFlag(os.Args[1:])
 	app := application.New(application.Options{
 		Name: "GuildSync", Description: "GuildSync desktop helper", Icon: appIcon,
 		Services: []application.Service{application.NewService(service)},
