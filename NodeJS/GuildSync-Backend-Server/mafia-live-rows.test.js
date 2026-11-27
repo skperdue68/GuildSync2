@@ -187,6 +187,10 @@ class FakeElement {
     (this.listeners.click || []).forEach(handler => handler({type: 'click'}));
   }
 
+  dispatch(type) {
+    (this.listeners[type] || []).forEach(handler => handler({type, target: this}));
+  }
+
   focus() {}
   blur() {}
   select() {}
@@ -317,6 +321,9 @@ function createPage({messages, follow = false}) {
   const json = body => ({ok: true, status: 200, json: async () => body});
 
   page.calls = [];
+  // Every id the page asked the server to place: a row the filters exclude
+  // should never appear here.
+  page.positionIds = [];
 
   page.fetch = async input => {
     const url = new URL(String(input), 'http://127.0.0.1:8796');
@@ -349,6 +356,7 @@ function createPage({messages, follow = false}) {
     if (url.pathname === '/api/mafia/chat/position') {
       const rows = page.filtered(params);
       const ids = String(params.get('ids') || '').split(',').map(id => id.trim()).filter(Boolean);
+      page.positionIds.push(...ids);
       return json({
         ok: true,
         sort: 'time',
@@ -434,8 +442,9 @@ function createPage({messages, follow = false}) {
     AbortController,
     console,
     // Timers the page uses to keep following or fade marks are not what this
-    // test is about: only the short ones (a batch of rows, a frame) run.
-    setTimeout: (handler, delay, ...args) => (delay > 100 ? 0 : setTimeout(handler, delay, ...args)),
+    // test is about: only the short ones (a batch of rows, a frame, the search
+    // debounce) run.
+    setTimeout: (handler, delay, ...args) => (delay > 200 ? 0 : setTimeout(handler, delay, ...args)),
     clearTimeout: id => clearTimeout(id),
     setInterval: () => 0,
     clearInterval: () => {},
@@ -485,6 +494,9 @@ function archiveFor(now) {
 }
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+
+// A real pause, for the page's own 150 ms search debounce.
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // The client's own promises land over a few turns of the loop.
 async function settle(turns = 12) {
@@ -542,6 +554,17 @@ const distanceFromBottom = page => {
   const scroller = page.elements.get('table-scroll');
   return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
 };
+
+// The date fields take and show a local calendar day, which is what the page
+// turns into the first and last second of that day.
+const localDateString = date =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const startOfLocalDay = date =>
+  Math.floor(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0).getTime() / 1000);
+
+const endOfLocalDay = date =>
+  Math.floor(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59).getTime() / 1000);
 
 test('a pushed row above the window moves the window start with it', async () => {
   const page = await bootPage();
@@ -717,4 +740,84 @@ test('a reader following at the bottom stays pinned through pushes', async () =>
   assert.equal(page.api.elements.follow.dataset.following, 'true');
   assert.equal(page.api.elements.follow.dataset.paused, 'false');
   assert.equal(state.total, page.archive.length, 'both pushes are counted');
+});
+
+test('a pushed row under an active search is placed only when it matches', async () => {
+  const page = await bootPage();
+  const state = page.api.state;
+  const search = page.elements.get('search-input');
+
+  // Typed the way a reader types: the page debounces, then reloads on the match.
+  search.value = 'line 42';
+  search.dispatch('input');
+  await wait(220);
+  await settle(12);
+
+  assert.equal(state.search, 'line 42', 'the search is in effect');
+  const total = state.total;
+  assert.ok(total > 0 && total < page.archive.length, 'the window holds the matching rows only');
+
+  const now = Math.floor(Date.now() / 1000);
+  const matching = page.addMessage({at: now + 30, text: 'line 42 walks in while the search is on'});
+  page.socket.push('chat-updated', {messages: [matching], inserted: 1});
+  await settle();
+
+  assert.ok(rowIds(page).includes(matching.id), 'a matching line is placed in the table');
+  assert.equal(state.total, total + 1, 'and counted');
+  assert.ok(
+    page.api.elements.summary.textContent.startsWith(`${(total + 1).toLocaleString()} `),
+    'the summary includes it'
+  );
+
+  const other = page.addMessage({at: now + 60, text: 'a line about something else entirely'});
+  page.socket.push('chat-updated', {messages: [other], inserted: 1});
+  await settle();
+
+  assert.ok(!rowIds(page).includes(other.id), 'a line the search does not match is not placed');
+  assert.equal(state.total, total + 1, 'and is not counted');
+  assert.ok(
+    !page.positionIds.includes(other.id),
+    'and is filtered out before the page even asks where it would go'
+  );
+});
+
+test('a pushed row inside an active date range is placed, one outside is ignored', async () => {
+  const page = await bootPage();
+  const state = page.api.state;
+  const today = new Date();
+  const field = localDateString(today);
+
+  page.elements.get('range-start').value = field;
+  page.elements.get('range-end').value = field;
+  page.elements.get('range-end').dispatch('change');
+  await settle(12);
+
+  assert.equal(state.start, startOfLocalDay(today), 'the range starts at the first second of the day');
+  assert.equal(state.end, endOfLocalDay(today), 'and ends at the last');
+
+  const total = state.total;
+  assert.ok(total > 0, 'the window holds the rows inside the range');
+
+  const insideAt = Math.min(Math.floor(Date.now() / 1000) + 30, endOfLocalDay(today));
+  const inside = page.addMessage({at: insideAt, text: 'a line inside the range'});
+  page.socket.push('chat-updated', {messages: [inside], inserted: 1});
+  await settle();
+
+  assert.ok(rowIds(page).includes(inside.id), 'a line inside the range is placed in the table');
+  assert.equal(state.total, total + 1, 'and counted');
+  assert.ok(
+    page.api.elements.summary.textContent.startsWith(`${(total + 1).toLocaleString()} `),
+    'the summary includes it'
+  );
+
+  const outside = page.addMessage({at: endOfLocalDay(today) + 7200, text: 'a line past the range'});
+  page.socket.push('chat-updated', {messages: [outside], inserted: 1});
+  await settle();
+
+  assert.ok(!rowIds(page).includes(outside.id), 'a line outside the range is not placed');
+  assert.equal(state.total, total + 1, 'and is not counted');
+  assert.ok(
+    !page.positionIds.includes(outside.id),
+    'and is filtered out before the page even asks where it would go'
+  );
 });
