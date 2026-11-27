@@ -21,6 +21,19 @@ const HEADER_HEIGHT = 38;
 const TAB_HEIGHT = 24;
 const VIEWPORT_HEIGHT = 600;
 
+// The page chooses its opening window from the clock: the first line of today,
+// then up to a page of rows. A minute-by-minute archive has more than a page in
+// today by late morning, and the window would then stop short of the end of the
+// archive — pushed rows near the bottom would be kept for a later load, and the
+// checks below would fail depending on the hour the suite ran. So the clock is
+// pinned to a fixed hour of the local day and every check uses NOW.
+const NOW = (() => {
+  const date = new Date();
+  date.setHours(3, 0, 0, 0);
+  return date;
+})();
+const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
+
 // --- a page just large enough to run the client -----------------------------
 
 function matches(element, selector) {
@@ -436,6 +449,18 @@ function createPage({messages, follow = false}) {
       removeItem: key => storage.delete(key)
     },
     navigator: {clipboard: {writeText: async () => {}}},
+    // The page reads new Date() for "today" and Date.now() for staleness, so
+    // both see the pinned clock; performance.now() stays real because it only
+    // measures the follow settle window.
+    Date: class extends Date {
+      constructor(...args) {
+        super(...(args.length === 0 ? [NOW.getTime()] : args));
+      }
+
+      static now() {
+        return NOW.getTime();
+      }
+    },
     performance: {now: () => Date.now()},
     fetch: page.fetch,
     URLSearchParams,
@@ -504,7 +529,7 @@ async function settle(turns = 12) {
 }
 
 async function bootPage({follow = false} = {}) {
-  const now = Math.floor(Date.now() / 1000);
+  const now = NOW_SECONDS;
   const page = createPage({messages: archiveFor(now), follow});
   const context = vm.createContext(page.globals);
 
@@ -521,6 +546,12 @@ async function bootPage({follow = false} = {}) {
     throw new Error(
       `the page did not load a window; it asked for: ${page.calls.join(' | ') || 'nothing'}; ` +
       `page error: ${page.api.elements.error.textContent || '(none)'}`
+    );
+  }
+
+  if (!page.api.state.atEnd) {
+    throw new Error(
+      `the boot window does not reach the end: ${page.api.state.offset}+${page.api.state.loaded} of ${page.api.state.total}`
     );
   }
 
@@ -584,7 +615,7 @@ test('a pushed row above the window moves the window start with it', async () =>
   // Now one that belongs at the very end. With a stale window start this was
   // judged as past the loaded rows and dropped, even though the summary counted
   // it: the row has to arrive.
-  const newest = page.addMessage({at: Math.floor(Date.now() / 1000) + 5, text: 'newest line'});
+  const newest = page.addMessage({at: NOW_SECONDS + 5, text: 'newest line'});
   page.socket.push('chat-updated', {messages: [newest], inserted: 1});
   await settle();
 
@@ -643,7 +674,7 @@ test('a refresh takes in the tail that arrived, keeping the end of the archive',
   // Three lines land at the end of the archive, announced the way a bulk upload
   // is: the page knows the size but has not been sent the rows.
   const added = [0, 1, 2].map(i => page.addMessage({
-    at: Math.floor(Date.now() / 1000) + 10 + i,
+    at: NOW_SECONDS + 10 + i,
     text: `bulk line ${i}`
   }));
 
@@ -670,7 +701,7 @@ test('a pushed row that starts a new day brings exactly one band with it', async
   // Later than everything on screen and on the next day: it lands at the end and
   // has to bring its own day band, without leaving a band above no row.
   const pushed = page.addMessage({
-    at: Math.floor(Date.now() / 1000) + DAY,
+    at: NOW_SECONDS + DAY,
     text: 'the first line of tomorrow'
   });
 
@@ -720,7 +751,7 @@ test('a reader following at the bottom stays pinned through pushes', async () =>
   assert.equal(state.follow, true, 'the remembered follow is in effect');
   assert.equal(distanceFromBottom(page), 0, 'following opens on the newest row');
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = NOW_SECONDS;
   const pushed = [
     page.addMessage({at: now + 5, text: 'a line while following'}),
     page.addMessage({at: now + DAY, text: 'a new day while following'})
@@ -757,7 +788,7 @@ test('a pushed row under an active search is placed only when it matches', async
   const total = state.total;
   assert.ok(total > 0 && total < page.archive.length, 'the window holds the matching rows only');
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = NOW_SECONDS;
   const matching = page.addMessage({at: now + 30, text: 'line 42 walks in while the search is on'});
   page.socket.push('chat-updated', {messages: [matching], inserted: 1});
   await settle();
@@ -784,7 +815,7 @@ test('a pushed row under an active search is placed only when it matches', async
 test('a pushed row inside an active date range is placed, one outside is ignored', async () => {
   const page = await bootPage();
   const state = page.api.state;
-  const today = new Date();
+  const today = new Date(NOW.getTime());
   const field = localDateString(today);
 
   page.elements.get('range-start').value = field;
@@ -798,7 +829,7 @@ test('a pushed row inside an active date range is placed, one outside is ignored
   const total = state.total;
   assert.ok(total > 0, 'the window holds the rows inside the range');
 
-  const insideAt = Math.min(Math.floor(Date.now() / 1000) + 30, endOfLocalDay(today));
+  const insideAt = Math.min(NOW_SECONDS + 30, endOfLocalDay(today));
   const inside = page.addMessage({at: insideAt, text: 'a line inside the range'});
   page.socket.push('chat-updated', {messages: [inside], inserted: 1});
   await settle();
