@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started · GuildSync manual</title>
+<link rel="stylesheet" href="assets/manual.css">
+</head>
+<body>
+<header class="manual-top">
+  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <nav class="manual-nav" aria-label="Manual sections">
+    <a href="getting-started.html" aria-current="page">Getting started</a>
+    <a href="desktop-client.html">Desktop client</a>
+    <a href="members.html">Members</a>
+    <a href="banking.html">Banking</a>
+    <a href="raffles.html">Raffles</a>
+    <a href="commands.html">Commands</a>
+    <a href="reports.html">Reports</a>
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </nav>
+</header>
+
+<main class="manual-page">
+  <p class="manual-crumb"><a href="index.html">Manual</a> / Getting started</p>
+  <h1>Getting started</h1>
+  <p class="lede">Sign in, get your role, and check that data is flowing. Everything else in GuildSync builds on those three steps.</p>
+
+  <section id="before-you-start">
+    <h2>Before you start</h2>
+    <ul>
+      <li><strong>A GuildSync account.</strong> An administrator approves accounts. New accounts begin as <strong>Viewer</strong>.</li>
+      <li><strong>Your ESO account name.</strong> GuildSync matches your ESO character account to your Discord account, so spelling matters.</li>
+      <li><strong>Optional: the desktop client.</strong> The desktop app is what uploads ESO add-on files automatically. The web client shows server data and accepts uploaded files, but it cannot watch your ESO folder.</li>
+    </ul>
+  </section>
+
+  <section id="sign-in">
+    <h2>Signing in</h2>
+    <ol>
+      <li>Open the GuildSync client and choose <strong>Sign in with Discord</strong>.</li>
+      <li>Your browser opens Discord's authorisation page. Approve it and return to GuildSync.</li>
+      <li>If your account is still waiting for approval, GuildSync says so. Ask an administrator to approve you; you do not need to sign in again after they do.</li>
+    </ol>
+    <div class="callout">The desktop client keeps its sign-in. Closing the window to the tray or restarting the app does not sign you out. Use <strong>Log out</strong> in the profile menu when you want to end the session.</div>
+  </section>
+
+  <figure class="shot" id="SHOT-START-01" data-shot="SHOT-START-01">
+    <div class="shot-slot"><span class="shot-id">SHOT-START-01</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-START-01</span> The sign-in screen before Discord authorisation, showing the Discord button and an empty tab bar.</figcaption>
+  </figure>
+
+  <section id="first-checks">
+    <h2>The first five checks</h2>
+    <ol>
+      <li><strong>Is your account linked?</strong> Open <a href="members.html#discord-tab">Discord Member Data</a> and find your row. <em>Linked</em> should name your ESO account.</li>
+      <li><strong>Is anything uploading?</strong> In the desktop client, open your profile menu, then <strong>SavedVariables &amp; File Watch</strong>. Each add-on file has its own switch and status.</li>
+      <li><strong>Is the roster current?</strong> <a href="members.html#roster-tab">Guild Roster</a> shows the last refresh time above the table.</li>
+      <li><strong>Do your tickets appear?</strong> <a href="banking.html">Banking</a> lists deposits and the raffle tickets they bought. If they are missing, see <a href="troubleshooting.html#missing-tickets">missing tickets</a>.</li>
+      <li><strong>Can you see the right tabs?</strong> Some tabs and reports are limited by role. The <a href="reports.html">Reports</a> page lists what each one needs.</li>
+    </ol>
+  </section>
+
+  <section id="tabs">
+    <h2>The six tabs</h2>
+    <table>
+      <thead><tr><th>Tab</th><th>What it is for</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Discord Member Data</strong></td><td>Everyone on the Discord server: roles, nickname, linked ESO account, last seen, and history.</td></tr>
+        <tr><td><strong>Guild Roster</strong></td><td>Everyone in the ESO guild: rank, join date, notes, linked Discord account, and history.</td></tr>
+        <tr><td><strong>Guild Chat</strong></td><td>The guild chat view. The web client shows it in the page; the desktop client opens it in your browser.</td></tr>
+        <tr><td><strong>Bank Deposits / Raffle Tickets</strong></td><td>Bank deposits, the tickets they bought, and receipt mail.</td></tr>
+        <tr><td><strong>Reports</strong></td><td>Member links, rank audit, last seen, associate tickets, community highlights and statistics.</td></tr>
+        <tr><td><strong>Admin</strong></td><td>Administrator Configuration, raffle bonus settings, and GuildSync user management.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">Clicking a tab you are already on reloads its data. Background updates arrive on their own and keep your scroll position, filters and unsaved edits.</div>
+  </section>
+
+  <section id="uploads">
+    <h2>How data gets in</h2>
+    <p>Three ESO add-ons write files that GuildSync reads: <strong>GuildSyncBanking</strong> (deposits), <strong>GuildSyncRoster</strong> (members and ranks) and <strong>GuildSyncApplications</strong> (applications). A fourth, <strong>GuildSyncTrader</strong>, records trader sales.</p>
+    <ol>
+      <li>In ESO, the add-on collects events while you play.</li>
+      <li>ESO writes the file when you type <code>/reloadui</code>, log out, or exit.</li>
+      <li>The desktop client notices the new file and uploads it.</li>
+    </ol>
+    <p>On the web client you can drop the same <code>GuildSync*.lua</code> files onto the page instead, and GuildSync uploads them the same way.</p>
+  </section>
+
+  <section id="next">
+    <h2>Next</h2>
+    <p>Set up the desktop client once, then you rarely think about uploads again: <a href="desktop-client.html">Desktop client</a>. To understand how ESO accounts are matched to Discord members, read <a href="members.html#links">Member links</a>.</p>
+  </section>
+</main>
+
+<footer class="manual-foot">GuildSync user manual · served by GuildSync at <code>/manual/</code></footer>
+</body>
+</html>

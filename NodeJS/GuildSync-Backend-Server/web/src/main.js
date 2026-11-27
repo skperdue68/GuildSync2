@@ -241,6 +241,9 @@ let discordLastSeenReportLinkStatusFilter = '';
 let discordLastSeenReportSortColumn = '';
 let discordLastSeenReportSortDirection = '';
 let memberLinks = [];
+// The change history is a small side panel of the member link report. State lives in
+// the module so the report's re-render keeps it open while events load.
+let memberLinkHistory = { pair: null, events: [], loading: false, error: '' };
 let memberLinksLoading = false;
 let memberLinksError = '';
 let memberLinksReportDialogOpen = false;
@@ -3258,6 +3261,7 @@ function openMemberLinksReportDialog() {
 
 function closeMemberLinksReportDialog() {
   memberLinksReportDialogOpen = false;
+  memberLinkHistory = { pair: null, events: [], loading: false, error: '' };
   memberLinksReportSearchTerm = '';
   memberLinksReportActionFilter = '';
   memberLinksReportStatusFilter = '';
@@ -3334,6 +3338,8 @@ function renderMemberLinksReportDialog() {
 
         ${memberLinksError ? `<div class="discord-data-error member-links-report-error">${escapeHtml(memberLinksError)}</div>` : ''}
 
+        ${memberLinkHistory.pair ? renderMemberLinkHistoryPanel() : ''}
+
         <div class="report-results-content member-links-report-content">
           ${renderMemberLinksRows()}
         </div>
@@ -3370,6 +3376,10 @@ function wireMemberLinksReportDialog() {
   document.querySelectorAll('[data-unblock-member-auto-link]').forEach((button) => {
     button.addEventListener('click', () => unblockMemberAutoLink(button.dataset.unblockMemberAutoLink || '', button.dataset.unblockMemberAutoLinkDiscordId || ''));
   });
+  document.querySelectorAll('[data-member-link-history]').forEach((button) => {
+    button.addEventListener('click', () => openMemberLinkHistory(button.dataset.memberLinkHistory || '', button.dataset.memberLinkHistoryDiscordId || '', button.dataset.memberLinkHistoryLabel || ''));
+  });
+  document.querySelector('#closeMemberLinkHistoryButton')?.addEventListener('click', closeMemberLinkHistory);
 
   const overlay = document.querySelector('.member-links-report-overlay');
   if (overlay) {
@@ -3475,6 +3485,7 @@ function renderMemberLinksRows() {
     const unlinkLabel = unlinkBlocked
       ? 'Unlink this exact auto-link; the pair becomes a block you can remove later'
       : 'Unlink this link; the pair returns to Possible links to make as a fuzzy candidate';
+    const historyLabel = `Show the recorded changes for ${link.eso_account_name || 'this member'}`;
     return `
       <tr
         data-member-links-report-row
@@ -3489,6 +3500,7 @@ function renderMemberLinksRows() {
         <td class="member-links-method-col">${escapeHtml(method || '')}${Number(link.locked || 0) === 1 ? ' 🔒' : ''}</td>
         <td class="member-links-action-col">
           <div class="member-link-actions">
+            <button class="member-link-report-action member-link-report-history" type="button" data-member-link-history="${escapeAttribute(link.eso_account_name || '')}" data-member-link-history-discord-id="${escapeAttribute(link.discord_user_id || '')}" data-member-link-history-label="${escapeAttribute(link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || '')}" aria-label="${escapeAttribute(historyLabel)}" title="${escapeAttribute(historyLabel)}"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
             ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg></button>` : ''}
             ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="${escapeAttribute(unlinkLabel)}" title="${escapeAttribute(unlinkLabel)}"><svg class="member-link-unlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/></svg></button>` : ''}
             ${canManageGuildSyncLinks() && blocked ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>` : ''}
@@ -3546,6 +3558,89 @@ function renderMemberLinksRows() {
       'Pairs that are neither candidates, blocked nor linked.', other, '') : ''}
     <div id="memberLinksReportSearchEmpty" class="roster-history-muted" hidden>No member links match your search.</div>
   `;
+}
+
+const memberLinkHistoryActionLabels = {
+  auto_linked: 'Linked automatically',
+  linked: 'Link confirmed',
+  candidate_found: 'Candidate suggested',
+  candidate_accepted: 'Candidate accepted',
+  candidate_updated: 'Candidate re-scored',
+  unlinked_to_candidate: 'Unlinked, back to candidate',
+  unlinked_to_block: 'Unlinked and blocked',
+  unlinked: 'Unlinked',
+  block_removed: 'Block removed',
+  blocked: 'Blocked',
+  updated: 'Updated'
+};
+
+function formatMemberLinkHistoryWhen(value) {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+function renderMemberLinkHistoryPanel() {
+  const { pair, events, loading, error } = memberLinkHistory;
+  const rows = events.map((event) => `
+    <li class="member-link-history-event" data-member-link-history-event="${escapeAttribute(event.action || '')}">
+      <span class="member-link-history-when">${escapeHtml(formatMemberLinkHistoryWhen(event.recorded_at))}</span>
+      <span class="member-link-history-action">${escapeHtml(memberLinkHistoryActionLabels[event.action] || event.action || '')}</span>
+      <span class="member-link-history-state">${escapeHtml(`${event.previous_status || 'none'}${event.previous_method ? ` / ${event.previous_method}` : ''} → ${event.link_status || ''}${event.link_method ? ` / ${event.link_method}` : ''}`)}</span>
+      <span class="member-link-history-actor">${escapeHtml(event.actor_name || 'System')}</span>
+    </li>
+  `).join('');
+
+  return `
+    <section class="member-link-history-panel" aria-label="Link change history">
+      <div class="member-link-history-header">
+        <div>
+          <h4>Link history — ${escapeHtml(pair.esoAccountName || 'member')}${pair.discordLabel ? ` ↔ ${escapeHtml(pair.discordLabel)}` : ''}</h4>
+          <p>Newest first. Confidence-only re-scoring is not recorded.</p>
+        </div>
+        <button id="closeMemberLinkHistoryButton" class="member-link-history-close" type="button" aria-label="Close link history">×</button>
+      </div>
+      ${loading ? '<div class="roster-history-muted">Loading link history...</div>' : ''}
+      ${error ? `<div class="discord-data-error">${escapeHtml(error)}</div>` : ''}
+      ${!loading && !error && events.length === 0 ? '<div class="roster-history-muted">No changes recorded for this pair yet.</div>' : ''}
+      ${rows ? `<ul class="member-link-history-list">${rows}</ul>` : ''}
+    </section>
+  `;
+}
+
+async function openMemberLinkHistory(esoAccountName, discordUserId, discordLabel = '') {
+  memberLinkHistory = { pair: { esoAccountName, discordUserId, discordLabel }, events: [], loading: true, error: '' };
+  updateMemberLinksView();
+  await loadMemberLinkHistoryEvents();
+}
+
+// keepStale is used by the silent refresh after a link change: a failed background
+// request must not replace rows that are already on screen with an error.
+async function loadMemberLinkHistoryEvents(options = {}) {
+  const pair = memberLinkHistory.pair;
+  if (!pair) return;
+
+  try {
+    if (!socket?.connected) throw new Error('You must be connected to read link history.');
+    const response = await emitSocketWithAck('guildsync:request-member-link-history', {
+      esoAccountName: pair.esoAccountName,
+      discordUserId: pair.discordUserId,
+      limit: 50
+    }, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to load link history.');
+    if (!memberLinkHistory.pair) return;
+    memberLinkHistory = { ...memberLinkHistory, events: Array.isArray(response.events) ? response.events : [], loading: false, error: '' };
+  } catch (error) {
+    if (options.keepStale) return;
+    memberLinkHistory = { ...memberLinkHistory, error: formatError(error), loading: false };
+  }
+
+  updateMemberLinksView();
+}
+
+function closeMemberLinkHistory() {
+  memberLinkHistory = { pair: null, events: [], loading: false, error: '' };
+  updateMemberLinksView();
 }
 
 function getVisibleMemberLinksReportRows() {
@@ -3657,6 +3752,11 @@ function handleMemberLinksUpdated(payload = {}) {
   // Reports and Admin have no live member rows unless a member-link dialog is open.
   if (changed && shouldRefreshMemberLinksView()) {
     updateMemberLinksView();
+  }
+  // An open history panel would otherwise keep showing the state from before the
+  // change the officer just made.
+  if (changed && memberLinkHistory.pair) {
+    void loadMemberLinkHistoryEvents({ keepStale: true });
   }
 }
 
@@ -9627,6 +9727,7 @@ function renderOpenProfileMenuContents() {
         ${renderProfileFileWatcherSection()}
         <div class="profile-user-settings-mount">
           <button id="openUserSettingsButton" class="profile-user-settings-button" type="button">User Settings</button>
+          <button id="openUserManualButton" class="profile-user-settings-button profile-manual-button" type="button">User Manual</button>
         </div>
       </div>
       ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}
@@ -9637,6 +9738,11 @@ function renderOpenProfileMenuContents() {
   `;
 
   decorateProfileMenu(menu, {openExternal: null, openSections: profileOpenSections});
+  // The web client serves the manual beside the app, so a new tab keeps the app
+  // where it is.
+  menu.querySelector('#openUserManualButton')?.addEventListener('click', () => {
+    window.open('/manual/index.html', '_blank', 'noopener');
+  });
   menu.querySelector('#returnToMyAccount')?.addEventListener('click',()=>void changeGuildSyncUser(null));
   menu.querySelector('#switchGuildSyncAccount')?.addEventListener('change',event=>{if(event.target.value)void changeGuildSyncUser(event.target.value);});
   menu.querySelectorAll('[data-role-view]').forEach(button=>button.addEventListener('click',()=>void changeGuildSyncRoleView(button.dataset.roleView)));

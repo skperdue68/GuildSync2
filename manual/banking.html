@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Banking · GuildSync manual</title>
+<link rel="stylesheet" href="assets/manual.css">
+</head>
+<body>
+<header class="manual-top">
+  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <nav class="manual-nav" aria-label="Manual sections">
+    <a href="getting-started.html">Getting started</a>
+    <a href="desktop-client.html">Desktop client</a>
+    <a href="members.html">Members</a>
+    <a href="banking.html" aria-current="page">Banking</a>
+    <a href="raffles.html">Raffles</a>
+    <a href="commands.html">Commands</a>
+    <a href="reports.html">Reports</a>
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </nav>
+</header>
+
+<main class="manual-page">
+  <p class="manual-crumb"><a href="index.html">Manual</a> / Banking</p>
+  <h1>Banking and tickets</h1>
+  <p class="lede">Guild bank deposits are the record of everything: they buy raffle tickets, produce receipts, and feed the trading records.</p>
+
+  <section id="deposits">
+    <h2>Bank Deposits / Raffle Tickets</h2>
+    <p>The tab lists guild bank deposits collected by GuildSyncBanking: who deposited, when, how much, and what the deposit was for. Search and filters narrow the list; totals update with the filters.</p>
+    <p>Deposit amounts ending in the raffle markers buy raffle tickets. Everything else is recorded as an ordinary deposit and never buys a ticket.</p>
+  </section>
+
+  <section id="markers">
+    <h2>How gold buys tickets</h2>
+    <table>
+      <thead><tr><th>Raffle</th><th>Deposit</th><th>Tickets</th></tr></thead>
+      <tbody>
+        <tr><td>Bi-Weekly</td><td><code>501</code> gold</td><td>1 base ticket (500 gold plus 1 gold per deposit)</td></tr>
+        <tr><td>Bi-Weekly</td><td><code>1001</code> gold</td><td>2 base tickets</td></tr>
+        <tr><td>50/50</td><td><code>2503</code> gold</td><td>1 base ticket (2,500 gold plus 3 gold per deposit)</td></tr>
+        <tr><td>50/50</td><td><code>5003</code> gold</td><td>2 base tickets</td></tr>
+      </tbody>
+    </table>
+    <p>Bonus tickets do not add prize gold. Early purchase bonuses are optional and set per raffle type or per raffle in <a href="reports.html#bonus">Raffle Bonus Tickets</a>.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-BANK-01" data-shot="SHOT-BANK-01">
+    <div class="shot-slot"><span class="shot-id">SHOT-BANK-01</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-BANK-01</span> The Bank Deposits tab with search and filters, a deposit that bought raffle tickets, and the ticket and bonus columns.</figcaption>
+  </figure>
+
+  <section id="receipts">
+    <h2>Receipt mail</h2>
+    <p>GuildSync writes raffle receipts into ESO mail through the add-on. When a batch is ready, the tab shows a <strong>Write receipt mail</strong> button with how many mails are waiting and when the batch is available.</p>
+    <ol>
+      <li>Close ESO completely. Mail cannot be written while the game is running.</li>
+      <li>Click <strong>Write receipt mail</strong> in GuildSync and let it finish.</li>
+      <li>Reopen ESO. The add-on sends the queued mail.</li>
+    </ol>
+    <p>A receipt shows the tickets bought and, when the purchase earned a bonus, the bonus percentage, the buy-before deadline and the total. If an earlier period would have paid more, the receipt ends with a nudge naming the better percentage and how many extra tickets an earlier purchase would have earned.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-BANK-02" data-shot="SHOT-BANK-02">
+    <div class="shot-slot"><span class="shot-id">SHOT-BANK-02</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-BANK-02</span> The receipt mail area of the Banking tab with the availability line, pending mail count and the write button.</figcaption>
+  </figure>
+
+  <section id="duplicates">
+    <h2>Duplicates and corrections</h2>
+    <p>Add-on event IDs prevent the same deposit being recorded twice, even if a file is uploaded again or a collection restarts. If a deposit genuinely appears twice, treat it as a data question: check the deposit's event ID and time before changing anything, because removing the wrong row changes someone's ticket count.</p>
+  </section>
+
+  <section id="spreadsheets">
+    <h2>What happens to the raffle spreadsheets</h2>
+    <p>GuildSync fills the working raffle spreadsheet as purchases arrive, but only when the purchase belongs to the raffle that sheet is showing. Purchases for another period wait in the database until that period is loaded; they are never lost.</p>
+    <p>Archiving copies the workbook into the archive folder, saves the supported result fields, then resets and reloads both working tabs. Borders stay; the managed fills and formatting are cleared. Public announcements and archive notifications are separate optional features.</p>
+  </section>
+
+  <section id="announcements">
+    <h2>Purchase announcements</h2>
+    <p>With purchase announcements enabled, the bot posts a message when a deposit buys tickets. Amounts and ticket counts come from the recorded deposit, so the announcement and the receipt agree.</p>
+  </section>
+
+  <section id="exports">
+    <h2>Exports</h2>
+    <p>Filtered banking data can be exported for a spreadsheet or a message to another officer. The export follows the filters currently applied, so narrow the list first if you only want one raffle or one member.</p>
+  </section>
+
+  <section id="permissions">
+    <h2>Who can change things</h2>
+    <table>
+      <thead><tr><th>Action</th><th>Needs</th></tr></thead>
+      <tbody>
+        <tr><td>Read deposits and tickets</td><td>Viewer</td></tr>
+        <tr><td>Write receipt mail, edit deposits</td><td>User</td></tr>
+        <tr><td>Raffle bonus settings and configuration</td><td>Admin (other roles see them read-only)</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+
+<footer class="manual-foot">GuildSync user manual · served by GuildSync at <code>/manual/</code></footer>
+</body>
+</html>

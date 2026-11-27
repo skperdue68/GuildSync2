@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting · GuildSync manual</title>
+<link rel="stylesheet" href="assets/manual.css">
+</head>
+<body>
+<header class="manual-top">
+  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <nav class="manual-nav" aria-label="Manual sections">
+    <a href="getting-started.html">Getting started</a>
+    <a href="desktop-client.html">Desktop client</a>
+    <a href="members.html">Members</a>
+    <a href="banking.html">Banking</a>
+    <a href="raffles.html">Raffles</a>
+    <a href="commands.html">Commands</a>
+    <a href="reports.html">Reports</a>
+    <a href="troubleshooting.html" aria-current="page">Troubleshooting</a>
+  </nav>
+</header>
+
+<main class="manual-page">
+  <p class="manual-crumb"><a href="index.html">Manual</a> / Troubleshooting</p>
+  <h1>Troubleshooting</h1>
+  <p class="lede">Most problems come from data that has not been saved, uploaded or linked yet. Work through these in order.</p>
+
+  <section id="not-updating">
+    <h2>Nothing new is appearing</h2>
+    <ol>
+      <li><strong>Has ESO saved the file?</strong> Type <code>/reloadui</code> in game, or log out. The add-on writes its file at that moment, not continuously.</li>
+      <li><strong>Has the desktop client uploaded it?</strong> Open your profile menu, then <strong>SavedVariables &amp; File Watch</strong>, and check that the file's switch is on and the watcher reports a recent change.</li>
+      <li><strong>Is the folder right?</strong> Check the folder in <strong>User Settings</strong>. Steam, Proton and unusual installs often keep ESO documents somewhere else.</li>
+      <li><strong>Are you looking at the right period?</strong> Raffle data only fills the sheet for the raffle currently loaded.</li>
+    </ol>
+  </section>
+
+  <section id="missing-tickets">
+    <h2>Your raffle tickets are missing</h2>
+    <ul>
+      <li>Check that your Discord account is linked to the right ESO account in <a href="members.html#discord-tab">Discord Member Data</a>.</li>
+      <li>Check that the deposit has been uploaded: recent deposits appear a little later than the deposit itself.</li>
+      <li>Confirm the deposit amount carried a raffle marker, such as <code>501</code> or <code>2503</code>. Ordinary amounts do not buy tickets.</li>
+      <li>If the link is wrong or missing, ask an officer to review it. Fixing the link moves the tickets with it.</li>
+    </ul>
+  </section>
+
+  <section id="receipt-mail">
+    <h2>Receipt mail will not write</h2>
+    <p>ESO must be closed completely while GuildSync writes a mail batch. Close the game, click <strong>Write receipt mail</strong>, wait for it to finish, then reopen ESO. If the button says no mail is available, nothing is queued yet.</p>
+  </section>
+
+  <section id="version">
+    <h2>GuildSync says my desktop version is unsupported</h2>
+    <p>Newer servers stop serving data to out-of-date clients. Install the update from the <strong>Download latest GuildSync</strong> button on that screen, restart the client, and the data comes back. While the client is out of date, GuildSync hides member and banking data.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-TROUBLE-01" data-shot="SHOT-TROUBLE-01">
+    <div class="shot-slot"><span class="shot-id">SHOT-TROUBLE-01</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-TROUBLE-01</span> The unsupported-desktop screen with its download, minimise and close buttons.</figcaption>
+  </figure>
+
+  <section id="tray">
+    <h2>There is no tray icon</h2>
+    <p>On Linux the tray icon needs a StatusNotifier panel host. GNOME users may need an AppIndicator extension. Without a host, GuildSync runs as a normal window and closing it quits the app. If you enabled the host after starting GuildSync, restart the app to get the icon.</p>
+    <p>On Windows and macOS the icon should always appear while GuildSync is running; if it vanished, use the app's tray menu to quit and start GuildSync again.</p>
+  </section>
+
+  <section id="login">
+    <h2>GuildSync does not start at login</h2>
+    <ul>
+      <li>Check the switch in your profile menu. If it is off, GuildSync removes the login item.</li>
+      <li>If you moved or updated the app, start GuildSync once: it repairs the login item's recorded path.</li>
+      <li>Starting at login now goes straight to the tray. Look for the tray icon instead of a window.</li>
+      <li>On Linux, some desktops ignore autostart entries they consider disabled; check your desktop's Startup Applications list.</li>
+    </ul>
+  </section>
+
+  <section id="raffle-command">
+    <h2>A raffle command timed out</h2>
+    <p>Do not immediately retry. The operation may still be running. Ask the operator to check the logs first. Archive errors leave the database records in place and pause the reset until recovery succeeds.</p>
+  </section>
+
+  <section id="dates">
+    <h2>A date was rejected</h2>
+    <p>Dates use <code>MMDDYY</code>. Ambiguous unpadded dates, such as <code>11226</code>, are refused: enter <code>011226</code> for 12 January or <code>110226</code> for 2 November. The year needs two digits. If you were asked to confirm a boundary choice and did not answer within a minute, the operation is cancelled and nothing changed.</p>
+  </section>
+
+  <section id="privacy">
+    <h2>Who can see what</h2>
+    <p>Notes, history and membership details follow your GuildSync role and the note's own visibility. Private threads used for onboarding are visible to staff with moderation permissions as well as the member. Ticket lookups are private even when a raffle summary is public.</p>
+  </section>
+
+  <section id="still-stuck">
+    <h2>Still stuck</h2>
+    <p>Ask an officer or administrator with what you tried, the approximate time, and which screen you were on. Include the member's ESO account name when the question is about a specific person; that is what makes the records findable.</p>
+  </section>
+</main>
+
+<footer class="manual-foot">GuildSync user manual · served by GuildSync at <code>/manual/</code></footer>
+</body>
+</html>

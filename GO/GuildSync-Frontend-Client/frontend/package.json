@@ -9,9 +9,11 @@
   "name": "frontend",
   "private": true,
   "scripts": {
+    "prebuild": "node ../../../tools/sync-manual.mjs",
     "build": "vite build",
     "dev": "vite",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "predev": "node ../../../tools/sync-manual.mjs"
   },
   "version": "2.1.9-beta"
 }

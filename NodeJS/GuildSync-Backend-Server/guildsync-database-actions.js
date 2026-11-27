@@ -752,6 +752,29 @@ async function initializeSchema(db) {
     COLLATE utf8mb4_unicode_ci
   `);
 
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS guildsync_member_link_history (
+      history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      eso_account_name VARCHAR(64) NOT NULL,
+      discord_user_id VARCHAR(32) NOT NULL,
+      discord_label VARCHAR(255),
+      action VARCHAR(32) NOT NULL,
+      previous_status VARCHAR(20),
+      previous_method VARCHAR(20),
+      link_status VARCHAR(20) NOT NULL,
+      link_method VARCHAR(20) NOT NULL,
+      match_confidence DECIMAL(5,2) NOT NULL DEFAULT 0,
+      actor_name VARCHAR(255),
+      actor_user_id VARCHAR(64),
+      recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (history_id),
+      INDEX idx_guildsync_member_link_history_pair (eso_account_name, discord_user_id),
+      INDEX idx_guildsync_member_link_history_recorded (recorded_at)
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
+
   await initializeTraderSalesSubscriptions(db);
   await initializeEsoAccountIdentity(db);
 }
@@ -5552,7 +5575,7 @@ export async function runMemberAutoLinking(db, ...args) {
   return withEsoIdentityLock(db, connection => runMemberAutoLinkingUnlocked(connection, ...args));
 }
 
-async function runMemberAutoLinkingUnlocked(applicationDB) {
+async function runMemberAutoLinkingUnlocked(applicationDB, options = {}) {
   const { rosterRows, discordRows, linkRows } = await loadMemberLinkInputs(applicationDB);
   const maps = buildExistingLinkMaps(linkRows);
   const optOuts = await loadMemberLinkOptOuts(applicationDB);
@@ -5605,7 +5628,10 @@ async function runMemberAutoLinkingUnlocked(applicationDB) {
           matchConfidence: 100,
           matchReason: `Exact normalized ${match.field} match`,
           matchField: match.field,
-          auto_link_blocked: 0
+          auto_link_blocked: 0,
+          // An unlink re-runs the matcher to put the pair back where it belongs, and
+          // that caller records the single resulting change itself.
+          skipHistory: Boolean(options?.recordHistory === false)
         });
         maps.linkedPairs.add(getMemberLinkPairKey(esoName, discord.discord_id));
         await removeWeakerMemberAutoLinkCandidates(applicationDB, {
@@ -5652,7 +5678,8 @@ async function runMemberAutoLinkingUnlocked(applicationDB) {
         matchConfidence: best.score,
         matchReason: `Fuzzy normalized ${best.field} match candidate`,
         matchField: best.field,
-        auto_link_blocked: 0
+        auto_link_blocked: 0,
+        skipHistory: Boolean(options?.recordHistory === false)
       });
       candidates += 1;
     }
@@ -5675,18 +5702,19 @@ async function upsertMemberLinkUnlocked(applicationDB, link = {}) {
   const linkStatus = link.linkStatus || link.link_status || 'candidate';
   const linkMethod = String(link.linkMethod || link.link_method || 'none').trim().toLowerCase();
   const confirmedLink = isConfirmedMemberLink(linkStatus, linkMethod);
+  // The previous row is needed both for the confirmation side effects and for the
+  // change history, so it is read once for every write.
+  const [existingPair] = await applicationDB.execute(`
+    SELECT link_status, link_method, match_confidence
+    FROM guildsync_member_links
+    WHERE LOWER(eso_account_name) = LOWER(?) AND discord_user_id = ?
+    LIMIT 1
+  `, [esoAccountName, discordUserId]);
+  const previousLink = existingPair?.[0] || null;
   // Only the change into a confirmed link clears the member's "does not use Discord /
   // does not play ESO" answers; re-running auto-linking must not undo an officer's
   // later answer, and fuzzy candidates never clear anything.
-  let pairWasLinked = false;
-  if (confirmedLink) {
-    const [existingPair] = await applicationDB.execute(`
-      SELECT link_status FROM guildsync_member_links
-      WHERE LOWER(eso_account_name) = LOWER(?) AND discord_user_id = ?
-      LIMIT 1
-    `, [esoAccountName, discordUserId]);
-    pairWasLinked = String(existingPair?.[0]?.link_status || '').toLowerCase() === 'linked';
-  }
+  const pairWasLinked = String(previousLink?.link_status || '').toLowerCase() === 'linked';
 
   await applicationDB.execute(`
     INSERT INTO guildsync_member_links (
@@ -5728,6 +5756,15 @@ async function upsertMemberLinkUnlocked(applicationDB, link = {}) {
   ]);
   if ((link.linkStatus || link.link_status) === 'linked') await notifyDiscordConfirmedLink(applicationDB, discordUserId);
   if (confirmedLink && !pairWasLinked) await clearMembershipContactForConfirmedLink(applicationDB, { discordUserId, esoAccountName, method: linkMethod });
+  if (!link.skipHistory) await recordMemberLinkChange(applicationDB, {
+    previous: previousLink,
+    esoAccountName,
+    discordUserId,
+    discordLabel: link.discordServerNickname || link.discord_server_nickname || link.discordDisplayName || link.discord_display_name || link.discordUsername || link.discord_username || '',
+    next: { status: linkStatus, method: linkMethod, confidence: Number(link.matchConfidence ?? link.match_confidence ?? 0) },
+    actorName: link.actorName || link.actor_name || '',
+    actorUserId: link.actorUserId || link.actor_user_id || ''
+  });
 }
 
 export async function getMemberLinks(applicationDB) {
@@ -5844,6 +5881,132 @@ export async function getMemberLinkOptions(applicationDB, payload = {}) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Member link change history
+// ---------------------------------------------------------------------------
+
+const MEMBER_LINK_HISTORY_PAGE_LIMIT = 200;
+
+// describeMemberLinkChange names a write and decides whether it is worth keeping.
+// Repeated matcher passes only move a confidence number around, so confidence-only
+// churn is ignored to keep the history readable.
+export function describeMemberLinkChange(previous, next = {}) {
+  const nextStatus = String(next.status || '').trim().toLowerCase();
+  const nextMethod = String(next.method || '').trim().toLowerCase();
+  if (!nextStatus) return null;
+
+  const previousStatus = String(previous?.link_status || '').trim().toLowerCase();
+  const previousMethod = String(previous?.link_method || '').trim().toLowerCase();
+
+  if (!previous) {
+    if (nextStatus === 'linked') return nextMethod === 'exact' ? 'auto_linked' : 'linked';
+    if (nextStatus === 'candidate') return 'candidate_found';
+    if (nextStatus === 'blocked') return 'blocked';
+    return null;
+  }
+
+  if (previousStatus === nextStatus && previousMethod === nextMethod) return null;
+
+  if (nextStatus === 'linked') {
+    if (previousStatus === 'candidate') return 'candidate_accepted';
+    return previousStatus === 'blocked' ? 'block_removed' : 'linked';
+  }
+  if (nextStatus === 'candidate') {
+    if (previousStatus === 'linked') return 'unlinked_to_candidate';
+    if (previousStatus === 'blocked') return 'block_removed';
+    return 'candidate_updated';
+  }
+  if (nextStatus === 'blocked') return 'unlinked_to_block';
+  return 'updated';
+}
+
+// Plain helper: every caller already runs inside the ESO identity lock.
+async function recordMemberLinkChange(db, entry = {}) {
+  const action = entry.action || describeMemberLinkChange(entry.previous, entry.next);
+  if (!action) return null;
+
+  const next = entry.next || {};
+  await db.execute(`
+    INSERT INTO guildsync_member_link_history (
+      eso_account_name,
+      discord_user_id,
+      discord_label,
+      action,
+      previous_status,
+      previous_method,
+      link_status,
+      link_method,
+      match_confidence,
+      actor_name,
+      actor_user_id
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    String(entry.esoAccountName || '').trim().replace(/^@+/, ''),
+    String(entry.discordUserId || '').trim(),
+    String(entry.discordLabel || '').trim() || null,
+    action,
+    entry.previous?.link_status || null,
+    entry.previous?.link_method || null,
+    String(next.status || '').toLowerCase(),
+    String(next.method || 'none').toLowerCase(),
+    Number(next.confidence || 0),
+    String(entry.actorName || '').trim() || null,
+    String(entry.actorUserId || '').trim() || null
+  ]);
+  return action;
+}
+
+// getMemberLinkHistory returns the newest changes for one pair, or for everything
+// the given ESO account or Discord user has touched.
+export async function getMemberLinkHistory(applicationDB, payload = {}) {
+  const esoAccountName = String(await resolveEsoAccountName(applicationDB, payload.esoAccountName || payload.eso_account_name || '')).trim().replace(/^@+/, '');
+  const discordUserId = String(payload.discordUserId || payload.discord_user_id || '').trim();
+
+  if (!esoAccountName && !discordUserId) {
+    throw new Error('An ESO account or Discord user is required to read link history.');
+  }
+
+  const requested = Number(payload.limit ?? 50);
+  const limit = Number.isFinite(requested)
+    ? Math.min(Math.max(Math.trunc(requested), 1), MEMBER_LINK_HISTORY_PAGE_LIMIT)
+    : 50;
+
+  const clauses = [];
+  const params = [];
+  if (esoAccountName) {
+    clauses.push('LOWER(eso_account_name) = LOWER(?)');
+    params.push(esoAccountName);
+  }
+  if (discordUserId) {
+    clauses.push('discord_user_id = ?');
+    params.push(discordUserId);
+  }
+
+  const [rows] = await applicationDB.execute(`
+    SELECT
+      history_id,
+      eso_account_name,
+      discord_user_id,
+      discord_label,
+      action,
+      previous_status,
+      previous_method,
+      link_status,
+      link_method,
+      match_confidence,
+      actor_name,
+      actor_user_id,
+      recorded_at
+    FROM guildsync_member_link_history
+    WHERE ${clauses.join(' AND ')}
+    ORDER BY history_id DESC
+    LIMIT ${limit}
+  `, params);
+
+  return rows;
+}
+
 export async function acceptMemberLinkCandidate(db, ...args) {
   return withEsoIdentityLock(db, connection => acceptMemberLinkCandidateUnlocked(connection, ...args));
 }
@@ -5952,6 +6115,19 @@ async function unblockMemberAutoLinkUnlocked(applicationDB, payload = {}) {
     throw new Error('ESO account and Discord user are required to remove an auto-link block.');
   }
 
+  const [blockedRows] = await applicationDB.execute(`
+    SELECT *
+    FROM guildsync_member_links
+    WHERE LOWER(eso_account_name) = LOWER(?)
+      AND discord_user_id = ?
+      AND (
+        auto_link_blocked = 1
+        OR link_status = 'blocked'
+        OR link_method = 'manual_unlink'
+      )
+    LIMIT 1
+  `, [esoAccountName, discordUserId]);
+
   const [result] = await applicationDB.execute(`
     DELETE FROM guildsync_member_links
     WHERE LOWER(eso_account_name) = LOWER(?)
@@ -5963,7 +6139,22 @@ async function unblockMemberAutoLinkUnlocked(applicationDB, payload = {}) {
       )
   `, [esoAccountName, discordUserId]);
 
-  return { removed: Number(result?.affectedRows || 0) };
+  const removed = Number(result?.affectedRows || 0);
+  if (removed > 0 && blockedRows?.[0]) {
+    await recordMemberLinkChange(applicationDB, {
+      previous: blockedRows[0],
+      esoAccountName,
+      discordUserId,
+      discordLabel: blockedRows[0].discord_server_nickname || blockedRows[0].discord_display_name || blockedRows[0].discord_username || '',
+      // The block is gone; nothing is linked until the matcher next runs.
+      next: { status: 'none', method: 'none', confidence: 0 },
+      action: 'block_removed',
+      actorName: payload.actorName || payload.actor_name || '',
+      actorUserId: payload.actorUserId || payload.actor_user_id || ''
+    });
+  }
+
+  return { removed };
 }
 
 export async function manualUnlinkMember(db, ...args) {
@@ -5993,6 +6184,14 @@ async function manualUnlinkMemberUnlocked(applicationDB, payload = {}) {
 
   const status = String(existing.link_status || '').toLowerCase();
   const method = String(existing.link_method || '').toLowerCase();
+  const historyBase = {
+    previous: existing,
+    esoAccountName,
+    discordUserId,
+    discordLabel: existing.discord_server_nickname || existing.discord_display_name || existing.discord_username || '',
+    actorName: payload.actorName || payload.actor_name || '',
+    actorUserId: payload.actorUserId || payload.actor_user_id || ''
+  };
 
   if (status === 'linked' && method === 'exact') {
     await applicationDB.execute(`
@@ -6006,6 +6205,11 @@ async function manualUnlinkMemberUnlocked(applicationDB, payload = {}) {
         AND discord_user_id = ?
     `, [esoAccountName, discordUserId]);
 
+    await recordMemberLinkChange(applicationDB, {
+      ...historyBase,
+      next: { status: 'blocked', method: 'manual_unlink', confidence: 0 }
+    });
+
     return { unlinked: 1, blocked: true };
   }
 
@@ -6015,7 +6219,25 @@ async function manualUnlinkMemberUnlocked(applicationDB, payload = {}) {
       AND discord_user_id = ?
   `, [esoAccountName, discordUserId]);
 
-  await runMemberAutoLinking(applicationDB);
+  await runMemberAutoLinking(applicationDB, { recordHistory: false });
+
+  // The pair went back to the matcher, so one row records what the pair is now
+  // rather than the row that was momentarily deleted.
+  const [afterRows] = await applicationDB.execute(`
+    SELECT link_status, link_method, match_confidence
+    FROM guildsync_member_links
+    WHERE LOWER(eso_account_name) = LOWER(?)
+      AND discord_user_id = ?
+    LIMIT 1
+  `, [esoAccountName, discordUserId]);
+  const after = afterRows?.[0];
+  await recordMemberLinkChange(applicationDB, {
+    ...historyBase,
+    next: after
+      ? { status: after.link_status, method: after.link_method, confidence: after.match_confidence }
+      : { status: 'none', method: 'none', confidence: 0 },
+    action: after ? undefined : 'unlinked'
+  });
 
   return { unlinked: 1, blocked: false };
 }

@@ -20,6 +20,7 @@ type App struct {
 	trayIcon         []byte
 	mu               sync.Mutex
 	quiting          bool
+	startHidden      bool
 	oauth            *oauthRuntimeState
 	voice            *voiceRuntime
 
@@ -50,6 +51,10 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 
 	// Register the native tray when the desktop provides a tray host.
 	a.startTray()
+
+	// A login item whose recorded path still points at a previous install is
+	// repaired now, so the profile menu's switch keeps matching reality.
+	_ = ensureStartAtLoginCurrent()
 
 	// Splash screen behavior.
 	a.window.Center()
@@ -84,6 +89,16 @@ func (a *App) ShowMainWindow() bool {
 	} else {
 		a.window.SetSize(1100, 720)
 		a.window.Center()
+	}
+
+	// Starting from a login item hides to the tray once, without recording that
+	// as the saved state: the next manual launch still opens the window.
+	if a.startHidden {
+		a.startHidden = false
+		if a.supportsTray() {
+			a.window.Hide()
+			return false
+		}
 	}
 
 	if a.supportsTray() && state.HiddenToTray {

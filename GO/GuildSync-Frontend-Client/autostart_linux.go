@@ -31,6 +31,40 @@ func startAtLoginActive() bool {
 	return err == nil
 }
 
+func setStartAtLoginFor(executable string) error {
+	path, err := autostartEntryPath()
+	if err != nil {
+		return err
+	}
+	entry := autostartDesktopEntry(executable)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(entry), 0644); err != nil {
+		return fmt.Errorf("write autostart entry: %w", err)
+	}
+	return nil
+}
+
+// refreshStartAtLoginFor rewrites the entry when it names another executable.
+func refreshStartAtLoginFor(executable string) error {
+	path, err := autostartEntryPath()
+	if err != nil {
+		return err
+	}
+	recorded, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return setStartAtLoginFor(executable)
+		}
+		return err
+	}
+	if string(recorded) == autostartDesktopEntry(executable) {
+		return nil
+	}
+	return setStartAtLoginFor(executable)
+}
+
 func setStartAtLogin(enabled bool) error {
 	path, err := autostartEntryPath()
 	if err != nil {
@@ -46,19 +80,5 @@ func setStartAtLogin(enabled bool) error {
 	if err != nil {
 		return err
 	}
-	entry := fmt.Sprintf(`[Desktop Entry]
-Type=Application
-Name=GuildSync
-Comment=GuildSync desktop helper
-Exec="%s"
-Terminal=false
-X-GNOME-Autostart-enabled=true
-`, executable)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, []byte(entry), 0644); err != nil {
-		return fmt.Errorf("write autostart entry: %w", err)
-	}
-	return nil
+	return setStartAtLoginFor(executable)
 }

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commands · GuildSync manual</title>
+<link rel="stylesheet" href="assets/manual.css">
+</head>
+<body>
+<header class="manual-top">
+  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <nav class="manual-nav" aria-label="Manual sections">
+    <a href="getting-started.html">Getting started</a>
+    <a href="desktop-client.html">Desktop client</a>
+    <a href="members.html">Members</a>
+    <a href="banking.html">Banking</a>
+    <a href="raffles.html">Raffles</a>
+    <a href="commands.html" aria-current="page">Commands</a>
+    <a href="reports.html">Reports</a>
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </nav>
+</header>
+
+<main class="manual-page">
+  <p class="manual-crumb"><a href="index.html">Manual</a> / Commands</p>
+  <h1>Commands</h1>
+  <p class="lede">Two command sets, in two different places: slash commands in Discord, and chat commands inside ESO.</p>
+
+  <div class="callout warn">
+    <strong>Read this first.</strong> In Discord, <code>/gsr</code> is the raffle command. In ESO, <code>/gsr</code> is the roster add-on. They are unrelated. GuildSync commands in ESO belong to the add-ons; Discord commands belong to the bot.
+  </div>
+
+  <section id="discord-member">
+    <h2>Discord: for everyone</h2>
+    <p>These work for any member of the server. Text after a colon is an option you type.</p>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/highlights</code></td><td>Community Highlights: raffle regulars, trader leaders and Discord activity. Trader gold is excluded.</td></tr>
+        <tr><td><code>/highlights public:true</code></td><td>The same report, posted visibly in the channel.</td></tr>
+        <tr><td><code>/raffle</code></td><td>Privately shows the current Bi-Weekly and 50/50 raffles: prizes, tickets, draw times, any early purchase bonus, and each period's latest recorded transaction.</td></tr>
+        <tr><td><code>/raffle public:true</code></td><td>Posts the raffle summary visibly.</td></tr>
+        <tr><td><code>/raffle tickets:true</code></td><td>The same ticket lookup as <code>/tickets</code>.</td></tr>
+        <tr><td><code>/tickets</code></td><td>Privately shows the raffle summary and your own purchases for your linked ESO account.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="trader">
+    <h2>Discord: trader invoices</h2>
+    <p>GuildSyncTrader records your trader sales; the bot can send you the invoice for each one by direct message.</p>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/trader on</code></td><td>Send me an invoice for each of my trader sales. <code>/trader register</code> does the same.</td></tr>
+        <tr><td><code>/trader off</code></td><td>Stop sending me trader sale invoices. <code>/trader unregister</code> does the same.</td></tr>
+        <tr><td><code>/trader sales</code></td><td>Show your latest trader sales.</td></tr>
+        <tr><td><code>/trader sales item:&lt;text&gt;</code></td><td>Show every recorded sale of an item. Any part of the item name works, spaces included.</td></tr>
+        <tr><td><code>/trader sales count:&lt;number&gt;</code></td><td>Limit how many sales are listed.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="raffle-officer">
+    <h2>Discord: raffle administration</h2>
+    <p>Requires the Discord role named exactly <strong>Consigliere</strong>. <code>/gsr</code> is a shorter name for <code>/gsraffle</code>.</p>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/tickets verify:AccountName</code></td><td>Privately checks current tickets for an ESO account. Enter the account name only: no @, mention or link.</td></tr>
+        <tr><td><code>/raffle verify:AccountName</code></td><td>The same officer lookup.</td></tr>
+        <tr><td><code>/gsr load</code></td><td>Clear and refill the working raffle sheets from the database.</td></tr>
+        <tr><td><code>/gsr load date:092526</code></td><td>Load the raffle containing that date from its archive.</td></tr>
+        <tr><td><code>/gsr update date:092526</code></td><td>Save winners, attendance and other supported result fields from that archived sheet back into the database.</td></tr>
+        <tr><td><code>/gsr archive</code></td><td>Archive the current sheet, save its results, reset both working tabs and reload current data.</td></tr>
+        <tr><td><code>/gsr reset</code></td><td>Clear managed data and draw dates on both working tabs; database records remain.</td></tr>
+      </tbody>
+    </table>
+    <p>Dates are <code>MMDDYY</code>; unpadded dates are accepted when unambiguous, and you confirm them. Details and the editing workflow are on the <a href="raffles.html#officer-raffle">Raffles</a> page.</p>
+  </section>
+
+  <section id="applications">
+    <h2>Discord: applications and roles</h2>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th><th>Access</th></tr></thead>
+      <tbody>
+        <tr><td><code>/roles</code></td><td>Refresh Discord roles and members into GuildSync.</td><td>Discord defaults this to members with <strong>Manage Roles</strong>.</td></tr>
+        <tr><td><code>/gsa post name:AccountName</code></td><td>Repost saved application decisions matching a full or partial ESO account name to the application thread.</td><td>Restrict with Discord's command permissions.</td></tr>
+        <tr><td><code>/gsa stop</code></td><td>Pause automatic application posts. Manual <code>post</code> still works.</td><td>As above.</td></tr>
+        <tr><td><code>/gsa start</code></td><td>Resume automatic application posts.</td><td>As above.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">GuildSync has no built-in officer check for the <code>/gsa</code> commands. Use Discord's own command permissions so only the right people can run them.</div>
+  </section>
+
+  <section id="membership-dm">
+    <h2>Discord: membership DM campaign</h2>
+    <p>For Consigliere or Kingpin. The campaign messages unlinked Discord members slowly, in alphabetical order.</p>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/membership-dm start</code></td><td>Start an alphabetical campaign for eligible unlinked members.</td></tr>
+        <tr><td><code>/membership-dm pause</code></td><td>Pause new campaign messages.</td></tr>
+        <tr><td><code>/membership-dm resume</code></td><td>Resume the saved campaign without a catch-up burst.</td></tr>
+        <tr><td><code>/membership-dm restart</code></td><td>Build a fresh campaign, keeping send dates and community preferences.</td></tr>
+        <tr><td><code>/membership-dm status</code></td><td>Show progress, the last recipient and the next attempt. Add <code>user:</code> for one member's send date and preference.</td></tr>
+        <tr><td><code>/membership-dm resolve user:&lt;member&gt; outcome:&lt;arrived|not arrived&gt;</code></td><td>Record whether an uncertain message arrived, or make that member eligible again.</td></tr>
+        <tr><td><code>/membership-dm repost user:&lt;member&gt;</code></td><td>Repost that member's latest stored reply in the current card format.</td></tr>
+        <tr><td><code>/membership-dm test user:&lt;member&gt;</code></td><td>Send one labelled test message immediately without changing normal cooldowns.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <figure class="shot" id="SHOT-CMD-01" data-shot="SHOT-CMD-01">
+    <div class="shot-slot"><span class="shot-id">SHOT-CMD-01</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-CMD-01</span> Discord's command picker in your guild showing the GuildSync slash commands, so readers can see the real names and options.</figcaption>
+  </figure>
+
+  <section id="eso">
+    <h2>ESO: commands typed in game</h2>
+    <p>These belong to the add-ons, not the bot. Type them in ESO chat exactly as shown.</p>
+
+    <h3 id="eso-banking">GuildSyncBanking</h3>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/gsb</code> or <code>/gsb help</code></td><td>Show banking command help.</td></tr>
+        <tr><td><code>/gsb status</code></td><td>Whether collection is running, and its saved progress.</td></tr>
+        <tr><td><code>/gsb stream</code></td><td>Start or resume collection.</td></tr>
+        <tr><td><code>/gsb stop</code></td><td>Stop collection.</td></tr>
+        <tr><td><code>/gsb dump</code></td><td>Print cached matching deposits for inspection. Nothing is collected or saved.</td></tr>
+        <tr><td><code>/gsb reset</code></td><td>Restart collection from the beginning. Existing event IDs prevent duplicates. Use only when an operator asks.</td></tr>
+        <tr><td><code>/gsb debug on</code> / <code>/gsb debug off</code></td><td>Extra in-game banking output.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="eso-roster">GuildSyncRoster</h3>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/gsr</code> or <code>/gsr help</code></td><td>Show roster command help.</td></tr>
+        <tr><td><code>/gsr guildlist</code></td><td>Capture the current member list and ranks.</td></tr>
+        <tr><td><code>/gsr stream</code></td><td>Start or resume collection of roster events.</td></tr>
+        <tr><td><code>/gsr stop</code></td><td>Stop collection.</td></tr>
+        <tr><td><code>/gsr dump</code></td><td>Print cached matching events without saving them.</td></tr>
+        <tr><td><code>/gsr debug on</code> / <code>/gsr debug off</code></td><td>Extra in-game roster output.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="eso-applications">GuildSyncApplications</h3>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/gsa</code> or <code>/gsa help</code></td><td>Show application add-on help.</td></tr>
+        <tr><td><code>/gsa settings</code></td><td>Open welcome-message and welcome-email settings. Create, enable, edit and save templates here.</td></tr>
+        <tr><td><code>/gsa list</code></td><td>Print saved application decisions.</td></tr>
+      </tbody>
+    </table>
+    <p>The application add-on records accept, decline and reject decisions made through ESO's application interface. After an accepted applicant's membership is confirmed it sends a welcome mail. For an online applicant it prepares welcome text in officer chat and plays an alert; press <strong>Enter</strong> to send it. <code>{name}</code> in a template becomes the applicant's account name.</p>
+  </section>
+
+  <section id="saving">
+    <h2>Making add-on data reach GuildSync</h2>
+    <p>Use ESO's normal <code>/reloadui</code>, logout or exit so the add-on writes its file, then let the desktop client upload it. Receipt mail is the exception: close ESO completely before GuildSync writes a mail batch.</p>
+  </section>
+</main>
+
+<footer class="manual-foot">GuildSync user manual · served by GuildSync at <code>/manual/</code></footer>
+</body>
+</html>

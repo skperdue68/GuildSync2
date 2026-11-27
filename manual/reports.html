@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reports · GuildSync manual</title>
+<link rel="stylesheet" href="assets/manual.css">
+</head>
+<body>
+<header class="manual-top">
+  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <nav class="manual-nav" aria-label="Manual sections">
+    <a href="getting-started.html">Getting started</a>
+    <a href="desktop-client.html">Desktop client</a>
+    <a href="members.html">Members</a>
+    <a href="banking.html">Banking</a>
+    <a href="raffles.html">Raffles</a>
+    <a href="commands.html">Commands</a>
+    <a href="reports.html" aria-current="page">Reports</a>
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </nav>
+</header>
+
+<main class="manual-page">
+  <p class="manual-crumb"><a href="index.html">Manual</a> / Reports</p>
+  <h1>Reports and settings</h1>
+  <p class="lede">The Reports tab answers officer questions; the Admin tab holds the switches that change how GuildSync behaves.</p>
+
+  <section id="list">
+    <h2>What each report is for</h2>
+    <table>
+      <thead><tr><th>Report</th><th>Use it to</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Member Links</strong></td><td>Review candidates, blocks and confirmed links, and fix them. See <a href="members.html#links-report">Member links</a>.</td></tr>
+        <tr><td><strong>Discord Rank Audit</strong></td><td>Find Discord members whose rank role does not match their ESO rank.</td></tr>
+        <tr><td><strong>Associate Ticket Report</strong></td><td>Check raffle tickets held by Associates.</td></tr>
+        <tr><td><strong>Last Seen</strong></td><td>Find members who have not been seen recently, filtered by link status.</td></tr>
+        <tr><td><strong>Community Highlights</strong></td><td>Raffle regulars, guild trader leaders and Discord activity. The same data as <code>/highlights</code>.</td></tr>
+        <tr><td><strong>Community Statistics</strong></td><td>Membership and participation trends over time.</td></tr>
+      </tbody>
+    </table>
+    <p>Reports open in place, keep their scroll position while data refreshes, and can be closed with Escape or the close button.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-REPORTS-01" data-shot="SHOT-REPORTS-01">
+    <div class="shot-slot"><span class="shot-id">SHOT-REPORTS-01</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-REPORTS-01</span> The Reports tab with the report list and one report open, showing how a report sits inside the tab.</figcaption>
+  </figure>
+
+  <section id="rank-audit">
+    <h2>Rank audit</h2>
+    <p>The rank audit compares each linked pair: the member's ESO rank against the Discord role they hold. Members whose linked ESO account has left the roster are deliberately left out, so they do not clutter the list with a rank they no longer have.</p>
+  </section>
+
+  <section id="highlights">
+    <h2>Community Highlights and statistics</h2>
+    <p>Highlights ranks raffle participation, guild trader sales and Discord activity. Trader gold values are never included, so a big sale does not dominate the ranking. Statistics cover membership numbers and how they change over the covered period.</p>
+  </section>
+
+  <figure class="shot" id="SHOT-REPORTS-02" data-shot="SHOT-REPORTS-02">
+    <div class="shot-slot"><span class="shot-id">SHOT-REPORTS-02</span><span>Screenshot slot</span></div>
+    <figcaption><span class="shot-id">SHOT-REPORTS-02</span> The Community Highlights report with its raffle, trader and Discord sections filled in for a completed period.</figcaption>
+  </figure>
+
+  <section id="bonus">
+    <h2>Raffle Bonus Tickets</h2>
+    <p>This section holds the early purchase bonus rules. Everyone approved can open it and read the current settings; only Admins can change them.</p>
+    <ul>
+      <li>Choose a raffle type, or one raffle, and edit its periods and percentages.</li>
+      <li><strong>Save Bonus Settings</strong> applies your changes; closing the section does not.</li>
+      <li><strong>Return to default</strong> restores the inherited policy for the whole configuration; <strong>Return to raffle default</strong> restores the saved policy for one raffle.</li>
+      <li>Saving refreshes the bonus columns and totals in the Banking tab.</li>
+    </ul>
+  </section>
+
+  <section id="admin-config">
+    <h2>Administrator Configuration</h2>
+    <p>The Admin tab groups settings by function, with onboarding and raffle announcements split into smaller sections. Each setting has its own card explaining what it does, its configuration key, whether the value is <strong>Default</strong> or <strong>Overridden</strong>, and its controls.</p>
+    <ul>
+      <li>Edit a field directly and choose <strong>Save Configuration</strong>. There is no override checkbox.</li>
+      <li><strong>Return to default</strong> marks an override for removal; it takes effect when you save.</li>
+      <li>Two-choice settings mark the inherited option, such as <strong>Enabled (Default)</strong>.</li>
+      <li>Settings apply without restarting the backend or the bot. An offline bot uses the saved settings when it reconnects.</li>
+    </ul>
+    <p>Users who are not Admins can read every value and its default, and can refresh, but cannot change or save anything.</p>
+  </section>
+
+  <section id="users">
+    <h2>GuildSync users</h2>
+    <p>Admins manage accounts through <strong>Manage GuildSync Users</strong> in the profile menu. A numbered circle shows how many accounts are waiting for approval. Approve accounts, set roles, and review profiles there. New accounts await approval as Viewers.</p>
+    <p><strong>Act as account</strong> lets an Admin see GuildSync exactly as another approved person does, including which notes they can read. <strong>Return to my account</strong> ends it, and so does logging out.</p>
+  </section>
+
+  <section id="behavior">
+    <h2>How refreshes behave</h2>
+    <p>Background updates replace only what changed: rows update, new entries appear, removed entries disappear, and your filters, sorting, scroll position and unsaved edits survive. Clicking a tab reloads that tab's full dataset.</p>
+  </section>
+</main>
+
+<footer class="manual-foot">GuildSync user manual · served by GuildSync at <code>/manual/</code></footer>
+</body>
+</html>

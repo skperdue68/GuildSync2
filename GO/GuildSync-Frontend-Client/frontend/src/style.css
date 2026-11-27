@@ -3460,6 +3460,95 @@ body {
   box-shadow: 0 10px 22px rgba(37, 99, 235, 0.2);
 }
 
+/* Member link change history, shown inside the links report above the rows. */
+.member-link-history-panel {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e5e7eb;
+  max-height: 34vh;
+  overflow: auto;
+}
+
+.member-link-history-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.member-link-history-header h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.member-link-history-header p {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  color: rgba(203, 213, 225, 0.75);
+}
+
+.member-link-history-close {
+  border: 0;
+  background: transparent;
+  color: #e5e7eb;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.member-link-history-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.member-link-history-event {
+  display: grid;
+  grid-template-columns: 11rem 12rem minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 0.82rem;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.member-link-history-when {
+  color: rgba(203, 213, 225, 0.75);
+  font-variant-numeric: tabular-nums;
+}
+
+.member-link-history-action {
+  font-weight: 700;
+}
+
+.member-link-history-state {
+  color: #cbd5f5;
+  font-variant-numeric: tabular-nums;
+}
+
+.member-link-history-actor {
+  color: rgba(203, 213, 225, 0.85);
+  justify-self: end;
+}
+
+@media (max-width: 900px) {
+  .member-link-history-event {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .member-link-history-actor {
+    justify-self: start;
+  }
+}
+
 .member-link-report-accept {
   color: #bbf7d0;
   border-color: rgba(34, 197, 94, 0.45);
@@ -7665,4 +7754,28 @@ body {
   width: 15px;
   height: 15px;
   display: block;
+}
+
+/* User manual. The pages ship inside the client's own assets and open in an
+   overlay window, so the desktop never needs an external browser route. */
+.profile-manual-button {
+  margin-top: 8px;
+}
+
+.roster-history-overlay.user-manual-overlay {
+  z-index: 70;
+}
+
+.user-manual-dialog {
+  display: flex;
+  flex-direction: column;
+  height: min(880px, calc(100% - 16px));
+}
+
+.user-manual-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: #0b1424;
 }
