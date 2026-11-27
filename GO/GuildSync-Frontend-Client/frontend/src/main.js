@@ -3121,6 +3121,7 @@ const memberLinkHistoryActionLabels = {
   candidate_updated: 'Candidate re-scored',
   unlinked_to_candidate: 'Unlinked, back to candidate',
   unlinked_to_block: 'Unlinked and blocked',
+  unlinked: 'Unlinked',
   block_removed: 'Block removed',
   blocked: 'Blocked',
   updated: 'Updated'
@@ -3163,13 +3164,27 @@ function renderMemberLinkHistoryPanel() {
 async function openMemberLinkHistory(esoAccountName, discordUserId, discordLabel = '') {
   memberLinkHistory = { pair: { esoAccountName, discordUserId, discordLabel }, events: [], loading: true, error: '' };
   updateMemberLinksView();
+  await loadMemberLinkHistoryEvents();
+}
+
+// keepStale is used by the silent refresh after a link change: a failed background
+// request must not replace rows that are already on screen with an error.
+async function loadMemberLinkHistoryEvents(options = {}) {
+  const pair = memberLinkHistory.pair;
+  if (!pair) return;
 
   try {
     if (!socket?.connected) throw new Error('You must be connected to read link history.');
-    const response = await emitSocketWithAck('guildsync:request-member-link-history', { esoAccountName, discordUserId, limit: 50 }, 30000);
+    const response = await emitSocketWithAck('guildsync:request-member-link-history', {
+      esoAccountName: pair.esoAccountName,
+      discordUserId: pair.discordUserId,
+      limit: 50
+    }, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to load link history.');
-    memberLinkHistory = { ...memberLinkHistory, events: Array.isArray(response.events) ? response.events : [], loading: false };
+    if (!memberLinkHistory.pair) return;
+    memberLinkHistory = { ...memberLinkHistory, events: Array.isArray(response.events) ? response.events : [], loading: false, error: '' };
   } catch (error) {
+    if (options.keepStale) return;
     memberLinkHistory = { ...memberLinkHistory, error: formatError(error), loading: false };
   }
 
@@ -3291,6 +3306,11 @@ function handleMemberLinksUpdated(payload = {}) {
   // Reports and Admin have no live member rows unless a member-link dialog is open.
   if (changed && shouldRefreshMemberLinksView()) {
     updateMemberLinksView();
+  }
+  // An open history panel would otherwise keep showing the state from before the
+  // change the officer just made.
+  if (changed && memberLinkHistory.pair) {
+    void loadMemberLinkHistoryEvents({ keepStale: true });
   }
 }
 

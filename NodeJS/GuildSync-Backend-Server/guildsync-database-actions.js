@@ -5575,7 +5575,7 @@ export async function runMemberAutoLinking(db, ...args) {
   return withEsoIdentityLock(db, connection => runMemberAutoLinkingUnlocked(connection, ...args));
 }
 
-async function runMemberAutoLinkingUnlocked(applicationDB) {
+async function runMemberAutoLinkingUnlocked(applicationDB, options = {}) {
   const { rosterRows, discordRows, linkRows } = await loadMemberLinkInputs(applicationDB);
   const maps = buildExistingLinkMaps(linkRows);
   const optOuts = await loadMemberLinkOptOuts(applicationDB);
@@ -5628,7 +5628,10 @@ async function runMemberAutoLinkingUnlocked(applicationDB) {
           matchConfidence: 100,
           matchReason: `Exact normalized ${match.field} match`,
           matchField: match.field,
-          auto_link_blocked: 0
+          auto_link_blocked: 0,
+          // An unlink re-runs the matcher to put the pair back where it belongs, and
+          // that caller records the single resulting change itself.
+          skipHistory: Boolean(options?.recordHistory === false)
         });
         maps.linkedPairs.add(getMemberLinkPairKey(esoName, discord.discord_id));
         await removeWeakerMemberAutoLinkCandidates(applicationDB, {
@@ -5675,7 +5678,8 @@ async function runMemberAutoLinkingUnlocked(applicationDB) {
         matchConfidence: best.score,
         matchReason: `Fuzzy normalized ${best.field} match candidate`,
         matchField: best.field,
-        auto_link_blocked: 0
+        auto_link_blocked: 0,
+        skipHistory: Boolean(options?.recordHistory === false)
       });
       candidates += 1;
     }
@@ -5752,7 +5756,7 @@ async function upsertMemberLinkUnlocked(applicationDB, link = {}) {
   ]);
   if ((link.linkStatus || link.link_status) === 'linked') await notifyDiscordConfirmedLink(applicationDB, discordUserId);
   if (confirmedLink && !pairWasLinked) await clearMembershipContactForConfirmedLink(applicationDB, { discordUserId, esoAccountName, method: linkMethod });
-  await recordMemberLinkChange(applicationDB, {
+  if (!link.skipHistory) await recordMemberLinkChange(applicationDB, {
     previous: previousLink,
     esoAccountName,
     discordUserId,
@@ -6142,7 +6146,8 @@ async function unblockMemberAutoLinkUnlocked(applicationDB, payload = {}) {
       esoAccountName,
       discordUserId,
       discordLabel: blockedRows[0].discord_server_nickname || blockedRows[0].discord_display_name || blockedRows[0].discord_username || '',
-      next: { status: 'candidate', method: 'none', confidence: 0 },
+      // The block is gone; nothing is linked until the matcher next runs.
+      next: { status: 'none', method: 'none', confidence: 0 },
       action: 'block_removed',
       actorName: payload.actorName || payload.actor_name || '',
       actorUserId: payload.actorUserId || payload.actor_user_id || ''
@@ -6214,14 +6219,25 @@ async function manualUnlinkMemberUnlocked(applicationDB, payload = {}) {
       AND discord_user_id = ?
   `, [esoAccountName, discordUserId]);
 
-  // The pair returns to the matcher, so record the outcome it produces rather than
-  // the momentary row deletion.
+  await runMemberAutoLinking(applicationDB, { recordHistory: false });
+
+  // The pair went back to the matcher, so one row records what the pair is now
+  // rather than the row that was momentarily deleted.
+  const [afterRows] = await applicationDB.execute(`
+    SELECT link_status, link_method, match_confidence
+    FROM guildsync_member_links
+    WHERE LOWER(eso_account_name) = LOWER(?)
+      AND discord_user_id = ?
+    LIMIT 1
+  `, [esoAccountName, discordUserId]);
+  const after = afterRows?.[0];
   await recordMemberLinkChange(applicationDB, {
     ...historyBase,
-    next: { status: 'candidate', method: 'fuzzy', confidence: Number(existing.match_confidence || 0) }
+    next: after
+      ? { status: after.link_status, method: after.link_method, confidence: after.match_confidence }
+      : { status: 'none', method: 'none', confidence: 0 },
+    action: after ? undefined : 'unlinked'
   });
-
-  await runMemberAutoLinking(applicationDB);
 
   return { unlinked: 1, blocked: false };
 }

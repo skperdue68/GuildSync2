@@ -14,7 +14,7 @@ function fn(name) {
 }
 
 function loadContext({links = [], onMatcherRun = () => {}} = {}) {
-  const state = {links: links.map((link) => ({...link})), history: [], statements: []};
+  const state = {links: links.map((link) => ({...link})), history: [], matcherOptions: []};
   const matchesPair = (link, params) => {
     const name = String(params[0] ?? '').toLowerCase();
     const discordId = String(params[1] ?? '');
@@ -23,7 +23,6 @@ function loadContext({links = [], onMatcherRun = () => {}} = {}) {
   const db = {
     execute: async (sql, params = []) => {
       const statement = sql.trim();
-      state.statements.push({sql: statement, params});
       if (/^INSERT INTO guildsync_member_link_history/i.test(statement)) {
         state.history.push(params);
         return [{affectedRows: 1}];
@@ -74,7 +73,10 @@ function loadContext({links = [], onMatcherRun = () => {}} = {}) {
     isConfirmedMemberLink: (status) => String(status).toLowerCase() === 'linked',
     notifyDiscordConfirmedLink: async () => {},
     clearMembershipContactForConfirmedLink: async () => {},
-    runMemberAutoLinking: async () => onMatcherRun(state)
+    runMemberAutoLinking: async (_db, options) => {
+      state.matcherOptions.push(options);
+      return onMatcherRun(state);
+    }
   });
   const pageLimit = source.match(/const MEMBER_LINK_HISTORY_PAGE_LIMIT = (\d+);/)?.[1];
   assert.ok(pageLimit, 'MEMBER_LINK_HISTORY_PAGE_LIMIT is missing from guildsync-database-actions.js');
@@ -174,15 +176,32 @@ test('removing an exact link records the block it becomes', async () => {
   assert.equal(state.history[0][9], 'officer');
 });
 
-test('removing an approved link records the candidate the pair becomes', async () => {
+test('removing an approved link records one row for the candidate the pair becomes', async () => {
   const {ctx, db, state} = loadContext({
-    links: [{eso_account_name: 'Auleric', discord_user_id: '42', link_status: 'linked', link_method: 'manual', match_confidence: 88}]
+    links: [{eso_account_name: 'Auleric', discord_user_id: '42', link_status: 'linked', link_method: 'manual', match_confidence: 88}],
+    onMatcherRun: async (state) => {
+      state.links.push({eso_account_name: 'Auleric', discord_user_id: '42', link_status: 'candidate', link_method: 'fuzzy', match_confidence: 88});
+    }
   });
   vm.runInContext([fn('manualUnlinkMemberUnlocked')].join('\n'), ctx);
   const result = await ctx.manualUnlinkMemberUnlocked(db, {esoAccountName: 'Auleric', discordUserId: '42'});
   assert.deepEqual({...result}, {unlinked: 1, blocked: false});
+  // The matcher's own write must not add a second row for the same decision.
+  assert.equal(state.history.length, 1);
   assert.equal(state.history[0][3], 'unlinked_to_candidate');
   assert.equal(state.history[0][6], 'candidate');
+  assert.deepEqual(state.matcherOptions.map((options) => ({...options})), [{recordHistory: false}]);
+});
+
+test('removing an approved link the matcher does not replace records one unlinked row', async () => {
+  const {ctx, db, state} = loadContext({
+    links: [{eso_account_name: 'Auleric', discord_user_id: '42', link_status: 'linked', link_method: 'manual', match_confidence: 88}]
+  });
+  vm.runInContext([fn('manualUnlinkMemberUnlocked')].join('\n'), ctx);
+  await ctx.manualUnlinkMemberUnlocked(db, {esoAccountName: 'Auleric', discordUserId: '42'});
+  assert.equal(state.history.length, 1);
+  assert.equal(state.history[0][3], 'unlinked');
+  assert.equal(state.history[0][6], 'none');
 });
 
 test('removing a block records it, and doing it twice records nothing extra', async () => {
@@ -193,6 +212,8 @@ test('removing a block records it, and doing it twice records nothing extra', as
   assert.deepEqual({...await ctx.unblockMemberAutoLinkUnlocked(db, {esoAccountName: 'Auleric', discordUserId: '42'})}, {removed: 1});
   assert.equal(state.history.length, 1);
   assert.equal(state.history[0][3], 'block_removed');
+  // A removed block leaves nothing linked; the pair is not suddenly a candidate.
+  assert.equal(state.history[0][6], 'none');
   assert.deepEqual({...await ctx.unblockMemberAutoLinkUnlocked(db, {esoAccountName: 'Auleric', discordUserId: '42'})}, {removed: 0});
   assert.equal(state.history.length, 1);
 });
