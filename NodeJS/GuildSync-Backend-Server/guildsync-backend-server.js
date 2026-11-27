@@ -85,6 +85,7 @@ import {
   moveBankingEntry,
   getAssociateTicketReport,
   getDiscordRankAuditReport,
+  excludeOptedOutDiscordRankAuditRows,
   getRosterDataDate,
   getRosterDataJSON,
   getRosterRankHistoryMatches,
@@ -2490,7 +2491,7 @@ function registerGuildSyncConnection(socket) {
 
       const response = {
         ok: false,
-        message: error.message || 'Failed to run Associates Promotion Eligible report.',
+        message: error.message || 'Failed to run Associate Members Eligible for Promotion report.',
         rows: [],
         rows_returned: 0,
         at: new Date().toLocaleString()
@@ -2516,7 +2517,10 @@ function registerGuildSyncConnection(socket) {
     }
 
     try {
-      const rows = await getDiscordRankAuditReport(applicationDB);
+      const rows = await excludeOptedOutDiscordRankAuditRows(
+        applicationDB,
+        await getDiscordRankAuditReport(applicationDB)
+      );
       const response = {
         ok: true,
         message: 'Discord rank audit report complete.',
