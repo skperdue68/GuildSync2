@@ -22,6 +22,7 @@ import { createDiscordOnboarding } from './discord-onboarding.js';
 import { registerDiscordOnboardingSocket } from './discord-onboarding-socket.js';
 import {createVoiceMuteStore} from './voice-mute-store.js';
 import {registerVoiceMuteSocket} from './voice-mute-socket.js';
+import {createGuildSyncPresence,registerGuildSyncPresenceSocket,normalizePresenceClientType} from './guildsync-presence.js';
 import 'dotenv/config';
 import { readReleaseVersion } from './release-version.js';
 import express from 'express';
@@ -583,6 +584,8 @@ io.use(async (socket, next) => {
   socket.guildSyncAuthType = 'anonymous';
   socket.guildSyncUser = null;
   socket.guildSyncBot = null;
+  socket.guildSyncEsoRunning = false;
+  socket.guildSyncClientType = normalizePresenceClientType(auth.client_type);
 
   if (auth.source === 'discord-bot') {
     const botKey = String(auth.botKey || '').trim();
@@ -742,6 +745,11 @@ const desktopVersionPolicy=createDesktopVersionPolicy({
 io.on('connection',socket=>desktopVersionPolicy.admit(socket,()=>registerGuildSyncConnection(socket)));
 
 const esoAccountRenames=createEsoAccountRenames(applicationDB);
+const guildSyncPresence=createGuildSyncPresence();
+
+function broadcastGuildSyncPresence() {
+  io.to('GuildSyncClientAuthenticated').emit('guildsync:presence',guildSyncPresence.snapshot());
+}
 
 function registerGuildSyncConnection(socket) {
   if(registerVoiceOnlyConnection(socket,registerVoiceForSocket))return;
@@ -859,6 +867,12 @@ function registerGuildSyncConnection(socket) {
   } else {
     Log(`Connection: ${socket.id} => Unauthenticated`);
   }
+
+  // Presence follows the live socket: the entry disappears on disconnect, which
+  // also covers sign-outs because a logout disconnects that session's sockets.
+  if(guildSyncPresence.join(socket))broadcastGuildSyncPresence();
+  registerGuildSyncPresenceSocket(socket,guildSyncPresence,{broadcast:broadcastGuildSyncPresence});
+  socket.on('disconnect',()=>{if(guildSyncPresence.leave(socket.id))broadcastGuildSyncPresence();});
 
   socket.on('guildsync:upload-savedvars-raw', async (payload = {}, callback) => {
     try {

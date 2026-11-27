@@ -140,6 +140,11 @@ let guildSyncSession = {
   status_message: ''
 };
 
+// Signed-in people on the server (self excluded when rendered) and whether the
+// last ESO state we told the server about is still current.
+let guildSyncPresence = { users: [], total: 0, eso_running: 0 };
+let reportedEsoPresence = null;
+
 let desktopClientUpdateInfo = {
   updateRequired: false,
   latestVersion: '',
@@ -417,6 +422,11 @@ function showMainWindow() {
           <div id="statusMessageViewport" class="status-message-viewport" aria-live="polite">
             <div id="statusMessageTrack" class="status-message-track"></div>
           </div>
+          <div id="guildSyncPresence" class="guildsync-presence" hidden>
+            <span class="guildsync-presence-pip" aria-hidden="true"></span>
+            <span id="guildSyncPresenceLabel" class="guildsync-presence-label"></span>
+            <div id="guildSyncPresenceTooltip" class="guildsync-presence-tooltip" role="tooltip"></div>
+          </div>
           <div class="status-spacer"></div>
           <div class="status-connection-wrap" aria-live="polite">
             <span id="esoRunningLabel" class="status-connection-label eso-running-label">ESO Status Unknown</span>
@@ -450,6 +460,7 @@ function showMainWindow() {
   renderDiscordArea();
   renderDesktopUpdateArea();
   wireGuildSyncTabs();
+  refreshGuildSyncPresence();
   wireGuildChatPanel();
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
@@ -1007,6 +1018,7 @@ function renderGuildSyncTabLayout(options = {}) {
   }
 
   wireGuildSyncTabs();
+  refreshGuildSyncPresence();
   wireGuildChatPanel();
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
@@ -8218,6 +8230,8 @@ async function refreshESORunningStatus(options = {}) {
       error: String(status?.error || ''),
       message: String(status?.message || '')
     };
+    // A failed detector is unknown, not "running", so only a clean report counts.
+    reportESOStatusToBackend(esoRunningStatus.running && !esoRunningStatus.error);
     updateESORunningIndicator();
 
     if (!esoRunningStatus.running) {
@@ -10041,8 +10055,13 @@ function connectSocket() {
       }
     },15000);
     sendVersionCheck();
+    // Ask for the current roster of signed-in people, and re-report our own ESO
+    // state because a reconnect starts a fresh server-side connection record.
+    reportedEsoPresence = null;
+    connectedSocket.emit('guildsync:presence-request');
   });
 
+  onCurrentSocket('guildsync:presence',payload=>setGuildSyncPresence(payload));
   onCurrentSocket('guildsync:users-changed',payload=>userAdministrationPanel.changed(payload));
   onCurrentSocket('guildsync:account-profile',user=>{if(socket===connectedSocket)handleCurrentAccountProfile(user);});
   onCurrentSocket('guildsync:user-switch-changed',payload=>{if(socket===connectedSocket)applyUserSwitchProfile(payload?.user);});
@@ -10065,6 +10084,7 @@ function connectSocket() {
     stopVersionCheckTimer();
     stopESOStatusPolling();
     stopDepositMailAvailabilityPolling();
+    setGuildSyncPresence(null);
   });
 
   onCurrentSocket('guildsync:version-status', (payload) => {
@@ -10655,6 +10675,82 @@ function recalculateCurrentSystemMessage() {
   clearSystemMessageTimeouts();
 
   showSystemMessage(currentID);
+}
+
+function setGuildSyncPresence(payload) {
+  const users = Array.isArray(payload?.users) ? payload.users : [];
+
+  guildSyncPresence = {
+    users,
+    total: Number(payload?.total) || users.length,
+    eso_running: Number(payload?.eso_running) || users.filter(user => user?.eso_running).length
+  };
+
+  refreshGuildSyncPresence();
+}
+
+function guildSyncPresenceClientLabel(user) {
+  const types = Array.isArray(user?.client_types) ? user.client_types.filter(Boolean) : [];
+  return types.length ? types.join(' + ') : 'desktop';
+}
+
+function refreshGuildSyncPresence() {
+  const host = document.querySelector('#guildSyncPresence');
+
+  if (!host) {
+    return;
+  }
+
+  const label = document.querySelector('#guildSyncPresenceLabel');
+  const tooltip = document.querySelector('#guildSyncPresenceTooltip');
+  // Everyone signed in is counted, including this session.
+  const people = guildSyncPresence.users;
+  const visible = people.length > 0;
+
+  host.hidden = !visible;
+  // The bar only shortens its status-message area while this line is showing.
+  host.closest?.('.status-bar')?.classList.toggle('has-guildsync-presence', visible);
+
+  if (tooltip) {
+    tooltip.innerHTML = '';
+  }
+
+  if (!visible) {
+    return;
+  }
+
+  const esoRunning = people.filter(user => user?.eso_running).length;
+
+  if (label) {
+    label.textContent = `${people.length} signed in \u00b7 ${esoRunning} with ESO running`;
+  }
+
+  if (tooltip) {
+    const rows = people.map(user => {
+      const detail = [user?.login, guildSyncPresenceClientLabel(user)].filter(Boolean).map(escapeHtml).join(' \u00b7 ');
+      const dotClass = user?.eso_running ? 'eso-on' : 'eso-off';
+      return `<div class="guildsync-presence-row"><span class="guildsync-presence-dot ${dotClass}" aria-hidden="true"></span><div class="guildsync-presence-who"><b>${escapeHtml(user?.name || user?.user_id || 'GuildSync user')}</b><small>${detail}</small></div></div>`;
+    }).join('');
+    const count = `${people.length} ${people.length === 1 ? 'user' : 'users'}`;
+    const summary = `${count} \u00b7 ${esoRunning} with ESO running`;
+    tooltip.innerHTML = `<div class="guildsync-presence-title"><strong>Signed in to GuildSync</strong><span>${summary}</span></div><div class="guildsync-presence-list">${rows}</div>`;
+  }
+}
+
+function reportESOStatusToBackend(running) {
+  const next = Boolean(running);
+
+  if (reportedEsoPresence === next) {
+    return;
+  }
+
+  reportedEsoPresence = next;
+
+  if (!socket?.connected) {
+    return;
+  }
+
+  socket.emit('guildsync:report-eso-status', { running: next });
 }
 
 function updateStatusDot() {
