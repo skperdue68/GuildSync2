@@ -295,7 +295,8 @@ test('rows are permalinks that open, mark and keep their context', () => {
   assert.match(html, /Double-click a line to copy a link to it/);
   assert.match(html, /id="toast-stack"/);
   assert.match(client, /showToast\('Link copied to clipboard'\)/);
-  assert.match(ruleBody('.row-hint'), /position:\s*fixed/);
+  assert.doesNotMatch(ruleBody('.row-hint'), /position:\s*(fixed|absolute)/);
+  assert.match(html, /<th[^>]*>[\s\S]*?class="message-column-heading"[\s\S]*?class="row-hint"[\s\S]*?<\/th>/);
 });
 
 test('the backend runs the site on its own listener at port 3018', () => {
