@@ -24,6 +24,9 @@ def package_release(root, output, version):
             files.extend((directory / 'migrations').glob('*.sql'))
             files.append(directory / 'public/index.html')
             files.extend(p for p in (directory / 'public/assets').rglob('*') if p.is_file())
+            # The mafia guild chat site is plain tracked files with no build step,
+            # served straight from its directory, so it travels with the bundle.
+            files.extend(p for p in (directory / 'mafia').rglob('*') if p.is_file())
             required = directory / 'guildsync-backend-server.js'
         else:
             files.extend(p for p in (directory / 'src').rglob('*.js') if not p.name.endswith('.test.js'))
