@@ -1,3 +1,4 @@
+import {createGuildChatPanel} from './guild-chat-panel.js';
 import {discordDisplayName,renderDiscordNames,createMemberHistoryFallback,getMemberLinkMatchStrength,observeMemberLinkSummary} from './member-discovery.js';
 import './discord-reminders.css';
 import {createDiscordReminderControls} from './discord-reminders.js';
@@ -321,12 +322,14 @@ let bankingRafflePeriodOffsets = {
 const BANKING_RAFFLE_AFTER_SALES_SECONDS = 60 * 60;
 
 const GUILDSYNC_TABS = [
-  { id: 'discord-members', label: 'Discord Member Data', icon: 'discord' },
-  { id: 'eso-members', label: 'Guild Roster', icon: 'swords' },
-  { id: 'more', label: 'Bank Deposits / Raffle Tickets', icon: 'bank' },
-  { id: 'settings', label: 'Reports & Admin', icon: 'gear' }
+  { id: 'discord-members', label: 'Discord Member Data', shortLabel: 'Discord', icon: 'discord' },
+  { id: 'eso-members', label: 'Guild Roster', shortLabel: 'Roster', icon: 'swords' },
+  { id: 'guild-chat', label: 'Guild Chat', shortLabel: 'Guild Chat', icon: 'chat' },
+  { id: 'more', label: 'Bank Deposits / Raffle Tickets', shortLabel: 'Banking', icon: 'bank' },
+  { id: 'settings', label: 'Reports & Admin', shortLabel: 'Admin', icon: 'gear' }
 ];
 
+const guildChatPanel = createGuildChatPanel({openExternal: BrowserOpenURL, onError: error => addSystemMessage('guild-chat-browser-error', `Could not open Guild Chat in your browser: ${formatError(error)}`)});
 let activeGuildSyncTab = GUILDSYNC_TABS[0].id;
 let bankingHistoryGeneration = 0;
 let stopMemberLinkSummaryObserver = null;
@@ -446,6 +449,7 @@ function showMainWindow() {
   renderDiscordArea();
   renderDesktopUpdateArea();
   wireGuildSyncTabs();
+  wireGuildChatPanel();
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
   wireBankDepositsPanel();
@@ -491,10 +495,11 @@ function renderGuildSyncTabs() {
           type="button"
           data-tab-id="${escapeAttribute(tab.id)}"
           aria-selected="${isActive ? 'true' : 'false'}"
+          aria-label="${escapeAttribute(tab.label)}"
           ${attentionTitle ? `title="${escapeAttribute(attentionTitle)}"` : ''}
         >
           <span class="guildsync-tab-icon" aria-hidden="true">${getGuildSyncTabIcon(tab.icon)}</span>
-          <span class="guildsync-tab-label">${escapeHtml(tab.label)}</span>
+          <span class="guildsync-tab-label"><span class="guildsync-tab-label-wide">${escapeHtml(tab.label)}</span><span class="guildsync-tab-label-compact" aria-hidden="true">${escapeHtml(tab.shortLabel || tab.label)}</span></span>
           ${showMailAttention ? `<span class="guildsync-tab-mail-badge" aria-label="${escapeAttribute(attentionTitle)}">${attentionCount > 99 ? '99+' : escapeHtml(String(attentionCount))}</span>` : ''}
         </button>
       `;
@@ -528,6 +533,8 @@ function getGuildSyncTabIcon(icon) {
     `;
   }
 
+  if (icon === 'chat') return '<svg class="guildsync-tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3v-11.5A8.5 8.5 0 0 1 9.5 3h3a8.5 8.5 0 0 1 8.5 8.5Z"/></svg>';
+
   if (icon === 'swords') {
     return '⚔';
   }
@@ -556,6 +563,8 @@ function renderGuildSyncTabContent() {
     content = renderDiscordMemberDataPanel();
   } else if (activeTab.id === 'eso-members') {
     content = renderEsoRosterPanel();
+  } else if (activeTab.id === 'guild-chat') {
+    content = guildChatPanel.render();
   } else if (activeTab.id === 'more') {
     content = renderBankDepositsPanel();
   } else if (activeTab.id === 'settings') {
@@ -570,8 +579,22 @@ function renderGuildSyncTabContent() {
     `;
   }
 
+  const overlays = renderGuildSyncTabOverlays();
+  return activeTab.id === 'guild-chat'
+    ? `${content}<div class="guild-chat-overlays">${overlays}</div>`
+    : `${content}${overlays}`;
+}
+
+function wireGuildChatPanel() {
+  const content = document.querySelector('#guildSyncTabContent');
+  const chatActive = activeGuildSyncTab === 'guild-chat';
+  content?.classList?.toggle('guild-chat-active', chatActive);
+  content?.closest?.('.main-surface')?.classList.toggle('guild-chat-active', chatActive);
+  guildChatPanel.wire(document);
+}
+
+function renderGuildSyncTabOverlays() {
   return `
-    ${content}
     ${manualBiweeklyTicketDialogOpen ? renderManualBiweeklyTicketDialog() : ''}
     ${bankingMoveDialogOpen ? renderBankingMoveDialog() : ''}
     ${userSettingsDialogOpen ? renderUserSettingsDialog() : ''}
@@ -966,10 +989,18 @@ function renderGuildSyncTabLayout(options = {}) {
   }
 
   if (content) {
-    content.innerHTML = renderGuildSyncTabContent();
+    const chatActive = activeGuildSyncTab === 'guild-chat';
+    // Keep the live iframe connected during routine updates; replacing it resets filters and scroll.
+    if (chatActive && content.querySelector('.guild-chat-panel')) {
+      const overlays = content.querySelector('.guild-chat-overlays');
+      if (overlays) overlays.innerHTML = renderGuildSyncTabOverlays();
+    } else {
+      content.innerHTML = renderGuildSyncTabContent();
+    }
   }
 
   wireGuildSyncTabs();
+  wireGuildChatPanel();
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
   wireBankDepositsPanel();
