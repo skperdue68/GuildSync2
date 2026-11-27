@@ -221,7 +221,7 @@ class FakeElement {
   }
 }
 
-function createPage({messages}) {
+function createPage({messages, follow = false}) {
   const page = {archive: messages.slice(), elements: new Map(), socket: null};
 
   const add = (id, tagName = 'div') => {
@@ -398,6 +398,9 @@ function createPage({messages}) {
 
   // --- what the client reaches for ---------------------------------------
   const storage = new Map();
+  // The page reads this before it opens a window: following is a remembered
+  // choice, and it opens on the newest line instead of today's first.
+  if (follow) storage.set('mafia-follow-newest', 'true');
   const documentListeners = {};
 
   page.document = {
@@ -488,9 +491,9 @@ async function settle(turns = 12) {
   for (let i = 0; i < turns; i += 1) await tick();
 }
 
-async function bootPage() {
+async function bootPage({follow = false} = {}) {
   const now = Math.floor(Date.now() / 1000);
-  const page = createPage({messages: archiveFor(now)});
+  const page = createPage({messages: archiveFor(now), follow});
   const context = vm.createContext(page.globals);
 
   // The appended line runs in the page's own scope, so the test can look at the
@@ -509,15 +512,36 @@ async function bootPage() {
     );
   }
 
-  // Park the reader away from the top so no earlier batch is still on its way.
-  page.elements.get('table-scroll').scrollTop = 2000;
-  await settle(4);
+  if (follow) {
+    // Following opens on the newest line, so the reader is already at the end.
+    await settle(6);
+  } else {
+    // Park the reader away from the top so no earlier batch is still on its way.
+    page.elements.get('table-scroll').scrollTop = 2000;
+    await settle(4);
+  }
 
   return page;
 }
 
 const rowsOf = page => page.api.elements.body.querySelectorAll('tr.chat-row');
 const rowIds = page => rowsOf(page).map(row => row.dataset.id);
+const bandsOf = page => page.api.elements.body.querySelectorAll('tr.date-row');
+
+const dayOf = row => new Date(Number(row.dataset.time) * 1000).toDateString();
+
+// The days the bands should name, in order: one where the window begins and one
+// wherever the day changes between the rows on screen.
+const expectedDays = rows => rows.reduce((days, row) => {
+  const day = dayOf(row);
+  if (days.at(-1) !== day) days.push(day);
+  return days;
+}, []);
+
+const distanceFromBottom = page => {
+  const scroller = page.elements.get('table-scroll');
+  return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+};
 
 test('a pushed row above the window moves the window start with it', async () => {
   const page = await bootPage();
@@ -612,4 +636,85 @@ test('a refresh takes in the tail that arrived, keeping the end of the archive',
   assert.equal(rowsOf(page).length, before + added.length);
   assert.equal(state.total, page.archive.length, 'the count matches the archive after the refresh');
   assert.equal(state.offset + state.loaded, state.total, 'the window still reaches the last message');
+});
+
+test('a pushed row that starts a new day brings exactly one band with it', async () => {
+  const page = await bootPage();
+  const state = page.api.state;
+  const {total} = state;
+  const rowsBefore = rowsOf(page).length;
+
+  // Later than everything on screen and on the next day: it lands at the end and
+  // has to bring its own day band, without leaving a band above no row.
+  const pushed = page.addMessage({
+    at: Math.floor(Date.now() / 1000) + DAY,
+    text: 'the first line of tomorrow'
+  });
+
+  page.socket.push('chat-updated', {messages: [pushed], inserted: 1});
+  await settle();
+
+  const rows = rowsOf(page);
+  const bands = bandsOf(page);
+
+  assert.equal(rows.length, rowsBefore + 1, 'the new-day row is drawn');
+  assert.equal(rows.at(-1).dataset.id, pushed.id, 'it sorts last');
+  assert.equal(state.total, total + 1);
+
+  const above = bands.filter(band => band.nextElementSibling === rows.at(-1));
+  assert.equal(above.length, 1, 'exactly one band sits above the new-day row');
+  assert.equal(above[0].dataset.day, dayOf(rows.at(-1)), 'the band belongs to that day');
+  assert.equal(
+    above[0].textContent,
+    new Intl.DateTimeFormat('en-US', {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'})
+      .format(new Date(Number(rows.at(-1).dataset.time) * 1000)),
+    'the band names that day'
+  );
+
+  assert.deepEqual(
+    bands.map(band => band.dataset.day),
+    expectedDays(rows),
+    'one band where the window begins and wherever the day changes, and none anywhere else'
+  );
+  assert.equal(
+    bands.filter(band => band.previousElementSibling && band.previousElementSibling.classList.contains('date-row')).length,
+    0,
+    'no doubled bands'
+  );
+
+  for (const band of bands) {
+    const next = band.nextElementSibling;
+    assert.ok(next && next.classList.contains('chat-row'), 'every band has a row under it');
+    assert.equal(band.dataset.day, dayOf(next), 'a band only stands above rows of its own day');
+  }
+});
+
+test('a reader following at the bottom stays pinned through pushes', async () => {
+  const page = await bootPage({follow: true});
+  const state = page.api.state;
+  const scroller = page.elements.get('table-scroll');
+
+  assert.equal(state.follow, true, 'the remembered follow is in effect');
+  assert.equal(distanceFromBottom(page), 0, 'following opens on the newest row');
+
+  const now = Math.floor(Date.now() / 1000);
+  const pushed = [
+    page.addMessage({at: now + 5, text: 'a line while following'}),
+    page.addMessage({at: now + DAY, text: 'a new day while following'})
+  ];
+
+  for (const message of pushed) {
+    const rowsBefore = rowsOf(page).length;
+    page.socket.push('chat-updated', {messages: [message], inserted: 1});
+    await settle();
+
+    assert.equal(rowsOf(page).length, rowsBefore + 1, 'the pushed row is drawn');
+    assert.equal(rowsOf(page).at(-1).dataset.id, message.id, 'it is the last row');
+    assert.equal(distanceFromBottom(page), 0, 'the newest row stays at the bottom of the view');
+  }
+
+  assert.equal(scroller.scrollTop, scroller.scrollHeight - VIEWPORT_HEIGHT);
+  assert.equal(page.api.elements.follow.dataset.following, 'true');
+  assert.equal(page.api.elements.follow.dataset.paused, 'false');
+  assert.equal(state.total, page.archive.length, 'both pushes are counted');
 });
