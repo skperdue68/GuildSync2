@@ -6,6 +6,15 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('./main.js',import.meta.url),'utf8').replaceAll('\r\n','\n');
 const start=source.indexOf('async function refreshESORunningStatus(');
 const end=source.indexOf('\n}',start)+2;
+const indicatorStart=source.indexOf('function updateESORunningIndicator(');
+const indicator=source.slice(indicatorStart,source.indexOf('\n}',indicatorStart)+2);
+// The footer indicator is text only, so a test reads the label it writes.
+const indicatorContext=context=>{
+ const label={textContent:'',title:''};
+ context.document={querySelector:selector=>selector==='#esoRunningLabel'?label:null};
+ vm.runInContext(indicator,context);
+ return label;
+};
 test('an unknown detector state blocks pending writes and refreshes the displayed error',async()=>{
  let writes=0,updates=0,reminderSyncs=0;
  const context=vm.createContext({esoRunningStatus:{running:true,message:''},
@@ -15,11 +24,14 @@ test('an unknown detector state blocks pending writes and refreshes the displaye
   uploadGuildSyncChatFromFile:async()=>{},
   discordReminderControls:{sync:async()=>{reminderSyncs++;}},
   addSystemMessage:()=>{},updateBankingDataView:()=>{updates++;},formatError:String,TRANSIENT_MESSAGE_TTL_MS:0});
+ const label=indicatorContext(context);
  vm.runInContext(source.slice(start,end),context);
  await context.refreshESORunningStatus();
  assert.equal(context.esoRunningStatus.running,true);assert.equal(context.esoRunningStatus.error,'pgrep failed');
  assert.equal(writes,0);assert.equal(updates,1);
  assert.equal(reminderSyncs,0);
+ assert.equal(label.textContent,'ESO Status Unknown');
+ assert.equal(label.title,'pgrep failed');
 });
 for(const running of [true,false])test(`recovery from detection error to ${running?'running':'stopped'} refreshes status and resumes work only when stopped`,async()=>{
  let writes=0,updates=0,reminderSyncs=0;
@@ -30,10 +42,12 @@ for(const running of [true,false])test(`recovery from detection error to ${runni
   uploadGuildSyncChatFromFile:async()=>{},
   discordReminderControls:{sync:async()=>{reminderSyncs++;}},
   addSystemMessage:()=>{},updateBankingDataView:()=>{updates++;},formatError:String,TRANSIENT_MESSAGE_TTL_MS:0});
+ const label=indicatorContext(context);
  vm.runInContext(source.slice(start,end),context);await context.refreshESORunningStatus();
  assert.equal(context.esoRunningStatus.running,running);assert.equal(context.esoRunningStatus.error,'');
  assert.equal(updates,1);assert.equal(writes,running?0:3);
  assert.equal(reminderSyncs,running?0:1);
+ assert.equal(label.textContent,running?'ESO Running':'ESO Not Running');
 });
 
 const pollStart=source.indexOf('function startESOStatusPolling(');

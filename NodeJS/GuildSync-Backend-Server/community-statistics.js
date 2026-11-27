@@ -189,13 +189,17 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const sellerStart=raffleWindowMode?raffleWindow.salesStart:now-TRADER_WINDOW_SECONDS;
  const sellerEnd=raffleWindowMode?raffleEnd:now;
  const sellerRows=nameAs(traderSales.filter(r=>Number(r.event_timestamp)>=sellerStart&&Number(r.event_timestamp)<=sellerEnd),'seller').filter(r=>positive(r.quantity)>0);
- const sellerTitle=`(${raffleWindowMode?'current 50/50 raffle':'last 14 days'}, Top ${traderTop})`;
+ // "current 50/50 raffle" reads as a label rather than a period when it shares a
+ // bracket with the list size, so the title separates them: card name, then period,
+ // then Top N. The exact from/to dates stay in the description.
+ const windowLabel=raffleWindowMode?'this 50/50 raffle':'last 14 days';
+ const traderTitle=name=>`${name} — ${windowLabel} (Top ${traderTop})`;
  const spanRange=raffleWindowMode?`from ${clockStamp(raffleWindow.salesStart,zone)} to ${clockStamp(raffleWindow.salesEnd,zone)}`:'in the last 14 days';
  const describe=(...parts)=>parts.filter(Boolean).join(' ');
  // Card titles carry a little guild-market flavour; each description still spells out
  // exactly what is counted, so the theme never replaces the meaning.
- add('trader-sales','Market Moguls '+sellerTitle,describe(`Highest gold earned on guild trader sales ${spanRange}.`,goldNote(showTraderGold),freshness),goldUnit,withGold(leaders(sellerRows,r=>r.account_name,earned,traderTop)),showTraderGold?{}:{hideValue:true});
- add('trader-items','Pack Mules '+sellerTitle,describe(`Most items sold through the guild trader ${spanRange}.`,freshness),'items',leaders(sellerRows,r=>r.account_name,r=>positive(r.quantity),traderTop));
+ add('trader-sales',traderTitle('Market Moguls'),describe(`Highest gold earned on guild trader sales ${spanRange}.`,goldNote(showTraderGold),freshness),goldUnit,withGold(leaders(sellerRows,r=>r.account_name,earned,traderTop)),showTraderGold?{}:{hideValue:true});
+ add('trader-items',traderTitle('Pack Mules'),describe(`Most items sold through the guild trader ${spanRange}.`,freshness),'items',leaders(sellerRows,r=>r.account_name,r=>positive(r.quantity),traderTop));
  // Buyer rankings over the 50/50 raffle period: members are matched on both sides, outsiders by buyer only.
  const members=new Set(current.map(r=>nameKey(r.account_name)).filter(Boolean));
  const isMember=name=>members.has(nameKey(name));
@@ -203,8 +207,8 @@ export function buildCommunityStatistics({now=Math.floor(Date.now()/1000),tracki
  const buyerSales=traderSales.filter(r=>Number(r.event_timestamp)>=raffleWindow.salesStart&&Number(r.event_timestamp)<=raffleEnd);
  // Rank by what the buyer paid (price), not the seller's post-tax proceeds.
  const topBuyers=rows=>withGold(leaders(nameAs(rows,'buyer'),r=>r.account_name,r=>positive(r.price),traderTop));
- add('trader-member-buyers','Guild Regulars (current 50/50 raffle, Top '+traderTop+')',describe(`Gold spent by guild members on items listed by another guild member ${spanRange}.`,goldNote(showTraderGold),freshness),goldUnit,topBuyers(buyerSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
- add('trader-visitor-buyers','Window Shoppers (current 50/50 raffle, Top '+traderTop+')',describe(`Gold spent at the guild trader by buyers outside the guild ${spanRange}.`,goldNote(showTraderGold),freshness),goldUnit,topBuyers(buyerSales.filter(r=>!isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
+ add('trader-member-buyers',traderTitle('Guild Regulars'),describe(`Gold spent by guild members on items listed by another guild member ${spanRange}.`,goldNote(showTraderGold),freshness),goldUnit,topBuyers(buyerSales.filter(r=>isMember(r.seller)&&isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
+ add('trader-visitor-buyers',traderTitle('Window Shoppers'),describe(`Gold spent at the guild trader by buyers outside the guild ${spanRange}.`,goldNote(showTraderGold),freshness),goldUnit,topBuyers(buyerSales.filter(r=>!isMember(buyerOf(r)))),showTraderGold?{}:{hideValue:true});
  return {
   generatedAt:new Date(now*1000).toISOString(),
   trackingSince,

@@ -4096,11 +4096,15 @@ function renderMemberLinkDialogOptions() {
     return '<div class="member-link-options-muted">No additional suggested matches found.</div>';
   }
 
+  // Members who said they do not use Discord, or that they are not in the guild or no
+  // longer play ESO, stay out of the automatic list but remain searchable here.
+  const hasExcluded = sortedOptions.some((option) => option.excluded === true);
   return `
     <div class="member-link-option-list">
       ${sortedOptions.map((option) => renderMemberLinkDialogOption(option)).join('')}
     </div>
     <div id="memberLinkSuggestionSearchEmpty" class="member-link-options-muted" hidden>No suggested matches match your search.</div>
+    ${hasExcluded ? '<div class="member-link-options-muted member-link-option-hint">Members marked as “does not use Discord”, “not playing ESO” or “not a guild member” are hidden until you search for them.</div>' : ''}
   `;
 }
 
@@ -4112,33 +4116,44 @@ function getMemberLinkOptionSortName(option) {
 
 function renderMemberLinkDialogOption(option, options = {}) {
   const mode = memberLinkDialogContext?.mode || '';
-  const label = mode === 'discord-to-eso'
-    ? option.account_name
-    : (option.server_nickname || option.global_name || option.username || option.discord_id || 'Discord member');
   const matchField = formatDiscordMatchFieldName(option.matchField || option.match_field || option.discordMatchField || option.discord_match_field);
-  const baseSubLabel = mode === 'discord-to-eso'
-    ? `Rank: ${option.rank || ''}`
-    : '';
-  const subLabel = [baseSubLabel, matchField ? `Matched on ${matchField}` : ''].filter(Boolean).join(' • ');
+  const esoName = String(option.account_name || (mode === 'eso-to-discord' ? memberLinkDialogContext?.esoAccountName : '') || '').trim();
+  const rankText = option.rank ? `Rank: ${option.rank}` : '';
+  // The same two facts on every row: the ESO roster account, then the Discord names it
+  // was compared with. renderDiscordNames marks the name that produced the score.
   const discord = mode === 'discord-to-eso'
     ? discordMembers.find(member => String(member.discord_id) === String(memberLinkDialogContext?.discordUserId)) || getMemberLinksForDialog()[0] || {}
     : option;
   const names = renderDiscordNames(discord, {matchField, fuzzy: Number(option.confidence || 0) > 0 && Number(option.confidence || 0) < 100});
   const value = mode === 'discord-to-eso' ? option.account_name : option.discord_id;
   const disabled = options.disabled === true;
+  const excluded = option.excluded === true;
+  const excludeReason = excluded ? String(option.excludeReason || option.exclude_reason || 'Opted out of Discord contact') : '';
 
-  const searchText = [label, baseSubLabel, subLabel, option.account_name, option.username, option.global_name, option.server_nickname, option.discord_id]
+  const searchText = [esoName, rankText, option.username, option.global_name, option.server_nickname,
+    discord.username, discord.global_name, discord.server_nickname, option.discord_id, discord.discord_id,
+    matchField, excludeReason]
     .filter(Boolean)
     .join(' ');
 
-  const fullDisplayText = [label, subLabel, `${option.confidence ?? 0}%`]
+  const fullDisplayText = [esoName ? `ESO Account: ${esoName}` : '', rankText,
+    matchField ? `Matched on ${matchField}` : '',
+    excludeReason ? `Not shown automatically — ${excludeReason}` : '', `${option.confidence ?? 0}%`]
     .filter(Boolean)
     .join(' • ');
 
   return `
-    <button class="member-link-option-row" type="button" data-member-link-option-value="${escapeAttribute(value || '')}" data-member-link-option-search="${escapeAttribute(searchText)}" title="${escapeAttribute(fullDisplayText)}" ${disabled ? 'disabled' : ''}>
-      <span class="member-link-option-name" title="${escapeAttribute(label || '')}">${escapeHtml(label || '')}</span>
-      <span class="member-link-option-subtitle" title="${escapeAttribute(subLabel || '')}">${escapeHtml(subLabel || '')}${names}</span>
+    <button class="member-link-option-row" type="button" data-member-link-option-value="${escapeAttribute(value || '')}" data-member-link-option-search="${escapeAttribute(searchText)}" data-member-link-option-excluded="${excluded ? '1' : '0'}" title="${escapeAttribute(fullDisplayText)}" ${disabled ? 'disabled' : ''}${excluded ? ' hidden' : ''}>
+      <span class="member-link-option-eso">
+        <span class="member-link-option-label">ESO Account:</span>
+        <span class="member-link-option-name" title="${escapeAttribute(esoName || '')}">${escapeHtml(esoName || '—')}</span>
+        ${rankText ? `<span class="member-link-option-rank" title="${escapeAttribute(rankText)}">${escapeHtml(rankText)}</span>` : ''}
+      </span>
+      <span class="member-link-option-discord" title="${escapeAttribute(fullDisplayText)}">
+        <span class="member-link-option-label">Discord:</span>
+        ${names}
+        ${excluded ? `<span class="member-link-option-excluded-note">Not shown automatically — ${escapeHtml(excludeReason)}</span>` : ''}
+      </span>
       <span class="member-link-option-confidence" title="${escapeAttribute(String(option.confidence ?? 0))}%">${escapeHtml(String(option.confidence ?? 0))}%</span>
     </button>
   `;
@@ -4426,7 +4441,9 @@ function applyMemberLinkSuggestionFilter() {
 
   rows.forEach((row) => {
     const searchText = normalizeSimpleMemberName(row.dataset.memberLinkOptionSearch || row.textContent || '');
-    const visible = !searchValue || searchText.includes(searchValue);
+    const matches = !searchValue || searchText.includes(searchValue);
+    // An opted-out member is never listed automatically; typing a search still finds them.
+    const visible = row.dataset.memberLinkOptionExcluded === '1' ? Boolean(searchValue) && matches : matches;
     row.hidden = !visible;
     row.classList.remove('member-link-option-row-active');
     if (visible) visibleCount += 1;
