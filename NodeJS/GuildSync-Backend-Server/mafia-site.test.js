@@ -228,11 +228,9 @@ test('pushed rows join only the page they belong to', () => {
   assert.match(client, /async function fetchPositions\(/);
   assert.match(client, /\/api\/mafia\/chat\/position\?/);
   assert.match(client, /const windowStart = state\.offset;/);
-  assert.match(client, /const atEndOfResults = state\.offset \+ state\.loaded >= state\.total;/);
+  assert.match(client, /const atEndOfResults = state\.atEnd;/);
   assert.match(client, /const index = before - windowStart;/);
-  assert.match(client, /if \(index < 0\) continue;/);
-  assert.match(client, /if \(index > state\.loaded\) continue;/);
-  assert.match(client, /if \(index === state\.loaded && !atEndOfResults\) continue;/);
+  assert.match(client, /if \(index > state\.loaded \|\| \(index === state\.loaded && !atEndOfResults\)\) \{/);
   assert.match(client, /elements\.body\.insertBefore\(row, target\)/);
 });
 
@@ -318,6 +316,28 @@ test('the backend runs the site on its own listener at port 3018', () => {
   const callAt = server.indexOf('broadcastMafiaChatUpdate({inserted: insertedIds.length, ids: insertedIds});');
   assert.ok(guardAt > 0, 'the inserted-rows guard was not found');
   assert.ok(callAt > guardAt, 'the broadcast must sit behind the inserted-rows guard');
+});
+
+test('a pushed row above the window moves the window start with it', () => {
+  const live = client.slice(client.indexOf('async function applyLiveMessages'), client.indexOf('// The pill only ever asks for a refresh'));
+
+  assert.match(live, /if \(index < 0\) \{/);
+  assert.match(live, /addedAbove \+= 1;/);
+
+  const shiftAt = live.indexOf('state.offset += addedAbove;');
+  assert.ok(shiftAt > 0, 'the window start must move with rows pushed above it');
+  assert.ok(shiftAt < live.indexOf('syncBands();'), 'the shift belongs to the same update as the rows');
+});
+
+test('a bulk upload counts its rows, and a refresh takes in the tail that arrived', () => {
+  assert.match(client, /state\.total \+= count;/);
+
+  // Whether the window reached the end is remembered, because the total moves
+  // under it when rows arrive.
+  assert.match(client, /state\.atEnd = state\.offset \+ state\.loaded >= state\.total;/);
+
+  const refresh = client.slice(client.indexOf('async function refreshCurrent'), client.indexOf('function hideTooltip'));
+  assert.match(refresh, /state\.atEnd \? state\.total - start : 0/);
 });
 
 test('the date boxes start empty and the page opens on today unless following', () => {

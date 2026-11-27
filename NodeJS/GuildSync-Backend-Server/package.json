@@ -13,7 +13,8 @@
   "scripts": {
     "build:web": "cd web \u0026\u0026 npm install \u0026\u0026 npm run build \u0026\u0026 node -e \"const fs=require('fs'); fs.rmSync('../public/assets',{recursive:true,force:true}); fs.cpSync('dist','../public',{recursive:true});\"",
     "dev": "node guildsync-backend-server.js",
-    "start": "node guildsync-backend-server.js"
+    "start": "node guildsync-backend-server.js",
+    "test": "node --test mafia-site.test.js mafia-live-rows.test.js"
   },
   "type": "module",
   "version": "2.1.6-beta"
