@@ -3020,8 +3020,9 @@ function renderMemberLinksRows() {
     const status = statusOf(link);
     const method = String(link.link_method || '').trim().toLowerCase();
     const blocked = isBlocked(link);
-    // Removing a confirmed link has two different outcomes, so both the button and
-    // the row say which one this pair will get.
+    // Removing a confirmed link only unlinks the pair, so the action is a broken chain
+    // (Lucide "unlink") rather than a trash can. It also has two different outcomes, so
+    // both the button and the row say which one this pair will get.
     const unlinkBlocked = method === 'exact';
     const unlinkOutcome = unlinkBlocked ? '→ block' : '→ candidate';
     const unlinkLabel = unlinkBlocked
@@ -3042,7 +3043,7 @@ function renderMemberLinksRows() {
         <td class="member-links-action-col">
           <div class="member-link-actions">
             ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
-            ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="${escapeAttribute(unlinkLabel)}" title="${escapeAttribute(unlinkLabel)}">🗑</button>` : ''}
+            ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="${escapeAttribute(unlinkLabel)}" title="${escapeAttribute(unlinkLabel)}"><svg class="member-link-unlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/></svg></button>` : ''}
             ${canManageGuildSyncLinks() && blocked ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block">↺</button>` : ''}
           </div>
           ${canManageGuildSyncLinks() && status === 'linked' ? `<span class="member-link-unlink-outcome${unlinkBlocked ? ' becomes-block' : ' becomes-candidate'}" title="${escapeAttribute(unlinkLabel)}">${unlinkOutcome}</span>` : ''}
