@@ -9845,7 +9845,7 @@ function renderUserSettingsDialog() {
   const defaultLabel = defaultValue || 'Documents\\Elder Scrolls Online\\live\\SavedVariables';
 
   return `
-    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="userSettingsDialogTitle">
+    <div class="roster-history-overlay user-settings-overlay" role="dialog" aria-modal="true" aria-labelledby="userSettingsDialogTitle">
       <div class="roster-history-dialog manual-ticket-dialog user-settings-dialog">
         <div class="roster-history-header">
           <div>
@@ -10702,9 +10702,9 @@ function setGuildSyncPresence(payload) {
   refreshGuildSyncPresence();
 }
 
-function guildSyncPresenceClientLabel(user) {
+function guildSyncPresenceClientTypes(user) {
   const types = Array.isArray(user?.client_types) ? user.client_types.filter(Boolean) : [];
-  return types.length ? types.join(' + ') : 'desktop';
+  return types.length ? types : ['desktop'];
 }
 
 function refreshGuildSyncPresence() {
@@ -10740,9 +10740,13 @@ function refreshGuildSyncPresence() {
 
   if (tooltip) {
     const rows = people.map(user => {
-      const detail = [user?.login, guildSyncPresenceClientLabel(user)].filter(Boolean).map(escapeHtml).join(' \u00b7 ');
+      const login = String(user?.login || '').trim();
+      // Each client is a pill so "desktop" / "web" reads as a tag, not extra name text.
+      const pills = guildSyncPresenceClientTypes(user)
+        .map(type => `<span class="guildsync-presence-client is-${escapeHtml(String(type).toLowerCase().replace(/[^a-z0-9]+/g, '-'))}">${escapeHtml(type)}</span>`)
+        .join('');
       const dotClass = user?.eso_running ? 'eso-on' : 'eso-off';
-      return `<div class="guildsync-presence-row"><span class="guildsync-presence-dot ${dotClass}" aria-hidden="true"></span><div class="guildsync-presence-who"><b>${escapeHtml(user?.name || user?.user_id || 'GuildSync user')}</b><small>${detail}</small></div></div>`;
+      return `<div class="guildsync-presence-row"><span class="guildsync-presence-dot ${dotClass}" aria-hidden="true"></span><div class="guildsync-presence-who"><b>${escapeHtml(user?.name || user?.user_id || 'GuildSync user')}</b><small class="guildsync-presence-meta">${login ? `<span class="guildsync-presence-login">${escapeHtml(login)}</span>` : ''}${pills}</small></div></div>`;
     }).join('');
     const count = `${people.length} ${people.length === 1 ? 'user' : 'users'}`;
     const summary = `${count} \u00b7 ${esoRunning} with ESO running`;
