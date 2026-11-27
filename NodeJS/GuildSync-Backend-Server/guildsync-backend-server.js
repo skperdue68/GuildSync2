@@ -92,6 +92,7 @@ import {
   getRosterRankHistoryMatches,
   getRosterStreamHistoryForAccount,
   getMemberLinks,
+  getMemberLinkHistory,
   upsertMemberLink,
   getMemberLinkOptions,
   acceptMemberLinkCandidate,
@@ -2934,6 +2935,38 @@ function registerGuildSyncConnection(socket) {
         ok: false,
         message: error.message || 'Failed to retrieve member links.',
         links: [],
+        at: new Date().toLocaleString()
+      });
+    }
+  });
+
+  socket.on('guildsync:request-member-link-history', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      sendSocketResponse(socket, 'guildsync:member-link-history-result', callback, {
+        ok: false,
+        message: 'You must be logged in to read link history.',
+        events: [],
+        at: new Date().toLocaleString()
+      });
+      return;
+    }
+
+    try {
+      const events = await getMemberLinkHistory(applicationDB, payload || {});
+      sendSocketResponse(socket, 'guildsync:member-link-history-result', callback, {
+        ok: true,
+        message: 'Member link history retrieved.',
+        events,
+        events_returned: events.length,
+        at: new Date().toLocaleString()
+      });
+    } catch (error) {
+      Log('Failed to process guildsync:request-member-link-history:', error);
+      sendSocketResponse(socket, 'guildsync:member-link-history-result', callback, {
+        ok: false,
+        message: error.message || 'Failed to retrieve member link history.',
+        events: [],
+        events_returned: 0,
         at: new Date().toLocaleString()
       });
     }

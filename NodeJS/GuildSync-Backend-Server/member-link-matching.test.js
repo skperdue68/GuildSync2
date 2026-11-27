@@ -49,8 +49,8 @@ test('unlinking an approved fuzzy link hands the pair back to the matcher as a f
  const {ctx,links}=context('linked');
  links.splice(0,links.length,{eso_account_name:'Auleric',discord_user_id:'42',link_status:'linked',link_method:'manual',match_confidence:88,auto_link_blocked:0});
  const writes=[];
- Object.assign(ctx,{loadMemberLinkOptOuts:async()=>({discordIds:new Set(),esoKeys:new Set()}),esoAccountKey:s=>s.toLowerCase(),upsertMemberLink:async(_,link)=>writes.push(link),removeWeakerMemberAutoLinkCandidates:async()=>{}});
- vm.runInContext([fn('manualUnlinkMemberUnlocked'),fn('getBestDiscordNameMatch'),fn('runMemberAutoLinkingUnlocked')].join('\n'),ctx);
+  Object.assign(ctx,{loadMemberLinkOptOuts:async()=>({discordIds:new Set(),esoKeys:new Set()}),esoAccountKey:s=>s.toLowerCase(),upsertMemberLink:async(_,link)=>writes.push(link),removeWeakerMemberAutoLinkCandidates:async()=>{},recordMemberLinkChange:async()=>null});
+  vm.runInContext([fn('manualUnlinkMemberUnlocked'),fn('getBestDiscordNameMatch'),fn('runMemberAutoLinkingUnlocked')].join('\n'),ctx);
  Object.assign(ctx,{runMemberAutoLinking:db=>ctx.runMemberAutoLinkingUnlocked(db)});
  const db={execute:async(sql)=>{
   const statement=sql.trim();
