@@ -1,3 +1,5 @@
+import {wireGuildToolsLauncher, decorateProfileMenu, resetGuildToolsLauncher} from './guild-tools.js';
+const profileOpenSections = new Set();
 import {createGuildChatPanel} from './guild-chat-panel.js';
 import {discordDisplayName,renderDiscordNames,createMemberHistoryFallback,getMemberLinkMatchStrength,observeMemberLinkSummary} from './member-discovery.js';
 import './discord-reminders.css';
@@ -73,7 +75,7 @@ import {uploadGuildChatAndMaybeClear} from './chat-upload.js';
 const EventsOn = createEventsOn(Events);
 const BrowserOpenURL = url => Browser.OpenURL(url);
 
-const GUILDSYNC_APP_VERSION = '2.1.7-beta';
+const GUILDSYNC_APP_VERSION = '2.1.8-beta';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 const PENDING_TRADER_UPLOADS_STORAGE_KEY = 'guildsync-pending-trader-uploads';
@@ -139,6 +141,11 @@ let guildSyncSession = {
   allowed: false,
   status_message: ''
 };
+
+// Signed-in people on the server (self excluded when rendered) and whether the
+// last ESO state we told the server about is still current.
+let guildSyncPresence = { users: [], total: 0, eso_running: 0 };
+let reportedEsoPresence = null;
 
 let desktopClientUpdateInfo = {
   updateRequired: false,
@@ -326,7 +333,8 @@ const GUILDSYNC_TABS = [
   { id: 'eso-members', label: 'Guild Roster', shortLabel: 'Roster', icon: 'swords' },
   { id: 'guild-chat', label: 'Guild Chat', shortLabel: 'Guild Chat', icon: 'chat' },
   { id: 'more', label: 'Bank Deposits / Raffle Tickets', shortLabel: 'Banking', icon: 'bank' },
-  { id: 'settings', label: 'Reports & Admin', shortLabel: 'Admin', icon: 'gear' }
+  { id: 'settings', label: 'Reports', shortLabel: 'Reports', icon: 'reports' },
+  { id: 'admin', label: 'Admin', shortLabel: 'Admin', icon: 'gear' }
 ];
 
 const guildChatPanel = createGuildChatPanel({openExternal: BrowserOpenURL, onError: error => addSystemMessage('guild-chat-browser-error', `Could not open Guild Chat in your browser: ${formatError(error)}`)});
@@ -416,6 +424,11 @@ function showMainWindow() {
           <div id="statusMessageViewport" class="status-message-viewport" aria-live="polite">
             <div id="statusMessageTrack" class="status-message-track"></div>
           </div>
+          <div id="guildSyncPresence" class="guildsync-presence" hidden>
+            <span class="guildsync-presence-pip" aria-hidden="true"></span>
+            <span id="guildSyncPresenceLabel" class="guildsync-presence-label"></span>
+            <div id="guildSyncPresenceTooltip" class="guildsync-presence-tooltip" role="tooltip"></div>
+          </div>
           <div class="status-spacer"></div>
           <div class="status-connection-wrap" aria-live="polite">
             <span id="esoRunningLabel" class="status-connection-label eso-running-label">ESO Status Unknown</span>
@@ -449,11 +462,12 @@ function showMainWindow() {
   renderDiscordArea();
   renderDesktopUpdateArea();
   wireGuildSyncTabs();
+  refreshGuildSyncPresence();
   wireGuildChatPanel();
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
   wireBankDepositsPanel();
-  wireReportsPanel();
+  wireReportPanels();
   wireManualBiweeklyTicketDialog();
   wireMemberLinkDialog();
   wireAssociateTicketReportDialog();
@@ -543,6 +557,10 @@ function getGuildSyncTabIcon(icon) {
     return '⚙';
   }
 
+  if (icon === 'reports') {
+    return '<svg class="guildsync-tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 20V4"/><path d="M4 20h17"/><rect x="7.5" y="12" width="3.2" height="5" rx=".6"/><rect x="13" y="8.5" width="3.2" height="8.5" rx=".6"/><rect x="18.3" y="5" width="3.2" height="12" rx=".6"/></svg>';
+  }
+
   if (icon === 'bank') {
     return `
       <svg class="guildsync-tab-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -569,6 +587,8 @@ function renderGuildSyncTabContent() {
     content = renderBankDepositsPanel();
   } else if (activeTab.id === 'settings') {
     content = renderReportsPanel();
+  } else if (activeTab.id === 'admin') {
+    content = renderAdminPanel();
   } else {
     content = `
       <div class="guildsync-tab-panel" data-active-tab="${escapeAttribute(activeTab.id)}">
@@ -826,7 +846,7 @@ function refreshActiveTabData(tab = activeGuildSyncTab) {
     : tab === 'eso-members' ? rosterDataLoading : tab === 'more' ? bankingDataLoading : false;
   if (loading) { pendingTabDataRefreshes.add(tab); return; }
   pendingTabDataRefreshes.delete(tab);
-  // Reports & Admin reloads Community Highlights on every tab click, even when collapsed.
+  // Reports reloads Community Highlights on every tab click, even when collapsed.
   if (tab === 'settings') communityStatisticsPanel.load(document);
   if (tab === 'discord-members') refreshDiscordData({ silent: true });
   if (tab === 'eso-members') {
@@ -1000,11 +1020,12 @@ function renderGuildSyncTabLayout(options = {}) {
   }
 
   wireGuildSyncTabs();
+  refreshGuildSyncPresence();
   wireGuildChatPanel();
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
   wireBankDepositsPanel();
-  wireReportsPanel();
+  wireReportPanels();
   wireManualBiweeklyTicketDialog();
   wireMemberLinkDialog();
   wireAssociateTicketReportDialog();
@@ -1926,20 +1947,18 @@ function renderReportsPanel() {
     <div class="guildsync-tab-panel reports-panel" data-active-tab="settings">
       <div class="discord-data-header reports-header">
         <div>
-          <h2 class="discord-data-title">Reports & Admin</h2>
-          <p class="discord-data-subtitle">Run GuildSync reports and administrative review tools. More options can be added here later.</p>
+          <h2 class="discord-data-title">Reports</h2>
+          <p class="discord-data-subtitle">Run GuildSync reports. Configuration and bonus settings live on the Admin tab.</p>
         </div>
       </div>
 
       <div class="reports-scroll-area">
         ${communityStatisticsPanel.render()}
-        ${renderRaffleBonusSettings()}
-        ${adminConfigurationPanel.render()}
         <section class="reports-list" aria-label="Available reports">
           <article class="report-option-card">
             <div class="report-option-copy">
-              <h3>Associates Promotion Eligible</h3>
-              <p>Shows Associates who have been in the guild at least two weeks, have purchased at least one raffle ticket, and are linked to Discord. Also shows otherwise eligible Associates who still need a Discord link reviewed.</p>
+              <h3>Associate Members Eligible for Promotion</h3>
+              <p>Shows Associates who have been in the guild at least two weeks, have purchased at least one raffle ticket, and are linked to Discord. Also shows otherwise eligible Associates who still need a Discord link reviewed; Associates who told us they do not use Discord are left out of that list.</p>
             </div>
             <button id="runAssociateTicketReportButton" class="refresh-discord-button report-run-button" type="button" ${associateTicketReportLoading ? 'disabled' : ''}>
               ${associateTicketReportLoading ? 'Running...' : 'Run'}
@@ -1981,16 +2000,40 @@ function renderReportsPanel() {
   `;
 }
 
-function wireReportsPanel() {
-  if (activeGuildSyncTab !== 'settings') {
+function renderAdminPanel() {
+  return `
+    <div class="guildsync-tab-panel reports-panel admin-panel" data-active-tab="admin">
+      <div class="discord-data-header reports-header">
+        <div>
+          <h2 class="discord-data-title">Admin</h2>
+          <p class="discord-data-subtitle">Raffle bonus settings and administrator configuration.</p>
+        </div>
+      </div>
+
+      <div class="reports-scroll-area">
+        ${renderRaffleBonusSettings()}
+        ${adminConfigurationPanel.render()}
+      </div>
+    </div>
+  `;
+}
+
+
+
+function wireReportPanels() {
+  if (activeGuildSyncTab !== 'settings' && activeGuildSyncTab !== 'admin') {
     return;
   }
 
   wireReportAccordions(reportsAccordion, { refresh: true });
-  communityStatisticsPanel.wire();
-  adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
-  wireRaffleBonusSettings();
 
+  if (activeGuildSyncTab === 'admin') {
+    adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
+    wireRaffleBonusSettings();
+    return;
+  }
+
+  communityStatisticsPanel.wire();
   document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => openAssociatePromotionReportDialog());
   document.querySelector('#runDiscordRankAuditReportButton')?.addEventListener('click', () => openDiscordRankAuditReportDialog());
   document.querySelector('#runDiscordLastSeenReportButton')?.addEventListener('click', () => openDiscordLastSeenReportDialog());
@@ -2105,14 +2148,14 @@ function closeAssociateTicketReportDialog() {
 function renderAssociateTicketReportDialog() {
   const eligibleRows = getAssociatePromotionEligibleRows();
   const missingLinkRows = getAssociatePromotionMissingLinkRows();
-  const totalRows = associateTicketReportRows.length;
+  const totalRows = eligibleRows.length + missingLinkRows.length;
 
   return `
     <div class="roster-history-overlay report-results-overlay" role="dialog" aria-modal="true" aria-labelledby="associateTicketReportTitle">
       <div class="roster-history-dialog report-results-dialog associate-ticket-report-dialog">
         <div class="roster-history-header report-results-header">
           <div>
-            <h3 id="associateTicketReportTitle">Associates Promotion Eligible</h3>
+            <h3 id="associateTicketReportTitle">Associate Members Eligible for Promotion</h3>
             <p>Associates who meet tenure and ticket requirements, separated by Discord link status.</p>
           </div>
           <button id="closeAssociateTicketReportButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
@@ -2143,7 +2186,10 @@ function getAssociatePromotionEligibleRows() {
 }
 
 function getAssociatePromotionMissingLinkRows() {
-  return associateTicketReportRows.filter((row) => String(row.report_group || row.eligibility_group || '').toLowerCase() !== 'eligible');
+  // Associates who told us they do not use Discord are not waiting on a Discord
+  // link, so they stay out of the link-review section.
+  return associateTicketReportRows.filter((row) => String(row.report_group || row.eligibility_group || '').toLowerCase() !== 'eligible'
+    && !row.discord_opt_out);
 }
 
 function renderAssociatePromotionReportSection(title, subtitle, rows, emptyText) {
@@ -2212,6 +2258,7 @@ function formatAssociateReportDiscordLink(row) {
 function getAssociateTicketReportTsv() {
   const lines = [['Section', 'Account Name', 'Rank', 'Joined', 'Purchased Tickets', 'Earliest Deposit / Raffle', 'Discord Link']];
   for (const row of associateTicketReportRows) {
+    if (String(row.report_group || row.eligibility_group || '').toLowerCase() !== 'eligible' && row.discord_opt_out) continue;
     const group = String(row.report_group || row.eligibility_group || '').toLowerCase() === 'eligible' ? 'Eligible' : 'Eligible if Linked';
     lines.push([
       group,
@@ -2231,7 +2278,7 @@ async function copyAssociateTicketReportGrid() {
 
   const copied = await copyTextToClipboard(tsv);
   if (copied) {
-    addSystemMessage('associate-report-copied', 'Associates Promotion Eligible report copied to clipboard.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    addSystemMessage('associate-report-copied', 'Associate Members Eligible for Promotion report copied to clipboard.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
     return;
   }
 
@@ -2326,7 +2373,10 @@ function renderDiscordRankAuditReportRows(rows = discordRankAuditReportRows) {
 }
 
 function formatDiscordRankAuditMember(row) {
-  return row.server_nickname || row.global_name || row.username || row.discord_id || '';
+  // The confirmed link's own name wins when there is one, then the Discord member's
+  // names in display order: server nickname, global display name, username.
+  return row.linked_server_nickname || row.linked_display_name || row.linked_username
+    || row.server_nickname || row.global_name || row.username || row.discord_id || '';
 }
 
 function formatDiscordRankAuditIssue(row) {
@@ -2930,22 +2980,17 @@ function getSortedMemberLinksForReport(links) {
 
 function getMemberLinkReportDiscordDisplay(link) {
   const matchedField = getMemberLinkMatchedField(link);
-  let value = '';
-
-  if (matchedField === 'Username') {
-    value = link?.discord_username || '';
-  } else if (matchedField === 'Global Name') {
-    value = link?.discord_display_name || '';
-  } else if (matchedField === 'Server Nickname') {
-    value = link?.discord_server_nickname || '';
-  }
-
-  if (!value) {
-    value = link?.discord_server_nickname || link?.discord_display_name || link?.discord_username || link?.discord_user_id || '';
-  }
-
-  const fieldText = matchedField ? ` <span class="member-link-report-match-field">(${escapeHtml(matchedField)})</span>` : '';
-  return `<span class="member-link-report-discord-name">${escapeHtml(value)}</span>${fieldText}`;
+  const strength = getMemberLinkMatchStrength(link?.match_confidence);
+  const fuzzy = String(link?.link_method || '').trim().toLowerCase() === 'fuzzy' && strength !== 'exact';
+  // All three Discord names, with the one the matcher compared highlighted, so a
+  // reviewer can judge the link without opening another dialog.
+  const names = renderDiscordNames(link, {
+    matchField: matchedField || '',
+    fuzzy,
+    lowSimilarity: strength === 'low'
+  });
+  const fieldText = matchedField ? ` <span class="member-link-report-match-field">Matched on ${escapeHtml(matchedField)}</span>` : '';
+  return `<span class="member-link-report-discord-name">${names}</span>${fieldText}`;
 }
 
 function renderMemberLinksRows() {
@@ -2958,52 +3003,92 @@ function renderMemberLinksRows() {
   }
 
   const sortedLinks = getSortedMemberLinksForReport(memberLinks);
+  const statusOf = (link) => String(link.link_status || '').trim().toLowerCase();
+  const isBlocked = (link) => Number(link.locked || 0) === 1 || statusOf(link) === 'blocked';
+  // A member who told us they do not use Discord, do not play ESO or are not in the
+  // guild is never offered as a fuzzy match; their pair stays listed apart so a
+  // stale row can still be removed.
+  const isOptedOut = (link) => Boolean(link.eso_opt_out || link.discord_opt_out);
+  const candidates = sortedLinks.filter((link) => statusOf(link) === 'candidate' && !isBlocked(link) && !isOptedOut(link));
+  const excluded = sortedLinks.filter((link) => statusOf(link) === 'candidate' && !isBlocked(link) && isOptedOut(link));
+  const blocks = sortedLinks.filter((link) => isBlocked(link));
+  const linked = sortedLinks.filter((link) => statusOf(link) === 'linked' && !isBlocked(link));
+  const grouped = new Set([...candidates, ...excluded, ...blocks, ...linked]);
+  const other = sortedLinks.filter((link) => !grouped.has(link));
+
+  const renderRow = (link) => {
+    const status = statusOf(link);
+    const method = String(link.link_method || '').trim().toLowerCase();
+    const blocked = isBlocked(link);
+    return `
+      <tr
+        data-member-links-report-row
+        data-member-links-report-search="${escapeAttribute(getMemberLinksReportSearchText(link))}"
+        data-member-links-report-status="${escapeAttribute(status)}"
+        data-member-links-report-method="${escapeAttribute(method)}"
+        data-member-links-report-action="${escapeAttribute(blocked ? 'can-unblock' : (status === 'linked' ? 'can-unlink' : (status === 'candidate' ? 'needs-link' : '')))}"
+      >
+        <td>${escapeHtml(link.eso_account_name || '')}</td>
+        <td>${getMemberLinkReportDiscordDisplay(link)}</td>
+        <td class="member-links-status-col">${escapeHtml(blocked ? 'blocked' : (status || ''))}</td>
+        <td class="member-links-method-col">${escapeHtml(method || '')}${Number(link.locked || 0) === 1 ? ' 🔒' : ''}</td>
+        <td class="member-links-action-col">
+          <div class="member-link-actions">
+            ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
+            ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Unlink this ESO/Discord pair" title="Unlink this ESO/Discord pair">🗑</button>` : ''}
+            ${canManageGuildSyncLinks() && blocked ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block">↺</button>` : ''}
+          </div>
+        </td>
+        <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
+      </tr>
+    `;
+  };
+
+  const renderSection = (id, title, note, rows, emptyText) => `
+    <section class="report-result-section member-links-section" data-member-links-section="${id}">
+      <div class="report-result-section-header">
+        <div>
+          <h4>${escapeHtml(title)}</h4>
+          <p>${escapeHtml(note)}</p>
+        </div>
+        <span>${escapeHtml(String(rows.length))} row${rows.length === 1 ? '' : 's'}</span>
+      </div>
+      ${rows.length > 0 ? `
+        <div class="roster-history-event-table-shell member-links-table-shell">
+          <table class="discord-member-table roster-history-event-table member-links-table">
+            <thead>
+              <tr>
+                <th>ESO Account</th>
+                <th>Discord Member</th>
+                <th class="member-links-status-col">Status</th>
+                <th class="member-links-method-col">Method</th>
+                <th class="member-links-action-col">Action</th>
+                <th class="member-links-confidence-col">Confidence %</th>
+              </tr>
+            </thead>
+            <tbody>${rows.map(renderRow).join('')}</tbody>
+          </table>
+        </div>
+      ` : `<div class="roster-history-muted report-section-empty">${escapeHtml(emptyText)}</div>`}
+    </section>
+  `;
 
   return `
-    <div class="roster-history-event-table-shell member-links-table-shell">
-      <table class="discord-member-table roster-history-event-table member-links-table">
-        <thead>
-          <tr>
-            <th>ESO Account</th>
-            <th>Discord Member</th>
-            <th class="member-links-status-col">Status</th>
-            <th class="member-links-method-col">Method</th>
-            <th class="member-links-action-col">Action</th>
-            <th class="member-links-confidence-col">Confidence %</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${sortedLinks.map((link) => {
-    const status = String(link.link_status || '').trim().toLowerCase();
-    const method = String(link.link_method || '').trim().toLowerCase();
-    const discordMatchLabel = getMemberLinkReportDiscordDisplay(link);
-    return `
-              <tr
-                data-member-links-report-row
-                data-member-links-report-search="${escapeAttribute(getMemberLinksReportSearchText(link))}"
-                data-member-links-report-status="${escapeAttribute(status)}"
-                data-member-links-report-method="${escapeAttribute(method)}"
-                data-member-links-report-action="${escapeAttribute(Number(link.locked || 0) === 1 || status === 'blocked' ? 'can-unblock' : (status === 'linked' ? 'can-unlink' : (status === 'candidate' ? 'needs-link' : '')))}"
-              >
-                <td>${escapeHtml(link.eso_account_name || '')}</td>
-                <td>${discordMatchLabel}</td>
-                <td class="member-links-status-col">${escapeHtml((Number(link.locked || 0) === 1 || status === 'blocked') ? 'blocked' : (status || ''))}</td>
-                <td class="member-links-method-col">${escapeHtml(method || '')}${Number(link.locked || 0) === 1 ? ' 🔒' : ''}</td>
-                <td class="member-links-action-col">
-                  <div class="member-link-actions">
-                    ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
-                    ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Unlink this ESO/Discord pair" title="Unlink this ESO/Discord pair">🗑</button>` : ''}
-                    ${canManageGuildSyncLinks() && (Number(link.locked || 0) === 1 || status === 'blocked') ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block">↺</button>` : ''}
-                  </div>
-                </td>
-                <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
-              </tr>
-            `;
-  }).join('')}
-        </tbody>
-      </table>
-      <div id="memberLinksReportSearchEmpty" class="roster-history-muted" hidden>No member links match your search.</div>
-    </div>
+    ${renderSection('candidates', 'Possible links to make',
+      'Candidates the matcher scored at 82% or higher. Members who told us they do not use Discord, do not play ESO or are not guild members are not offered here.',
+      candidates, 'No candidate links are waiting for review.')}
+    ${renderSection('blocks', 'Blocks we can remove',
+      'Auto-linking is blocked for these pairs. Remove a block to let the matcher consider them again.',
+      blocks, 'No blocked pairs.')}
+    ${renderSection('linked', 'Links we can unlink',
+      'Confirmed ESO / Discord links. Unlink a pair to break the connection.',
+      linked, 'No confirmed links yet.')}
+    ${excluded.length ? renderSection('excluded', 'Excluded from fuzzy matching',
+      'Members who told us they do not use Discord, do not play ESO or are not guild members. These pairs are left out of matching until the answer changes; remove stale rows here.',
+      excluded, '') : ''}
+    ${other.length ? renderSection('other', 'Other link rows',
+      'Pairs that are neither candidates, blocked nor linked.', other, '') : ''}
+    <div id="memberLinksReportSearchEmpty" class="roster-history-muted" hidden>No member links match your search.</div>
   `;
 }
 
@@ -3114,7 +3199,7 @@ function handleMemberLinksUpdated(payload = {}) {
   memberLinks = payload.links;
   // Linking clears contact preferences on the server, including links made from the ESO roster.
   void loadMembershipDMPreferences({ force: true });
-  // Reports & Admin has no live member rows unless a member-link dialog is open.
+  // Reports and Admin have no live member rows unless a member-link dialog is open.
   if (changed && shouldRefreshMemberLinksView()) {
     updateMemberLinksView();
   }
@@ -8147,6 +8232,8 @@ async function refreshESORunningStatus(options = {}) {
       error: String(status?.error || ''),
       message: String(status?.message || '')
     };
+    // A failed detector is unknown, not "running", so only a clean report counts.
+    reportESOStatusToBackend(esoRunningStatus.running && !esoRunningStatus.error);
     updateESORunningIndicator();
 
     if (!esoRunningStatus.running) {
@@ -9217,6 +9304,7 @@ function handleCurrentAccountProfile(user) {
 }
 
 function renderDiscordArea() {
+  resetGuildToolsLauncher();
   const area = document.querySelector('#discordArea');
   if (!area) {
     return;
@@ -9243,6 +9331,7 @@ function renderDiscordArea() {
       </div>
     `;
 
+    wireGuildToolsLauncher(area, {openExternal: BrowserOpenURL, closeProfile: () => closeProfileMenu()});
     updateUserAdministrationBadge(userAdministrationPanel.count);
     const avatarButton = document.querySelector('#discordAvatarButton');
 
@@ -9280,6 +9369,7 @@ function toggleProfileMenu() {
     return;
   }
 
+  document.querySelector('.guild-tools-launcher')?.removeAttribute('open');
   openProfileMenu();
 }
 
@@ -9369,6 +9459,7 @@ function renderOpenProfileMenuContents() {
   `;
 
   voiceHotkey.wire(menu);
+  decorateProfileMenu(menu, {openExternal: BrowserOpenURL, openSections: profileOpenSections, onDesktopClose: () => voiceHotkey.close()});
   menu.querySelector('#returnToMyAccount')?.addEventListener('click',()=>void changeGuildSyncUser(null));
   menu.querySelector('#switchGuildSyncAccount')?.addEventListener('change',event=>{if(event.target.value)void changeGuildSyncUser(event.target.value);});
   menu.querySelectorAll('[data-role-view]').forEach(button=>button.addEventListener('click',()=>void changeGuildSyncRoleView(button.dataset.roleView)));
@@ -9970,8 +10061,13 @@ function connectSocket() {
       }
     },15000);
     sendVersionCheck();
+    // Ask for the current roster of signed-in people, and re-report our own ESO
+    // state because a reconnect starts a fresh server-side connection record.
+    reportedEsoPresence = null;
+    connectedSocket.emit('guildsync:presence-request');
   });
 
+  onCurrentSocket('guildsync:presence',payload=>setGuildSyncPresence(payload));
   onCurrentSocket('guildsync:users-changed',payload=>userAdministrationPanel.changed(payload));
   onCurrentSocket('guildsync:account-profile',user=>{if(socket===connectedSocket)handleCurrentAccountProfile(user);});
   onCurrentSocket('guildsync:user-switch-changed',payload=>{if(socket===connectedSocket)applyUserSwitchProfile(payload?.user);});
@@ -9994,6 +10090,7 @@ function connectSocket() {
     stopVersionCheckTimer();
     stopESOStatusPolling();
     stopDepositMailAvailabilityPolling();
+    setGuildSyncPresence(null);
   });
 
   onCurrentSocket('guildsync:version-status', (payload) => {
@@ -10584,6 +10681,82 @@ function recalculateCurrentSystemMessage() {
   clearSystemMessageTimeouts();
 
   showSystemMessage(currentID);
+}
+
+function setGuildSyncPresence(payload) {
+  const users = Array.isArray(payload?.users) ? payload.users : [];
+
+  guildSyncPresence = {
+    users,
+    total: Number(payload?.total) || users.length,
+    eso_running: Number(payload?.eso_running) || users.filter(user => user?.eso_running).length
+  };
+
+  refreshGuildSyncPresence();
+}
+
+function guildSyncPresenceClientLabel(user) {
+  const types = Array.isArray(user?.client_types) ? user.client_types.filter(Boolean) : [];
+  return types.length ? types.join(' + ') : 'desktop';
+}
+
+function refreshGuildSyncPresence() {
+  const host = document.querySelector('#guildSyncPresence');
+
+  if (!host) {
+    return;
+  }
+
+  const label = document.querySelector('#guildSyncPresenceLabel');
+  const tooltip = document.querySelector('#guildSyncPresenceTooltip');
+  // Everyone signed in is counted, including this session.
+  const people = guildSyncPresence.users;
+  const visible = people.length > 0;
+
+  host.hidden = !visible;
+  // The bar only shortens its status-message area while this line is showing.
+  host.closest?.('.status-bar')?.classList.toggle('has-guildsync-presence', visible);
+
+  if (tooltip) {
+    tooltip.innerHTML = '';
+  }
+
+  if (!visible) {
+    return;
+  }
+
+  const esoRunning = people.filter(user => user?.eso_running).length;
+
+  if (label) {
+    label.textContent = `${people.length} signed in \u00b7 ${esoRunning} with ESO running`;
+  }
+
+  if (tooltip) {
+    const rows = people.map(user => {
+      const detail = [user?.login, guildSyncPresenceClientLabel(user)].filter(Boolean).map(escapeHtml).join(' \u00b7 ');
+      const dotClass = user?.eso_running ? 'eso-on' : 'eso-off';
+      return `<div class="guildsync-presence-row"><span class="guildsync-presence-dot ${dotClass}" aria-hidden="true"></span><div class="guildsync-presence-who"><b>${escapeHtml(user?.name || user?.user_id || 'GuildSync user')}</b><small>${detail}</small></div></div>`;
+    }).join('');
+    const count = `${people.length} ${people.length === 1 ? 'user' : 'users'}`;
+    const summary = `${count} \u00b7 ${esoRunning} with ESO running`;
+    tooltip.innerHTML = `<div class="guildsync-presence-title"><strong>Signed in to GuildSync</strong><span>${summary}</span></div><div class="guildsync-presence-list">${rows}</div>`;
+  }
+}
+
+function reportESOStatusToBackend(running) {
+  const next = Boolean(running);
+
+  if (reportedEsoPresence === next) {
+    return;
+  }
+
+  reportedEsoPresence = next;
+
+  if (!socket?.connected) {
+    return;
+  }
+
+  socket.emit('guildsync:report-eso-status', { running: next });
 }
 
 function updateStatusDot() {

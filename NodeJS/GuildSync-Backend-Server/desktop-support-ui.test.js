@@ -65,7 +65,7 @@ test('desktop identifies itself at handshake and starts normal work only after a
  const source=fs.readFileSync(new URL('../../GO/GuildSync-Frontend-Client/frontend/src/main.js',import.meta.url),'utf8');
  const pick=name=>source.match(new RegExp(`(?:async )?function ${name}\\([^]*?(?=\\n(?:async )?function |$)`))[0];
  const handlers=new Map();let options,starts=0,checks=0;
- const connection={connected:true,on:(name,handler)=>handlers.set(name,handler)};
+ const connection={connected:true,on:(name,handler)=>handlers.set(name,handler),emit(){}};
  const context=vm.createContext({desktopSupport:{blocked:false,receive:()=>false},desktopVersionAccepted:false,desktopVersionHandshakeTimer:null,
   socket:null,guildSyncSession:{socket_url:'https://example.test',token:'test'},GUILDSYNC_APP_VERSION:'1.5.0',
   io:(_url,opts)=>{options=opts;return connection;},getGuildSyncClientPlatform:()=> 'windows',disconnectSocket(){},updateStatusDot(){},

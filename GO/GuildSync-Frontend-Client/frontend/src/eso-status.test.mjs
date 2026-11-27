@@ -23,7 +23,9 @@ test('an unknown detector state blocks pending writes and refreshes the displaye
   flushPendingDiscordReminderAckCleanup:async()=>{writes++;},
   uploadGuildSyncChatFromFile:async()=>{},
   discordReminderControls:{sync:async()=>{reminderSyncs++;}},
-  addSystemMessage:()=>{},updateBankingDataView:()=>{updates++;},formatError:String,TRANSIENT_MESSAGE_TTL_MS:0});
+  addSystemMessage:()=>{},updateBankingDataView:()=>{updates++;},formatError:String,TRANSIENT_MESSAGE_TTL_MS:0,
+  // Presence reporting is a separate collaborator; it is exercised by guildsync-presence-ui.test.js.
+  reportESOStatusToBackend:()=>{}});
  const label=indicatorContext(context);
  vm.runInContext(source.slice(start,end),context);
  await context.refreshESORunningStatus();
@@ -41,7 +43,9 @@ for(const running of [true,false])test(`recovery from detection error to ${runni
   flushPendingDiscordReminderAckCleanup:async()=>{writes++;},
   uploadGuildSyncChatFromFile:async()=>{},
   discordReminderControls:{sync:async()=>{reminderSyncs++;}},
-  addSystemMessage:()=>{},updateBankingDataView:()=>{updates++;},formatError:String,TRANSIENT_MESSAGE_TTL_MS:0});
+  addSystemMessage:()=>{},updateBankingDataView:()=>{updates++;},formatError:String,TRANSIENT_MESSAGE_TTL_MS:0,
+  // Presence reporting is a separate collaborator; it is exercised by guildsync-presence-ui.test.js.
+  reportESOStatusToBackend:()=>{}});
  const label=indicatorContext(context);
  vm.runInContext(source.slice(start,end),context);await context.refreshESORunningStatus();
  assert.equal(context.esoRunningStatus.running,running);assert.equal(context.esoRunningStatus.error,'');
