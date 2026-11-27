@@ -12,7 +12,12 @@ import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const client = fs.readFileSync(path.join(directory, 'mafia', 'app.js'), 'utf8');
+
+// A Windows checkout can hand these files over with CRLF line endings (the
+// repository stores LF, and core.autocrlf rewrites them on the way out), so the
+// page source is read with one line ending whatever the working copy looks like.
+const readSource = file => fs.readFileSync(file, 'utf8').replace(/\r\n?/g, '\n');
+const client = readSource(path.join(directory, 'mafia', 'app.js'));
 
 const DAY = 86400;
 const ROW_HEIGHT = 40;
