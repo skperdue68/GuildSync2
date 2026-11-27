@@ -19,12 +19,12 @@ test('trader cards can rank the last 14 days and never publish gold totals',()=>
  ];
  const report=buildCommunityStatistics({now,traderSales,env:{GUILDSYNC_COMMUNITY_TRADER_WINDOW:'14 days'}});
  const sales=report.highlights.find(h=>h.id==='trader-sales');
- assert.equal(sales.title,'Market Moguls (last 14 days, Top 5)');
+   assert.equal(sales.title,'Market Moguls — last 14 days (Top 5)');
  assert.equal(sales.hideValue,true);
  assert.deepEqual(sales.rows.map(r=>r.name),['Casey','Alice','Bob','Boundary']);
  assert.ok(sales.rows.every(r=>!('value' in r)),'gold values must not reach the report payload');
  const items=report.highlights.find(h=>h.id==='trader-items');
- assert.equal(items.title,'Pack Mules (last 14 days, Top 5)');
+   assert.equal(items.title,'Pack Mules — last 14 days (Top 5)');
  assert.match(items.description,/in the last 14 days/);
  assert.equal(items.unit,'items');
  assert.deepEqual(items.rows.map(r=>[r.name,r.value]),[['Bob',10],['Alice',5],['Casey',4],['Boundary',1]]);
@@ -51,7 +51,7 @@ test('buyer rankings count the current 50/50 raffle and split current members fr
  ];
  const report=buildCommunityStatistics({now,roster,traderSales});
  const members=report.highlights.find(h=>h.id==='trader-member-buyers');
- assert.equal(members.title,'Guild Regulars (current 50/50 raffle, Top 5)');
+   assert.equal(members.title,'Guild Regulars — this 50/50 raffle (Top 5)');
  // The card names the span in one short sentence instead of the raffle narrative.
  assert.match(members.description,/Gold spent by guild members on items listed by another guild member from Dec 19, 2026, 8:00 PM EST to Jan 30, 2027, 8:00 PM EST\./);
  assert.match(members.description,/Valid as of /);
@@ -63,7 +63,7 @@ test('buyer rankings count the current 50/50 raffle and split current members fr
  assert.deepEqual(members.rows.map(r=>r.name),['Bob','Alice']);
  assert.ok(members.rows.every(r=>!('value' in r)),'gold values must not reach the report payload');
  const visitors=report.highlights.find(h=>h.id==='trader-visitor-buyers');
- assert.equal(visitors.title,'Window Shoppers (current 50/50 raffle, Top 5)');
+   assert.equal(visitors.title,'Window Shoppers — this 50/50 raffle (Top 5)');
  assert.equal(visitors.hideValue,true);
  // Anyone off the roster counts, even when a member who has since left listed the item.
  assert.deepEqual(visitors.rows.map(r=>r.name),['Outsider','Walkin']);
@@ -188,7 +188,7 @@ test('all four trader cards share the raffle span by default',()=>{
  ];
  const report=buildCommunityStatistics({now,roster,traderSales});
  const sales=report.highlights.find(h=>h.id==='trader-sales');
- assert.equal(sales.title,'Market Moguls (current 50/50 raffle, Top 5)');
+   assert.equal(sales.title,'Market Moguls — this 50/50 raffle (Top 5)');
  assert.match(sales.description,/Highest gold earned on guild trader sales from /);
  assert.ok(!sales.description.includes('Counts the 50/50 raffle'));
  assert.ok(sales.description.includes('Valid as of'));

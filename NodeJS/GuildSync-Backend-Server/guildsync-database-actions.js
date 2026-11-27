@@ -5724,10 +5724,15 @@ export async function getMemberLinkOptions(applicationDB, payload = {}) {
   const discordUserId = String(payload.discordUserId || '').trim();
   const { rosterRows, discordRows, linkRows } = await loadMemberLinkInputs(applicationDB);
   const maps = buildExistingLinkMaps(linkRows);
+  // A member who said they do not use Discord, or that they are not in the guild /
+  // no longer play ESO, is not offered automatically. The option still comes back
+  // flagged so an officer can find them by searching for them.
+  const optOuts = await loadMemberLinkOptOuts(applicationDB);
 
   if (mode === 'discord-to-eso') {
     const source = discordRows.find((row) => String(row.discord_id) === discordUserId);
     const names = source ? getDiscordNameCandidates(source) : [];
+    const sourceExcluded = optOuts.discordIds.has(discordUserId) ? 'Marked as “not playing ESO / not a guild member”' : '';
     return rosterRows
       .filter((row) => !isMemberLinkPairLinked(maps, row.account_name, discordUserId))
       .filter((row) => !isMemberLinkPairBlocked(maps, row.account_name, discordUserId))
@@ -5739,17 +5744,26 @@ export async function getMemberLinkOptions(applicationDB, payload = {}) {
             best = { confidence: score, matchField: name.field || '' };
           }
         }
+        const excludeReason = sourceExcluded
+          || (optOuts.esoKeys.has(esoAccountKey(row.account_name)) ? 'Marked as “does not use Discord”' : '');
         return {
           account_name: row.account_name,
           rank: row.rank,
+          username: source?.username || '',
+          global_name: source?.global_name || '',
+          server_nickname: source?.server_nickname || '',
           confidence: best.confidence,
-          matchField: best.matchField
+          matchField: best.matchField,
+          ...(excludeReason ? { excluded: true, excludeReason } : {})
         };
       })
-      .sort((a, b) => b.confidence - a.confidence || String(a.account_name).localeCompare(String(b.account_name), undefined, { sensitivity: 'base' }));
+      .sort((a, b) => Number(Boolean(a.excluded)) - Number(Boolean(b.excluded))
+        || b.confidence - a.confidence
+        || String(a.account_name).localeCompare(String(b.account_name), undefined, { sensitivity: 'base' }));
   }
 
   const sourceEso = accountName;
+  const sourceExcluded = optOuts.esoKeys.has(esoAccountKey(sourceEso)) ? 'Marked as “does not use Discord”' : '';
   return discordRows
     .filter((row) => !isMemberLinkPairLinked(maps, sourceEso, row.discord_id))
     .filter((row) => !isMemberLinkPairBlocked(maps, sourceEso, row.discord_id))
@@ -5761,13 +5775,17 @@ export async function getMemberLinkOptions(applicationDB, payload = {}) {
           best = { confidence: score, matchField: name.field || '' };
         }
       }
+      const excludeReason = sourceExcluded
+        || (optOuts.discordIds.has(String(row.discord_id || '').trim()) ? 'Marked as “not playing ESO / not a guild member”' : '');
       return {
+        account_name: sourceEso,
         discord_id: row.discord_id,
         username: row.username,
         global_name: row.global_name,
         server_nickname: row.server_nickname,
         confidence: best.confidence,
-        matchField: best.matchField
+        matchField: best.matchField,
+        ...(excludeReason ? { excluded: true, excludeReason } : {})
       };
     })
     .sort((a, b) => {
