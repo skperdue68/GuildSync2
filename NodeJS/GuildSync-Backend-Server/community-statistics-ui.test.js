@@ -89,3 +89,16 @@ test('the section is titled Community Highlights and private cards list names wi
  assert.match(html,/Alice/);assert.doesNotMatch(html,/<strong>|NaN|undefined/);
  assert.match(createCommunityStatisticsPanel({request:async()=>({ok:true,report:{}})}).render(),/Community Highlights/);
 });
+
+// Community Highlights is a read-only report, so it belongs at the top of Reports;
+// Admin holds only the editable settings.
+test('Community Highlights is the first card on Reports and never renders on Admin',()=>{
+ for(const path of ['./web/src/main.js','../../GO/GuildSync-Frontend-Client/frontend/src/main.js']){
+  const source=fs.readFileSync(new URL(path,import.meta.url),'utf8');
+  const fn=name=>source.match(new RegExp(`function ${name}\\([^]*?(?=\\n(?:async )?function )`))?.[0]||'';
+  const reports=fn('renderReportsPanel'),admin=fn('renderAdminPanel');
+  assert.ok(reports.includes('communityStatisticsPanel.render()'),`${path}: Reports renders Community Highlights`);
+  assert.ok(reports.indexOf('communityStatisticsPanel.render()')<reports.indexOf('reports-list'),`${path}: Community Highlights comes before the report list`);
+  assert.ok(!admin.includes('communityStatisticsPanel'),`${path}: Admin does not render Community Highlights`);
+ }
+});
