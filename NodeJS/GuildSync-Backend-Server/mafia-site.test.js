@@ -131,7 +131,7 @@ test('Refresh reloads the window on screen instead of jumping to the first page'
   assert.match(client, /limit: String\(limit\)/);
   assert.match(
     client,
-    /await loadPage\(\{offset: start \+ \(first \? 0 : state\.loaded\), limit, append: !first\}\);/
+    /await loadPage\(\{offset: start \+ \(first \? 0 : state\.loaded\), limit, append: !first, background: true\}\);/
   );
   assert.match(client, /elements\.refresh\.addEventListener\('click', refreshCurrent\)/);
   assert.match(client, /elements\.pill\.addEventListener\('click', refreshCurrent\)/);
@@ -190,6 +190,17 @@ test('stale data turns amber instead of passing silently', () => {
   assert.match(client, /no new data for \$\{ageingLabel\(age\)\}/);
   assert.match(client, /setInterval\(refreshLatestText, 60000\)/);
   assert.match(ruleBody('.latest-data[data-stale="true"]'), /#fbbf24/i);
+});
+
+test('background batches leave the Refresh button and the summary alone', () => {
+  // Only the reader's own load may dim the button: a permalink fetches the
+  // focused page and then the rows above it, and toggling both twice in a
+  // moment looked like the button was being pressed repeatedly.
+  assert.match(client, /async function loadPage\(\{offset = 0, limit = PAGE_SIZE, append = false, prepend = false, focus = null, background = append \|\| prepend\} = \{\}\)/);
+  assert.match(client, /function beginLoading\(background\) \{\n  state\.loading = true;\n  if \(background\) return;/);
+  assert.match(client, /function endLoading\(background\) \{\n  state\.loading = false;\n  if \(background\) return;/);
+  assert.match(client, /elements\.refresh\.disabled = true;\n\n  try \{/);
+  assert.doesNotMatch(client, /function setLoading\(/);
 });
 
 test('more rows stream in before the reader reaches the bottom', () => {

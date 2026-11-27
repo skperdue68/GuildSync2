@@ -542,10 +542,23 @@ function hidePill() {
   elements.pill.hidden = true;
 }
 
-function setLoading(loading) {
-  state.loading = loading;
-  elements.refresh.disabled = loading;
-  if (loading) elements.summary.textContent = 'Loading…';
+// A background batch — the next stretch of rows, or the rows above a permalink
+// — is not something the reader asked for, so it neither disables Refresh nor
+// takes the summary over: flipping both twice within a moment reads as a
+// flicker on the header button.
+function beginLoading(background) {
+  state.loading = true;
+  if (background) return;
+
+  elements.refresh.disabled = true;
+  elements.summary.textContent = 'Loading…';
+}
+
+function endLoading(background) {
+  state.loading = false;
+  if (background) return;
+
+  elements.refresh.disabled = false;
 }
 
 // --- Following the newest row -------------------------------------------
@@ -805,7 +818,7 @@ function clearFiltersForPermalink() {
   hidePill();
 }
 
-async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend = false, focus = null} = {}) {
+async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend = false, focus = null, background = append || prepend} = {}) {
   const sequence = ++requestSequence;
   // Read before the fetch: whether the reader was watching the bottom.
   const followFromBottom = isFollowingBottom();
@@ -824,7 +837,7 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend 
   if (state.end != null) params.set('end', String(state.end));
   if (focus != null) params.set('focus', String(focus));
 
-  setLoading(true);
+  beginLoading(background);
   if (!append) setError('');
 
   try {
@@ -868,7 +881,7 @@ async function loadPage({offset = 0, limit = PAGE_SIZE, append = false, prepend 
     }
   } finally {
     if (sequence === requestSequence) {
-      setLoading(false);
+      endLoading(background);
       setTimeout(maybeLoadMore, 0);
     }
   }
@@ -922,16 +935,24 @@ async function refreshCurrent() {
   const target = Math.max(PAGE_SIZE, state.loaded);
   let first = true;
 
-  do {
-    const limit = Math.min(PAGE_SIZE, Math.max(1, target - (first ? 0 : state.loaded)));
-    const before = state.loaded;
+  // The refresh keeps the button for as long as it runs, so pressing it again
+  // part-way through cannot start a second one; its batches load quietly.
+  elements.refresh.disabled = true;
 
-    await loadPage({offset: start + (first ? 0 : state.loaded), limit, append: !first});
+  try {
+    do {
+      const limit = Math.min(PAGE_SIZE, Math.max(1, target - (first ? 0 : state.loaded)));
+      const before = state.loaded;
 
-    const added = first ? state.loaded : state.loaded - before;
-    first = false;
-    if (added <= 0) break;
-  } while (state.loaded < target);
+      await loadPage({offset: start + (first ? 0 : state.loaded), limit, append: !first, background: true});
+
+      const added = first ? state.loaded : state.loaded - before;
+      first = false;
+      if (added <= 0) break;
+    } while (state.loaded < target);
+  } finally {
+    elements.refresh.disabled = false;
+  }
 
   if (followFromBottom) scrollToNewest();
   else elements.tableScroll.scrollTop = scrollTop;
