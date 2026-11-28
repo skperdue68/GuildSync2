@@ -7566,6 +7566,12 @@ body {
   display:block;
   width:100%;
   height:100%}
+.guild-tool-icon img {
+  display:block;
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  border-radius:4px}
 .guild-tool-copy {
   flex:1;
   min-width:0;
