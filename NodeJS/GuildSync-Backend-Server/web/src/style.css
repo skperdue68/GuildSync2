@@ -7695,12 +7695,30 @@ body {
 /* Each table's column headers stick to the top of that pane and leave with their own
    table, so the next table's header takes over only once that table reaches the top.
    The shells must not scroll on their own or sticky has nothing to track. */
+/* A panel's or section's title row sticks at the top of the pane and its column
+   headers tuck in underneath, so each one reads as a single sticky header until the
+   next arrives. --gs-section-head-h is the measured title height, set per section. */
+.member-links-report-body .member-link-history-header,
+.member-links-report-body .report-result-section-header,
+.associate-ticket-report-dialog .report-result-section-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #101a2e;
+}
+
 .member-links-table thead th,
 .associate-ticket-report-dialog .report-result-table thead th {
   position: sticky;
-  top: 0;
+  top: var(--gs-section-head-h, 0px);
   z-index: 2;
   background: rgb(17, 34, 70);
+}
+
+/* The row whose diagnostics or history is open. */
+.member-links-table tr.member-links-report-row-source > td {
+  background: rgba(59, 130, 246, 0.18);
+  box-shadow: inset 0 1px 0 rgba(96, 165, 250, 0.5), inset 0 -1px 0 rgba(96, 165, 250, 0.5);
 }
 
 /* The section is a clipped box for its rounded corners, which also traps sticky, so it
