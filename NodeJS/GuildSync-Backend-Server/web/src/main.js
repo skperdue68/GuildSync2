@@ -4331,7 +4331,16 @@ function renderMemberLinkCurrentCard(link) {
   const status = String(link.link_status || '').trim().toLowerCase();
   const isLinked = status === 'linked';
   const isCandidate = status === 'candidate';
-  const actionButton = isLinked
+  // A member who said they no longer play ESO or do not use Discord, or who has left the
+  // roster, would lose the ESO half of the pair; a removed link could not be rebuilt, so
+  // removal is not offered for them. typeof keeps this renderer usable in the viewer test.
+  const canReadRoster = typeof getRosterMemberByAccount === 'function';
+  const rosterMember = canReadRoster ? getRosterMemberByAccount(link.eso_account_name || '') : null;
+  const linkRemovalBlocked = isLinked && (Boolean(link.eso_opt_out || link.discord_opt_out || rosterMember?.discord_opt_out) || (canReadRoster && !rosterMember));
+  const linkRemovalBlockedReason = Boolean(link.eso_opt_out || link.discord_opt_out || rosterMember?.discord_opt_out)
+    ? 'they no longer play ESO or do not use Discord'
+    : 'they are not on the guild roster';
+  let actionButton = isLinked
     ? `<button
         class="member-link-trash-button"
         type="button"
@@ -4349,7 +4358,7 @@ function renderMemberLinkCurrentCard(link) {
           title="Approve suggested link"
           data-accept-dialog-member-candidate="${escapeAttribute(link.eso_account_name || '')}"
           data-accept-dialog-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
-        ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg></button>`
+        ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>`
       : (Number(link.locked || 0) === 1 || status === 'blocked')
         ? `<button
             class="member-link-approve-button member-link-unblock-button"
@@ -4362,6 +4371,8 @@ function renderMemberLinkCurrentCard(link) {
           ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>`
         : '';
 
+  if (linkRemovalBlocked) actionButton = '';
+
   return `
     <div class="member-link-current-card">
       <div class="member-link-current-details">
@@ -4372,6 +4383,7 @@ function renderMemberLinkCurrentCard(link) {
         ${getMemberLinkMatchedField(link) ? `<div><span>Matched:</span> Matched on ${escapeHtml(getMemberLinkMatchedField(link))}</div>` : ''}
       </div>
       ${canManageGuildSyncLinks() ? actionButton : ''}
+      ${canManageGuildSyncLinks() && linkRemovalBlocked ? `<p class="member-link-removal-blocked" title="This link cannot be rebuilt, so it cannot be removed.">Unlink disabled: ${escapeHtml(linkRemovalBlockedReason)}.</p>` : ''}
     </div>
   `;
 }

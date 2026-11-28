@@ -7715,6 +7715,27 @@ body {
   background: rgb(17, 34, 70);
 }
 
+/* The pane's top padding sits above a pinned header, and rows scroll through it. Cover
+   that band with the header's own colour so nothing shows above the sticky area. */
+.member-links-report-body .member-link-history-header::before,
+.member-links-report-body .report-result-section-header::before,
+.associate-ticket-report-dialog .report-result-section-header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 30px;
+  background: inherit;
+}
+
+/* Why an existing link cannot be removed from the member link dialog. */
+.member-link-removal-blocked {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: rgba(253, 224, 71, 0.9);
+}
+
 /* The row whose diagnostics or history is open. */
 .member-links-table tr.member-links-report-row-source > td {
   background: rgba(59, 130, 246, 0.18);
