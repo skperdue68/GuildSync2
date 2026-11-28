@@ -23,9 +23,13 @@ The same settings are documented in the backend `.env.example`. They are backend
 
 Deploy the updated bot and backend together. Register the new command with the bot package’s existing `npm run deploy` command when ready to update Discord. Development tests do not register commands or send actual DMs.
 
+## Soldier promotions
+
+The **Promote - Soldier** user context-menu command (right-click a member, then Apps) queues the whole promotion. The role change and the reminder DM are applied together when the queue reaches it, never when the officer clicks, and the queue survives a bot or backend restart. Promotions take priority over campaign entries at the next paced slot, so one is sent before the next membership DM rather than alongside it, and it is independent of the member's campaign eligibility and contact preferences. The officer who queued it receives a DM receipt with the member, the roles removed and added, and the send outcome.
+
 ## Officer commands
 
-The commands require the Discord **Consigliere** or **Kingpin** role and an approved GuildSync **User** or **Admin** account. Members without either officer role are refused. The **Discord Reminders** button in GuildSync applies the same rule: it appears only for an approved User or Admin whose guild rank role is Consigliere or Kingpin.
+The commands require the Discord **Consigliere** or **Kingpin** role and an approved GuildSync **User** or **Admin** account. Members without either officer role are refused. The **Discord Reminders** section of GuildSync’s Admin tab applies the same rule: it appears only for an approved User or Admin whose guild rank role is Consigliere or Kingpin.
 
 | Command | Result |
 | --- | --- |

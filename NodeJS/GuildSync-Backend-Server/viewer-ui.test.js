@@ -25,6 +25,27 @@ for(const file of ['./web/src/main.js','../../GO/GuildSync-Frontend-Client/front
   assert.match(managed,/class="member-link-unlink-icon"/);assert.match(managed,/class="member-link-action-icon"/);
   assert.doesNotMatch(managed,/🗑|✓|↺/);
  });
+ test(`${file}: an open diagnostics or history panel sits under its own row`,()=>{
+  const ctx=context({canManageGuildSyncLinks:()=>true,memberLinksLoading:false,
+   memberLinks:[{eso_account_name:'Alpha',discord_user_id:'7',link_status:'linked',link_method:'dm-self-report'},{eso_account_name:'Beta',discord_user_id:'8',link_status:'linked',link_method:'exact'}],
+   getSortedMemberLinksForReport:links=>links,getMemberLinkReportDiscordDisplay:()=>'Discord member',getMemberLinksReportSearchText:()=>'',
+   memberLinkDiagnostics:{pair:{esoAccountName:'Alpha',discordUserId:'7'},data:null,loading:false,error:''},
+   memberLinkHistory:{pair:{esoAccountName:'Alpha',discordUserId:'7',discordLabel:'Alpha'},events:[],loading:false,error:''},
+   renderMemberLinkDiagnosticsPanel:()=>'<section data-panel="diagnostics"></section>',
+   renderMemberLinkHistoryPanel:()=>'<section data-panel="history"></section>'});
+  vm.runInContext(functions(['renderMemberLinksRows']),ctx);
+  const html=vm.runInContext('renderMemberLinksRows()',ctx);
+  const alpha=html.indexOf('data-member-links-report-eso="Alpha"');
+  const beta=html.indexOf('data-member-links-report-eso="Beta"');
+  const diagnostics=html.indexOf('data-panel="diagnostics"');
+  const history=html.indexOf('data-panel="history"');
+  assert.ok(alpha>=0&&beta>alpha,'both rows render');
+  // The panels belong to Alpha's pair, so they come after Alpha's row and before the
+  // next row, not above the whole table.
+  assert.ok(diagnostics>alpha&&diagnostics<beta,'diagnostics panel is not above the table');
+  assert.ok(history>diagnostics&&history<beta,'history panel follows its own row');
+  assert.equal((html.match(/class="member-link-detail-row"/g)||[]).length,1,'only the open pair gets a detail row');
+ });
  test(`${file}: Viewer can read notes and linked identities without editing forms`,()=>{
   const ctx=context({canEditGuildSyncData:()=>false,rosterNotesDialogAccountName:'@Test',rosterNotesDialogError:'',renderRosterNotesRows:()=>'<tr><td>Existing note</td></tr>',renderRosterNotesForm:()=>'<textarea id="editNote"></textarea>',renderDiscordNames,getMemberLinkMatchedField:()=>'',renderMemberLinkCurrentStatus:()=> 'Linked',formatMemberLinkMethodForDisplay:String});
   vm.runInContext(functions(['renderRosterNotesDialog','renderMemberLinkCurrentCard','renderMemberLinkDialogOptions']),ctx);

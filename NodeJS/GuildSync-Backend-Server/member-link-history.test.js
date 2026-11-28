@@ -218,6 +218,43 @@ test('removing a block records it, and doing it twice records nothing extra', as
   assert.equal(state.history.length, 1);
 });
 
+test('a membership-DM self-report is kept in the pair history', async () => {
+  const {ctx, db, state} = loadContext();
+  await ctx.upsertMemberLinkUnlocked(db, {
+    esoAccountName: 'Sylvan-glade',
+    discordUserId: '123',
+    discordServerNickname: 'Sylvan (he/him)',
+    linkStatus: 'linked',
+    linkMethod: 'dm-self-report',
+    matchConfidence: 100
+  });
+  assert.equal(state.history.length, 1);
+  const [eso, discord, label, action, previousStatus, previousMethod, status, method, confidence] = state.history[0];
+  assert.equal(eso, 'Sylvan-glade');
+  assert.equal(discord, '123');
+  assert.equal(label, 'Sylvan (he/him)');
+  assert.equal(action, 'linked');
+  assert.equal(previousStatus, null);
+  assert.equal(previousMethod, null);
+  assert.equal(status, 'linked');
+  assert.equal(method, 'dm-self-report');
+  assert.equal(confidence, 100);
+});
+
+test('a link made before history existed gets one opening row, not a made-up transition', () => {
+  const backfill = source.slice(source.indexOf('INSERT INTO guildsync_member_link_history (\n      eso_account_name'), source.indexOf('INSERT INTO guildsync_member_link_history (\n      eso_account_name') + 2500);
+  assert.match(backfill, /SELECT/, 'the backfill should copy existing links');
+  assert.match(backfill, /FROM guildsync_member_links links/);
+  assert.match(backfill, /WHERE NOT EXISTS/);
+  assert.match(backfill, /'Recorded when change history was added'/);
+  assert.match(backfill, /links\.updated_at/);
+  // The opening row states the pair's current state, so a linked pair is not recorded
+  // as a candidate and a block keeps its block action.
+  assert.match(backfill, /WHEN 'linked' THEN 'linked'/);
+  assert.match(backfill, /WHEN 'candidate' THEN 'candidate_found'/);
+  assert.match(backfill, /WHEN 'blocked' THEN 'blocked'/);
+});
+
 test('the history query filters by pair, clamps the limit and needs one side', async () => {
   const {ctx} = loadContext();
   vm.runInContext(fn('getMemberLinkHistory'), ctx);

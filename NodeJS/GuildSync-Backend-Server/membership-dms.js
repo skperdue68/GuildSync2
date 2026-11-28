@@ -85,6 +85,8 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
   };
   const delay=()=>{const [min,max]=paceBounds();return min+Math.floor(Math.max(0,Math.min(.999999999,random()))*(max-min+1));};
   const rememberPace=state=>{const [min,max]=paceBounds();if(state.campaign){state.campaign.paceMin=min;state.campaign.paceMax=max;}};
+  // Any send opens the next paced window for everything that shares this queue.
+  const scheduleNext=state=>{const next=now()+delay();if(state.campaign)state.campaign.nextAt=next;else state.outboxNextAt=next;};
   // A faster saved window shortens (never extends) the wait already scheduled, so
   // the change reaches the campaign that is currently running.
   function applyPace(state) {
@@ -115,6 +117,30 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
       state.expiredClaims.push({discordId:String(job.userId),reason});
       state.campaign.nextAt=Math.max(state.campaign.nextAt,now()+delay());
     }
+    for(const job of state.outbox||[])if(job.status==='sending'&&job.claimedAt+120<=now()){
+      job.status='failed';job.detail='No delivery result was recorded in time.';
+    }
+  }
+  // One-off DMs (a Soldier promotion) ride the campaign's paced slot, so one can
+  // never be sent alongside a membership DM and a burst of them cannot happen.
+  function claimOutbox(state) {
+    const outbox=state.outbox;
+    if(!outbox?.length||outbox.some(job=>job.status==='sending'))return null;
+    const gate=state.campaign?Number(state.campaign.nextAt)||0:Number(state.outboxNextAt)||0;
+    if(gate>now())return null;
+    const job=outbox.find(entry=>entry.status==='pending');
+    if(!job)return null;
+    job.status='sending';job.token=randomUUID();job.claimedAt=now();
+    scheduleNext(state);
+    return job;
+  }
+  function queueOutbox(state,job) {
+    // Only the last 20 settled entries are kept as history; work always stays.
+    const active=entry=>['pending','sending'].includes(entry.status);
+    const existing=state.outbox||[];
+    state.outbox=[...existing.filter(active),...existing.filter(entry=>!active(entry)).slice(-19)];
+    state.outbox.push({id:randomUUID(),kind:'promotion',status:'pending',createdAt:now(),...job});
+    return state.outbox.filter(entry=>entry.status==='pending').length;
   }
   return {
     start(state,members,days,restart=false) {
@@ -136,6 +162,8 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
     claim(state,members,days) {
       applyPace(state);
       expire(state);
+      const outbox=claimOutbox(state);
+      if(outbox)return outbox;
       const campaign=state.campaign;
       if(!campaign||campaign.status!=='running'||campaign.nextAt>now()||campaign.queue.some(q=>q.status==='sending'))return null;
       const present=new Map(members.map(m=>[m.id,m]));
@@ -152,6 +180,14 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
       campaign.status='complete';return null;
     },
     finish(state,id,token,result) {
+      const outbox=state.outbox?.find(entry=>entry.id===id);
+      if(outbox) {
+        if(outbox.status!=='sending'||outbox.token!==token)throw Error('This DM delivery claim is no longer active.');
+        if(!['sent','failed','skipped','uncertain'].includes(result.status))throw Error('Invalid DM outcome.');
+        outbox.status=result.status;outbox.detail=String(result.detail||'').slice(0,255);outbox.messageId=result.messageId||null;
+        scheduleNext(state);
+        return outbox;
+      }
       // Campaign claims live on the queue; only a test DM is looked up separately.
       const job=state.campaign?.queue?.find(entry=>entry.id===id)||state.testDeliveries?.[id];
       if(!job||job.status!=='sending'||job.token!==token)throw Error('This DM delivery claim is no longer active.');
@@ -173,7 +209,9 @@ export function createDMCampaignEngine({now=()=>Math.floor(Date.now()/1000),rand
       }
       if(result.status==='skipped'&&state.campaign)state.campaign.nextAt=now();
       return job;
-    }
+    },
+    claimOutbox,
+    queueOutbox
   };
 }
 
@@ -636,8 +674,22 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
         result:{status,accountName,...(rosterMatch?{rosterMatch}:{}),...(removal?{removal}:{}),...(nickname?{nickname}:{})}},
         destinationType:config.destinationType,destinationId:config.destinationId};
     },
+    async queuePromotion(guildId,{userId,requesterId,content,removeRoleIds,addRoleId}={}) {
+      const snowflake=value=>/^\d{5,32}$/.test(String(value||''));
+      const id=String(userId||'').trim(),requester=String(requesterId||'').trim(),text=String(content||'').trim();
+      if(!snowflake(id))throw Error('A Discord user ID is required.');
+      if(!snowflake(requester))throw Error('The requesting officer is required.');
+      if(!snowflake(addRoleId))throw Error('The promotion role is required.');
+      if(!text||text.length>1900)throw Error('A queued DM must be 1-1900 characters.');
+      const removes=(Array.isArray(removeRoleIds)?removeRoleIds:[]).map(String).filter(snowflake).slice(0,10);
+      return atomic(guildId,async(state,connection)=>{
+        const [rows]=await connection.execute(`SELECT COALESCE(NULLIF(server_nickname,''),NULLIF(global_name,''),username) AS name FROM discord_members WHERE discord_id=?`,[id]);
+        return {queued:true,position:engine.queueOutbox(state,{userId:id,name:String(rows[0]?.name||'').trim(),content:text,
+          requesterId:requester,removeRoleIds:removes,addRoleId:String(addRoleId)})};
+      });
+    },
     async claim(guildId){return atomic(guildId,async(state,connection,config)=>{
-      const job=config.enabled?engine.claim(state,await candidates(connection),config.repeatDays):null;
+      const job=config.enabled?engine.claim(state,await candidates(connection),config.repeatDays):engine.claimOutbox(state);
       if(job){job.destinationId=config.destinationId;job.destinationType=config.destinationType;}
       return {job,config};
     });},
@@ -651,6 +703,8 @@ export function createMembershipDMService(db,{configuration,upsertLink,authorize
     });},
     async finish(guildId,id,token,result){return atomic(guildId,async(state,connection)=>{
       const job=engine.finish(state,id,token,result);
+      // A queued promotion is a one-off notice, not membership contact history.
+      if(job.kind==='promotion')return job;
       // The DM outcome is already settled at this point; a history write must never
       // turn a confirmed send into a retryable failure.
       if(!job.isTest&&job.status==='sent')try{
@@ -842,6 +896,7 @@ export function registerMembershipDMSocket(socket,service,{guildId,onLinked=asyn
       return result;
     },    outcome:p=>service.outcome(guildId,p),
     'removal-declined':p=>service.removalDeclined(guildId,p),
+    'queue-promotion':p=>service.queuePromotion(guildId,p),
     'claim-forward':()=>service.claimForward(guildId),
     'finish-forward':p=>service.finishForward(guildId,p.eventId,p.token,p.success,p.roleSuccess)};
   socket.on('guildsync:membership-dm',async(payload={},callback)=>{

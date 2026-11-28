@@ -2569,6 +2569,20 @@ function registerGuildSyncConnection(socket) {
 
   socket.on('guildsync:request-roster-data', async (payload = {}, callback) => {
     try {
+      // The freshness poll only needs the stored timestamp: roster imports are pushed
+      // to every client, so a client that missed a broadcast can compare this value
+      // with its loaded snapshot and ask for the roster only when it is behind.
+      if (payload?.version_only === true) {
+        const refreshDate = await getRosterDataDate(applicationDB);
+        sendSocketResponse(socket, 'guildsync:roster-data-request-result', callback, {
+          ok: true,
+          version_only: true,
+          last_refresh: refreshDate?.value || null,
+          at: new Date().toLocaleString()
+        });
+        return;
+      }
+
       const [members, refreshDate] = await Promise.all([
         getRosterDataJSON(applicationDB).then(members=>discordReminders.decorate(members)).then(members=>rosterNoteAccess.decorate(socket,members)),
         getRosterDataDate(applicationDB)

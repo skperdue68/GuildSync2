@@ -3493,11 +3493,40 @@ body {
   color: #e5e7eb;
 }
 
-/* The table sits inside the report content's 22px side padding plus its section border,
-   so the panels are inset the same amount to share the table's edges. */
-.member-links-report-body > .member-link-history-panel {
-  margin-left: 23px;
-  margin-right: 23px;
+/* A panel sits in a detail row directly under the pair it describes, so it is inset
+   from the table cells rather than from the dialog's own edge. */
+.member-link-detail-row > td {
+  padding: 0 0 14px;
+  background: transparent;
+}
+
+.member-link-detail-cell {
+  background: transparent;
+}
+
+.member-link-detail-cell > .member-link-history-panel {
+  margin: 0 12px 10px;
+}
+
+.member-link-detail-cell > .member-link-history-panel:last-child {
+  margin-bottom: 0;
+}
+
+/* The detail row is one wide cell, not a status column or a stacked card, so it opts
+   out of the per-column widths, the nowrap rule and the small-screen column labels. */
+.member-links-table tr.member-link-detail-row > td {
+  width: auto;
+  white-space: normal;
+}
+
+.member-links-table tr.member-link-detail-row > td::before {
+  content: none;
+}
+
+/* The error message under a panel's title starts on its own line instead of being
+   pulled up into the title by the shared rule. */
+.member-link-history-panel .discord-data-error {
+  margin: 10px 0 0;
 }
 
 .member-link-history-header {
@@ -7538,6 +7567,12 @@ body {
   display:block;
   width:100%;
   height:100%}
+.guild-tool-icon img {
+  display:block;
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  border-radius:4px}
 .guild-tool-copy {
   flex:1;
   min-width:0;
@@ -7689,15 +7724,20 @@ body {
 /* Each table's column headers stick to the top of that pane and leave with their own
    table, so the next table's header takes over only once that table reaches the top.
    The shells must not scroll on their own or sticky has nothing to track. */
-/* A panel's or section's title row sticks at the top of the pane and its column
-   headers tuck in underneath, so each one reads as a single sticky header until the
-   next arrives. --gs-section-head-h is the measured title height, set per section. */
-.member-links-report-body .member-link-history-header,
+/* A section's title row sticks at the top of the pane and its column headers tuck in
+   underneath, so each one reads as a single sticky header until the next arrives.
+   --gs-section-head-h is the measured title height, set per section. */
 .member-links-report-body .report-result-section-header,
 .associate-ticket-report-dialog .report-result-section-header {
   position: sticky;
   top: 0;
   z-index: 3;
+}
+
+/* Only a pinned header paints a background of its own. At rest the section's rounded
+   top corner and its border show through instead of a square block of colour. */
+.member-links-report-body .report-result-section-header.report-sticky-header-stuck,
+.associate-ticket-report-dialog .report-result-section-header.report-sticky-header-stuck {
   background: #101a2e;
 }
 
@@ -7720,17 +7760,16 @@ body {
   border-spacing: 0;
 }
 
-.member-links-report-body .member-link-history-header,
 .member-links-report-body .report-result-section-header,
 .associate-ticket-report-dialog .report-result-section-header {
   transform: translateZ(0);
 }
 
 /* The pane's top padding sits above a pinned header, and rows scroll through it. Cover
-   that band with the header's own colour so nothing shows above the sticky area. */
-.member-links-report-body .member-link-history-header::before,
-.member-links-report-body .report-result-section-header::before,
-.associate-ticket-report-dialog .report-result-section-header::before {
+   that band with the header's own colour so nothing shows above the sticky area. It is
+   only painted while the header is pinned, so nothing covers the section at rest. */
+.member-links-report-body .report-result-section-header.report-sticky-header-stuck::before,
+.associate-ticket-report-dialog .report-result-section-header.report-sticky-header-stuck::before {
   content: "";
   position: absolute;
   left: 0;

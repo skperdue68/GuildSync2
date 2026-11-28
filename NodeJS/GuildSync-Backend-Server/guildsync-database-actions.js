@@ -779,6 +779,50 @@ async function initializeSchema(db) {
     COLLATE utf8mb4_unicode_ci
   `);
 
+  // Links made before change history existed have no rows at all. Give each of those
+  // pairs one opening row describing the state it is in now, stamped with the link's
+  // last update, so its history panel is not empty and does not have to invent a
+  // transition that was never observed. Rows created from here on are recorded by the
+  // writer itself, so this only ever fills pairs that have no history yet.
+  await db.query(`
+    INSERT INTO guildsync_member_link_history (
+      eso_account_name,
+      discord_user_id,
+      discord_label,
+      action,
+      previous_status,
+      previous_method,
+      link_status,
+      link_method,
+      match_confidence,
+      actor_name,
+      recorded_at
+    )
+    SELECT
+      links.eso_account_name,
+      links.discord_user_id,
+      COALESCE(NULLIF(links.discord_server_nickname, ''), NULLIF(links.discord_display_name, ''), links.discord_username),
+      CASE links.link_status
+        WHEN 'linked' THEN 'linked'
+        WHEN 'candidate' THEN 'candidate_found'
+        WHEN 'blocked' THEN 'blocked'
+        ELSE 'updated'
+      END,
+      NULL,
+      NULL,
+      links.link_status,
+      links.link_method,
+      links.match_confidence,
+      'Recorded when change history was added',
+      links.updated_at
+    FROM guildsync_member_links links
+    WHERE NOT EXISTS (
+      SELECT 1 FROM guildsync_member_link_history history
+      WHERE LOWER(history.eso_account_name) = LOWER(links.eso_account_name)
+        AND history.discord_user_id = links.discord_user_id
+    )
+  `);
+
   await initializeTraderSalesSubscriptions(db);
   await initializeEsoAccountIdentity(db);
 }

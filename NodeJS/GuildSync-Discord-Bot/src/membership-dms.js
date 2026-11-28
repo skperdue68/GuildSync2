@@ -2,6 +2,7 @@ import {ActionRowBuilder,ButtonBuilder,ButtonStyle,EmbedBuilder,ModalBuilder,Tex
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {createFileDMIntake,createMemoryDMIntake,membershipIntakeKey} from './membership-dm-intake.js';
+import {promotionReceiptMessage} from './promotion-receipt.js';
 
 const nonce=id=>createHash('sha256').update(String(id)).digest('hex').slice(0,24);
 const safeText=value=>String(value||'').replace(/([\\`*_~|<>])/g,'\\$1');
@@ -211,7 +212,69 @@ export function createMembershipDMWorker({client,guildId,request,log=console.log
         userId:job.userId,status,detail,at:Math.floor(Date.now()/1000)}));
     }catch(error){log('Membership DM failure card could not be posted: '+error.message);}
   }
+  async function notifyRequester(job,receipt) {
+    if(!job.requesterId)return;
+    try {
+      const user=await client.users.fetch(job.requesterId);
+      await user.send(receipt);
+    } catch(error) {
+      log(`Promotion receipt could not be sent to ${job.requesterId}: ${error.message}`);
+    }
+  }
+  // The roles change here, in the same pass as the reminder, so an officer's
+  // click only queues the promotion.
+  async function deliverPromotion(job) {
+    const finish=result=>request('finish',{deliveryId:job.id,token:job.token,result});
+    const receipt=extra=>promotionReceiptMessage({userId:job.userId,name:job.name,status:extra.status,
+      detail:extra.detail||'',removed:extra.removed||[],added:extra.added||'',joinedAt:extra.joinedAt||null,
+      roleChanged:Boolean(extra.roleChanged)});
+    const settle=async(status,detail,extra={})=>{
+      try{await finish({status,detail,...(extra.messageId?{messageId:extra.messageId}:{})});}
+      catch(error){log(`Queued DM ${job.id} result could not be saved: ${error.message}`);}
+      await notifyRequester(job,receipt({status,detail,...extra}));
+      return {status,detail};
+    };
+    let guild,member;
+    try {
+      guild=await client.guilds.fetch(guildId);
+      member=await guild.members.fetch(job.userId);
+    } catch(error) {
+      const detail=error?.code===10007?'No longer in the Discord server.':discordErrorSummary(error,error.message);
+      log(`Queued DM ${job.id} could not be prepared: ${error.message}`);
+      return settle('failed',detail);
+    }
+    const roleName=id=>guild.roles?.cache?.get(id)?.name||String(id);
+    const held=(Array.isArray(job.removeRoleIds)?job.removeRoleIds:[]).filter(id=>member.roles.cache.has(id));
+    const addId=String(job.addRoleId||'');
+    const alreadySoldier=Boolean(addId)&&member.roles.cache.has(addId);
+    if(!held.length&&!alreadySoldier)return settle('skipped','They no longer hold a recruit role.',{joinedAt:member.joinedAt});
+    let removed=[];
+    try {
+      if(held.length){await member.roles.remove(held,'Promoted to Soldier');removed=held.map(roleName);}
+      if(!alreadySoldier)await member.roles.add(addId,'Promoted to Soldier');
+    } catch(error) {
+      const detail=discordErrorSummary(error,error.message);
+      log(`Queued DM ${job.id}: role change failed: ${error.message}`);
+      return settle('failed',`Role change failed: ${detail}`,{removed,added:roleName(addId),joinedAt:member.joinedAt});
+    }
+    const extra={removed,added:roleName(addId),joinedAt:member.joinedAt};
+    if(alreadySoldier)return settle('skipped','They were already a Soldier; leftover recruit roles were removed.',extra);
+    try {
+      const message=await member.send({content:job.content,allowedMentions:{parse:[]}});
+      try{await finish({status:'sent',messageId:message.id});}
+      catch(error){log(`Queued DM ${job.id} was delivered (${message.id}), but its confirmation needs review: ${error.message}`);}
+      await notifyRequester(job,receipt({status:'sent',...extra,roleChanged:true}));
+      return {status:'sent',messageId:message.id};
+    } catch(error) {
+      const definite=Number.isInteger(error.code)&&error.code>=10000;
+      const status=definite?'failed':'uncertain';
+      const detail=membershipDeliveryExplain(error,{uncertain:status==='uncertain'});
+      log(`Queued DM ${job.id}: ${error.message}`);
+      return settle(status,detail,{...extra,roleChanged:true});
+    }
+  }
   async function deliver({job,config}) {
+    if(job.kind==='promotion')return deliverPromotion(job);
     const finish=result=>request('finish',{deliveryId:job.id,token:job.token,result});
     let member,payload;
     try {

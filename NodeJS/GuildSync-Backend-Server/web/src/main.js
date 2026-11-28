@@ -85,6 +85,7 @@ const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 const PENDING_DEPOSIT_MAIL_STORAGE_KEY = 'guildsync-pending-deposit-mail';
 const ESO_STATUS_POLL_INTERVAL_MS = 5000;
 const DEPOSIT_MAIL_AVAILABILITY_POLL_INTERVAL_MS = 30 * 1000;
+const ROSTER_REFRESH_POLL_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
 const PENDING_APPLICATIONS_UPLOADS_STORAGE_KEY = 'guildsync-pending-applications-uploads';
 
@@ -183,6 +184,10 @@ let discordSearchSelectionEnd = null;
 let rosterMembers = [];
 let rosterLastRefreshValue = null;
 let rosterDataLoading = false;
+// The freshness stamp the backend holds, used to decide whether the roster header
+// needs a Refresh button at all.
+let rosterServerRefreshValue = null;
+let rosterRefreshPollTimer = null;
 let rosterAutoRefreshAttempted = false;
 let rosterSearchText = '';
 let rosterSearchSelectionStart = null;
@@ -1303,6 +1308,43 @@ function renderDiscordMemberDataPanel() {
 
 
 
+// Roster imports are pushed to every client, so the header refresh button is only
+// useful after a missed broadcast: show it when the stored roster is newer than the
+// snapshot on screen, and hide it again once that snapshot is loaded.
+function rosterRefreshIsAvailable() {
+  if (!rosterServerRefreshValue) return false;
+  if (!rosterLastRefreshValue) return true;
+  return Date.parse(rosterServerRefreshValue) > Date.parse(rosterLastRefreshValue);
+}
+
+// Polling asks for the timestamp only, so a quiet roster costs one tiny round trip
+// every half hour instead of re-sending every member.
+async function checkRosterRefreshFreshness() {
+  if (!socket?.connected || !isAuthenticatedSession()) return;
+  try {
+    const response = await emitSocketWithAck('guildsync:request-roster-data', { version_only: true }, 15000);
+    if (!response?.ok) return;
+    const next = response.last_refresh || null;
+    if (next === rosterServerRefreshValue) return;
+    rosterServerRefreshValue = next;
+    updateRosterDataView();
+  } catch {}
+}
+
+function startRosterRefreshPolling() {
+  stopRosterRefreshPolling();
+  rosterServerRefreshValue = null;
+  void checkRosterRefreshFreshness();
+  rosterRefreshPollTimer = window.setInterval(checkRosterRefreshFreshness, ROSTER_REFRESH_POLL_INTERVAL_MS);
+}
+
+function stopRosterRefreshPolling() {
+  if (rosterRefreshPollTimer) {
+    clearInterval(rosterRefreshPollTimer);
+    rosterRefreshPollTimer = null;
+  }
+}
+
 function renderEsoRosterPanel() {
   const filteredMembers = getFilteredRosterMembers();
   const allRankNames = getAllRosterRankNames();
@@ -1318,14 +1360,13 @@ function renderEsoRosterPanel() {
         </div>
         <div class="discord-history-header-action" style="flex: 1; display: flex; justify-content: center; align-items: center;">
           <button id="openRosterHistoryButton" class="refresh-discord-button" type="button">Lookup Roster History</button>
-          ${discordReminderControls.canOpen()?'<button id="openDiscordRemindersButton" class="refresh-discord-button" type="button" style="margin-left:12px">Discord Reminders</button>':''}
         </div>
         <div class="discord-data-actions">
           <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatRosterRefreshDate(rosterLastRefreshValue))}</span>
-          <button id="refreshRosterDataButton" class="refresh-discord-button" type="button" ${rosterDataLoading ? 'disabled' : ''}>
+          ${rosterRefreshIsAvailable() ? `<button id="refreshRosterDataButton" class="refresh-discord-button" type="button" ${rosterDataLoading ? 'disabled' : ''}>
             <span class="refresh-discord-icon" aria-hidden="true">↻</span>
             <span>${rosterDataLoading ? 'Refreshing...' : 'Refresh Roster Data'}</span>
-          </button>
+          </button>` : ''}
         </div>
       </div>
 
@@ -2176,12 +2217,13 @@ function renderAdminPanel() {
       <div class="discord-data-header reports-header">
         <div>
           <h2 class="discord-data-title">Admin</h2>
-          <p class="discord-data-subtitle">Raffle bonus settings and administrator configuration.</p>
+          <p class="discord-data-subtitle">Raffle bonus settings, Discord reminders and administrator configuration.</p>
         </div>
       </div>
 
       <div class="reports-scroll-area">
         ${renderRaffleBonusSettings()}
+        ${discordReminderControls.render()}
         ${adminConfigurationPanel.render()}
       </div>
     </div>
@@ -2197,6 +2239,7 @@ function wireReportPanels() {
 
   if (activeGuildSyncTab === 'admin') {
     adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
+    discordReminderControls.wire({root:document.querySelector('.admin-panel'),rerender:renderGuildSyncTabLayout});
     wireRaffleBonusSettings();
     return;
   }
@@ -3342,9 +3385,6 @@ function renderMemberLinksReportDialog() {
         ${memberLinksError ? `<div class="discord-data-error member-links-report-error">${escapeHtml(memberLinksError)}</div>` : ''}
 
         <div class="report-results-body member-links-report-body">
-          ${memberLinkDiagnostics.pair ? renderMemberLinkDiagnosticsPanel() : ''}
-          ${memberLinkHistory.pair ? renderMemberLinkHistoryPanel() : ''}
-
           <div class="report-results-content member-links-report-content">
             ${renderMemberLinksRows()}
           </div>
@@ -3389,7 +3429,7 @@ function wireMemberLinksReportDialog() {
   });
   document.querySelector('#closeMemberLinkHistoryButton')?.addEventListener('click', closeMemberLinkHistory);
   document.querySelectorAll('[data-member-link-diagnostics]').forEach((button) => {
-    button.addEventListener('click', () => openMemberLinkDiagnostics(button.dataset.memberLinkDiagnostics || ''));
+    button.addEventListener('click', () => openMemberLinkDiagnostics(button.dataset.memberLinkDiagnostics || '', button.dataset.memberLinkDiagnosticsDiscordId || ''));
   });
   document.querySelector('#closeMemberLinkDiagnosticsButton')?.addEventListener('click', closeMemberLinkDiagnostics);
 
@@ -3485,6 +3525,24 @@ function renderMemberLinksRows() {
   const grouped = new Set([...candidates, ...excluded, ...blocks, ...linked]);
   const other = sortedLinks.filter((link) => !grouped.has(link));
 
+  // A diagnostics or history panel belongs to the pair whose row was clicked, so it is
+  // rendered as a detail row directly beneath that row instead of above every table.
+  const detailRowFor = (link) => {
+    const eso = String(link.eso_account_name || '').trim().toLowerCase();
+    const discordId = String(link.discord_user_id || '').trim();
+    const pairIsLink = (pair) => Boolean(pair)
+      && String(pair.esoAccountName || '').trim().toLowerCase() === eso
+      && (!pair.discordUserId || String(pair.discordUserId).trim() === discordId);
+    const panels = [
+      pairIsLink(typeof memberLinkDiagnostics !== 'undefined' ? memberLinkDiagnostics.pair : null) ? renderMemberLinkDiagnosticsPanel() : '',
+      pairIsLink(typeof memberLinkHistory !== 'undefined' ? memberLinkHistory.pair : null) ? renderMemberLinkHistoryPanel() : ''
+    ].join('');
+    if (!panels) return '';
+    return `<tr class="member-link-detail-row" data-member-link-detail-row>
+      <td colspan="6" class="member-link-detail-cell">${panels}</td>
+    </tr>`;
+  };
+
   const renderRow = (link) => {
     const status = statusOf(link);
     const method = String(link.link_method || '').trim().toLowerCase();
@@ -3498,17 +3556,21 @@ function renderMemberLinksRows() {
       ? 'Unlink this exact auto-link; the pair becomes a block you can remove later'
       : 'Unlink this link; the pair returns to Possible links to make as a fuzzy candidate';
     const historyLabel = `Show the recorded changes for ${link.eso_account_name || 'this member'}`;
+    const rowKey = `${String(link.eso_account_name || '').trim().toLowerCase()}|${String(link.discord_user_id || '').trim()}`;
     // The pair whose diagnostics or history is open keeps a source highlight, so the
-    // sticky panel above the rows still says which row it came from.
+    // detail row under it still says which pair it describes.
     // typeof guards keep this renderer usable on its own (the viewer tests extract it).
-    const openPair = (typeof memberLinkDiagnostics !== 'undefined' && memberLinkDiagnostics?.pair)
-      || (typeof memberLinkHistory !== 'undefined' && memberLinkHistory?.pair)
-      || null;
-    const sourceEso = String(openPair?.esoAccountName || '').trim().toLowerCase();
-    const isSource = Boolean(sourceEso) && String(link.eso_account_name || '').trim().toLowerCase() === sourceEso;
+    const openPairs = [
+      typeof memberLinkDiagnostics !== 'undefined' ? memberLinkDiagnostics?.pair : null,
+      typeof memberLinkHistory !== 'undefined' ? memberLinkHistory?.pair : null
+    ].filter(Boolean);
+    const pairIsThisRow = (pair) => String(pair.esoAccountName || '').trim().toLowerCase() === String(link.eso_account_name || '').trim().toLowerCase()
+      && (!pair.discordUserId || String(pair.discordUserId).trim() === String(link.discord_user_id || '').trim());
+    const isSource = openPairs.some(pairIsThisRow);
     return `
       <tr
         class="${isSource ? 'member-links-report-row-source' : ''}"
+        data-member-link-row-key="${escapeAttribute(rowKey)}"
         data-member-links-report-row
         data-member-links-report-eso="${escapeAttribute(link.eso_account_name || '')}"
         data-member-links-report-search="${escapeAttribute(getMemberLinksReportSearchText(link))}"
@@ -3522,7 +3584,7 @@ function renderMemberLinksRows() {
         <td class="member-links-method-col">${escapeHtml(method || '')}${Number(link.locked || 0) === 1 ? ' 🔒' : ''}</td>
         <td class="member-links-action-col">
           <div class="member-link-actions">
-            <button class="member-link-report-action member-link-report-why" type="button" data-member-link-diagnostics="${escapeAttribute(link.eso_account_name || '')}" aria-label="Why is this pair matched this way?" title="Why is this pair matched this way?">?</button>
+            <button class="member-link-report-action member-link-report-why" type="button" data-member-link-diagnostics="${escapeAttribute(link.eso_account_name || '')}" data-member-link-diagnostics-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Why is this pair matched this way?" title="Why is this pair matched this way?">?</button>
             <button class="member-link-report-action member-link-report-history" type="button" data-member-link-history="${escapeAttribute(link.eso_account_name || '')}" data-member-link-history-discord-id="${escapeAttribute(link.discord_user_id || '')}" data-member-link-history-label="${escapeAttribute(link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || '')}" aria-label="${escapeAttribute(historyLabel)}" title="${escapeAttribute(historyLabel)}"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
             ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>` : ''}
             ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="${escapeAttribute(unlinkLabel)}" title="${escapeAttribute(unlinkLabel)}"><svg class="member-link-unlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/></svg></button>` : ''}
@@ -3532,6 +3594,7 @@ function renderMemberLinksRows() {
         </td>
         <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
       </tr>
+      ${detailRowFor(link)}
     `;
   };
 
@@ -3704,8 +3767,8 @@ function renderMemberLinkDiagnosticsPanel() {
   `;
 }
 
-async function openMemberLinkDiagnostics(esoAccountName) {
-  memberLinkDiagnostics = { pair: { esoAccountName }, data: null, loading: true, error: '' };
+async function openMemberLinkDiagnostics(esoAccountName, discordUserId = '') {
+  memberLinkDiagnostics = { pair: { esoAccountName, discordUserId }, data: null, loading: true, error: '' };
   updateMemberLinksView();
 
   try {
@@ -3746,6 +3809,33 @@ function syncReportSectionStickyHeights(root = document) {
     } else {
       requestAnimationFrame(() => syncReportSectionStickyHeights());
     }
+  });
+
+  syncReportStuckHeaders(root);
+}
+
+// A section header only paints its own background (and the band above it) once it is
+// actually pinned. At rest it would otherwise square off the section's rounded top
+// corner and paint a rectangle over its faint border.
+let reportStuckHeadersWired = false;
+function syncReportStuckHeaders(root = document) {
+  if (!reportStuckHeadersWired) {
+    reportStuckHeadersWired = true;
+    window.addEventListener('resize', () => syncReportStuckHeaders());
+    // Scroll does not bubble, so catch it in the capture phase for the report panes.
+    document.addEventListener('scroll', (event) => {
+      if (event.target instanceof Element
+        && event.target.matches('.member-links-report-body, .associate-ticket-report-dialog .report-results-content')) {
+        syncReportStuckHeaders();
+      }
+    }, true);
+  }
+
+  root.querySelectorAll('.report-result-section-header').forEach((header) => {
+    const scroller = header.closest('.member-links-report-body, .associate-ticket-report-dialog .report-results-content');
+    if (!scroller) return;
+    const stuck = header.getBoundingClientRect().top <= scroller.getBoundingClientRect().top + 1;
+    header.classList.toggle('report-sticky-header-stuck', stuck);
   });
 }
 
@@ -3792,6 +3882,12 @@ function applyMemberLinksReportSearchFilter() {
     if (visible) visibleCount += 1;
   });
 
+  // A detail row travels with the row it describes, so hiding that row hides it too.
+  document.querySelectorAll('[data-member-link-detail-row]').forEach((detail) => {
+    const key = detail.previousElementSibling?.dataset.memberLinkRowKey || '';
+    detail.hidden = !key || Boolean(detail.previousElementSibling?.hidden);
+  });
+
   const emptyMessage = document.querySelector('#memberLinksReportSearchEmpty');
   if (emptyMessage) {
     emptyMessage.hidden = visibleCount !== 0;
@@ -3801,6 +3897,7 @@ function applyMemberLinksReportSearchFilter() {
   // apply to what is on screen and close.
   const openPairEso = (typeof memberLinkDiagnostics !== 'undefined' ? memberLinkDiagnostics.pair?.esoAccountName : '')
     || (typeof memberLinkHistory !== 'undefined' ? memberLinkHistory.pair?.esoAccountName : '');
+  // (The detail rows above are already hidden with their source row.)
   if (openPairEso && !getVisibleMemberLinksReportRows().some((row) => row.dataset.memberLinksReportEso === openPairEso)) {
     memberLinkDiagnostics = { pair: null, data: null, loading: false, error: '' };
     memberLinkHistory = { pair: null, events: [], loading: false, error: '' };
@@ -5732,7 +5829,6 @@ async function submitRosterMemberNote() {
 }
 
 function wireEsoRosterPanel() {
-  discordReminderControls.wire(document.querySelector('.eso-roster-panel'));
   memberHistoryActions.wire(document.querySelector('.eso-roster-panel'));
   const refreshButton = document.querySelector('#refreshRosterDataButton');
   if (refreshButton) {
@@ -6368,6 +6464,7 @@ async function handleRosterDataUpdated(payload = {}) {
   const members = normalizeRosterMembers(payload.members);
   rosterMembers = members;
   rosterLastRefreshValue = payload.last_refresh || new Date().toISOString();
+  rosterServerRefreshValue = rosterLastRefreshValue;
 
   updateRosterDataView();
 
@@ -6393,6 +6490,7 @@ async function refreshRosterDataFromBackend(options = {}) {
 
     rosterMembers = normalizeRosterMembers(response.members);
     rosterLastRefreshValue = response.last_refresh || rosterLastRefreshValue;
+    rosterServerRefreshValue = response.last_refresh || rosterLastRefreshValue || null;
 
     if (!options.silent) {
       addSystemMessage('roster-data-loaded', `Loaded ${rosterMembers.length} roster member${rosterMembers.length === 1 ? '' : 's'}.`, {
@@ -8166,7 +8264,6 @@ function mergeBankingEntries(entries) {
 
 function bindLiveDataActions(root) {
   memberHistoryActions.wire(root);
-  discordReminderControls.wire(root);
   root.querySelectorAll('[data-open-member-link-dialog]').forEach(button => {
     button.addEventListener('click', () => openMemberLinkDialog(button.dataset.openMemberLinkDialog || '', button.dataset.memberLinkValue || ''));
   });
@@ -8193,6 +8290,12 @@ function updateLiveDataView(selector, markup, banking = false, roster = false) {
   syncDataText(panel.querySelector('.discord-data-actions .discord-last-refresh'), next.querySelector('.discord-data-actions .discord-last-refresh'));
   const buttonSelector = banking ? '#refreshBankingDataButton' : roster ? '#refreshRosterDataButton' : '#refreshDiscordDataButton';
   const button = panel.querySelector(buttonSelector), wantedButton = next.querySelector(buttonSelector);
+  // The roster refresh button appears only while newer data exists, so a plain text
+  // sync cannot add or remove it; a full redraw keeps the header honest.
+  if (!button !== !wantedButton) {
+    renderGuildSyncTabLayout();
+    return;
+  }
   if (button && wantedButton) {
     button.disabled = wantedButton.disabled;
     syncDataText(button.lastElementChild, wantedButton.lastElementChild);
@@ -9942,7 +10045,7 @@ function applyUserSwitchProfile(user) {
  if(user.user_switch?.epoch===previous?.user_switch?.epoch && user.user_switch?.revision!=null && Number(user.user_switch.revision)<Number(previous?.user_switch?.revision||0))return;
  if(previous?.discord_user_id===user.discord_user_id && previous?.role===user.role && Boolean(previous?.user_switch?.active)===Boolean(user.user_switch?.active)){handleCurrentAccountProfile(user);return;}
  sessionGeneration++;
- stopESOStatusPolling(); stopDepositMailAvailabilityPolling();
+ stopESOStatusPolling(); stopDepositMailAvailabilityPolling(); stopRosterRefreshPolling();
  window.clearTimeout(depositMailPendingWriteAutoTimer); depositMailPendingWriteAutoTimer=null;
  disconnectSocket(false);
  userAdministrationPanel.reset(); adminConfigurationPanel.clear();
@@ -10481,6 +10584,7 @@ function connectSocket() {
     // state because a reconnect starts a fresh server-side connection record.
     reportedEsoPresence = null;
     connectedSocket.emit('guildsync:presence-request');
+    startRosterRefreshPolling();
     startESOStatusPolling();
     startDepositMailAvailabilityPolling();
     processPendingGuildSyncRosterUploads();
@@ -10506,6 +10610,7 @@ function connectSocket() {
     stopVersionCheckTimer();
     stopESOStatusPolling();
     stopDepositMailAvailabilityPolling();
+    stopRosterRefreshPolling();
     setGuildSyncPresence(null);
   });
 
@@ -11339,8 +11444,8 @@ function canManageGuildSyncLinks() {
   return isAuthenticatedSession() && canManageGuildSyncLinksRole(guildSyncSession.user?.role);
 }
 
-// The Discord Reminders button is for guild officers with GuildSync User or Admin
-// access. The backend re-checks both before returning any campaign data.
+// The Admin tab’s Discord Reminders section is for guild officers with GuildSync
+// User or Admin access. The backend re-checks both before returning campaign data.
 async function refreshDiscordReminderAccess(){
   const before=discordReminderControls.canOpen();
   await discordReminderControls.refreshAccess();

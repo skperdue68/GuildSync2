@@ -3,6 +3,7 @@ import { REST, Routes } from 'discord.js';
 
 import * as discordReminders from './commands/discord-reminders.js';
 import * as roles from './commands/roles.js';
+import * as promoteSoldier from './commands/promote-soldier.js';
 import * as raffle from './commands/raffle.js';
 import * as tickets from './commands/tickets.js';
 import * as trader from './commands/trader.js';
@@ -25,6 +26,7 @@ const reminderDefinition = discordReminders.data.toJSON();
 
 const guildCommands = [
   reminderDefinition,
+  promoteSoldier.data.toJSON(),
   roles.data.toJSON(),
   raffle.data.toJSON(),
   tickets.data.toJSON(),
