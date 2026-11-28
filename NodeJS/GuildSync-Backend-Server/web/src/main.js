@@ -2661,7 +2661,7 @@ function renderAssociatePromotionReportSection(title, subtitle, rows, emptyText)
 
 function renderAssociateTicketReportRows(rows = associateTicketReportRows) {
   return `
-    <div class="roster-history-event-table-shell report-result-table-shell">
+    <div class="roster-history-event-table-shell report-result-table-shell associate-report-table-shell">
       <table class="discord-member-table roster-history-event-table report-result-table">
         <thead>
           <tr>
@@ -3341,11 +3341,13 @@ function renderMemberLinksReportDialog() {
 
         ${memberLinksError ? `<div class="discord-data-error member-links-report-error">${escapeHtml(memberLinksError)}</div>` : ''}
 
-        ${memberLinkDiagnostics.pair ? renderMemberLinkDiagnosticsPanel() : ''}
-        ${memberLinkHistory.pair ? renderMemberLinkHistoryPanel() : ''}
+        <div class="report-results-body member-links-report-body">
+          ${memberLinkDiagnostics.pair ? renderMemberLinkDiagnosticsPanel() : ''}
+          ${memberLinkHistory.pair ? renderMemberLinkHistoryPanel() : ''}
 
-        <div class="report-results-content member-links-report-content">
-          ${renderMemberLinksRows()}
+          <div class="report-results-content member-links-report-content">
+            ${renderMemberLinksRows()}
+          </div>
         </div>
       </div>
     </div>
@@ -3356,6 +3358,8 @@ function wireMemberLinksReportDialog() {
   if (!memberLinksReportDialogOpen) {
     return;
   }
+
+  syncReportSectionStickyHeights();
 
   document.querySelector('#closeMemberLinksReportButton')?.addEventListener('click', closeMemberLinksReportDialog);
   document.querySelector('#refreshMemberLinksButton')?.addEventListener('click', () => refreshMemberLinks());
@@ -3494,9 +3498,19 @@ function renderMemberLinksRows() {
       ? 'Unlink this exact auto-link; the pair becomes a block you can remove later'
       : 'Unlink this link; the pair returns to Possible links to make as a fuzzy candidate';
     const historyLabel = `Show the recorded changes for ${link.eso_account_name || 'this member'}`;
+    // The pair whose diagnostics or history is open keeps a source highlight, so the
+    // sticky panel above the rows still says which row it came from.
+    // typeof guards keep this renderer usable on its own (the viewer tests extract it).
+    const openPair = (typeof memberLinkDiagnostics !== 'undefined' && memberLinkDiagnostics?.pair)
+      || (typeof memberLinkHistory !== 'undefined' && memberLinkHistory?.pair)
+      || null;
+    const sourceEso = String(openPair?.esoAccountName || '').trim().toLowerCase();
+    const isSource = Boolean(sourceEso) && String(link.eso_account_name || '').trim().toLowerCase() === sourceEso;
     return `
       <tr
+        class="${isSource ? 'member-links-report-row-source' : ''}"
         data-member-links-report-row
+        data-member-links-report-eso="${escapeAttribute(link.eso_account_name || '')}"
         data-member-links-report-search="${escapeAttribute(getMemberLinksReportSearchText(link))}"
         data-member-links-report-status="${escapeAttribute(status)}"
         data-member-links-report-method="${escapeAttribute(method)}"
@@ -3510,7 +3524,7 @@ function renderMemberLinksRows() {
           <div class="member-link-actions">
             <button class="member-link-report-action member-link-report-why" type="button" data-member-link-diagnostics="${escapeAttribute(link.eso_account_name || '')}" aria-label="Why is this pair matched this way?" title="Why is this pair matched this way?">?</button>
             <button class="member-link-report-action member-link-report-history" type="button" data-member-link-history="${escapeAttribute(link.eso_account_name || '')}" data-member-link-history-discord-id="${escapeAttribute(link.discord_user_id || '')}" data-member-link-history-label="${escapeAttribute(link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || '')}" aria-label="${escapeAttribute(historyLabel)}" title="${escapeAttribute(historyLabel)}"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
-            ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg></button>` : ''}
+            ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>` : ''}
             ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="${escapeAttribute(unlinkLabel)}" title="${escapeAttribute(unlinkLabel)}"><svg class="member-link-unlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/></svg></button>` : ''}
             ${canManageGuildSyncLinks() && blocked ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block"><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>` : ''}
           </div>
@@ -3711,6 +3725,30 @@ function closeMemberLinkDiagnostics() {
   updateMemberLinksView();
 }
 
+// A report section's title row is sticky, so its column headers have to start below
+// it. Measure each title once per render (and again on resize) and hand the height to
+// the table headers through a custom property.
+let reportStickyHeightsWired = false;
+function syncReportSectionStickyHeights(root = document) {
+  if (!reportStickyHeightsWired) {
+    reportStickyHeightsWired = true;
+    window.addEventListener('resize', () => syncReportSectionStickyHeights());
+  }
+
+  root.querySelectorAll('.report-result-section').forEach((section) => {
+    const header = section.querySelector(':scope > .report-result-section-header');
+    if (!header) return;
+    const height = header.offsetHeight;
+    // A dialog that is not laid out yet measures 0; leave the previous value alone and
+    // try again next frame instead of parking the column headers under the title.
+    if (height > 0) {
+      section.style.setProperty('--gs-section-head-h', `${height}px`);
+    } else {
+      requestAnimationFrame(() => syncReportSectionStickyHeights());
+    }
+  });
+}
+
 function getVisibleMemberLinksReportRows() {
   return [...document.querySelectorAll('[data-member-links-report-row]')]
     .filter((row) => row.offsetParent !== null);
@@ -3757,6 +3795,16 @@ function applyMemberLinksReportSearchFilter() {
   const emptyMessage = document.querySelector('#memberLinksReportSearchEmpty');
   if (emptyMessage) {
     emptyMessage.hidden = visibleCount !== 0;
+  }
+
+  // The panels describe one pair, so when the filters hide that pair they no longer
+  // apply to what is on screen and close.
+  const openPairEso = (typeof memberLinkDiagnostics !== 'undefined' ? memberLinkDiagnostics.pair?.esoAccountName : '')
+    || (typeof memberLinkHistory !== 'undefined' ? memberLinkHistory.pair?.esoAccountName : '');
+  if (openPairEso && !getVisibleMemberLinksReportRows().some((row) => row.dataset.memberLinksReportEso === openPairEso)) {
+    memberLinkDiagnostics = { pair: null, data: null, loading: false, error: '' };
+    memberLinkHistory = { pair: null, events: [], loading: false, error: '' };
+    updateMemberLinksView();
   }
 
   memberLinksReportSelectedRowIndex = -1;
@@ -4290,7 +4338,16 @@ function renderMemberLinkCurrentCard(link) {
   const status = String(link.link_status || '').trim().toLowerCase();
   const isLinked = status === 'linked';
   const isCandidate = status === 'candidate';
-  const actionButton = isLinked
+  // A member who said they no longer play ESO or do not use Discord, or who has left the
+  // roster, would lose the ESO half of the pair; a removed link could not be rebuilt, so
+  // removal is not offered for them. typeof keeps this renderer usable in the viewer test.
+  const canReadRoster = typeof getRosterMemberByAccount === 'function';
+  const rosterMember = canReadRoster ? getRosterMemberByAccount(link.eso_account_name || '') : null;
+  const linkRemovalBlocked = isLinked && (Boolean(link.eso_opt_out || link.discord_opt_out || rosterMember?.discord_opt_out) || (canReadRoster && !rosterMember));
+  const linkRemovalBlockedReason = Boolean(link.eso_opt_out || link.discord_opt_out || rosterMember?.discord_opt_out)
+    ? 'they no longer play ESO or do not use Discord'
+    : 'they are not on the guild roster';
+  let actionButton = isLinked
     ? `<button
         class="member-link-trash-button"
         type="button"
@@ -4308,7 +4365,7 @@ function renderMemberLinkCurrentCard(link) {
           title="Approve suggested link"
           data-accept-dialog-member-candidate="${escapeAttribute(link.eso_account_name || '')}"
           data-accept-dialog-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
-        ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg></button>`
+        ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>`
       : (Number(link.locked || 0) === 1 || status === 'blocked')
         ? `<button
             class="member-link-approve-button member-link-unblock-button"
@@ -4321,6 +4378,8 @@ function renderMemberLinkCurrentCard(link) {
           ><svg class="member-link-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>`
         : '';
 
+  if (linkRemovalBlocked) actionButton = '';
+
   return `
     <div class="member-link-current-card">
       <div class="member-link-current-details">
@@ -4331,6 +4390,7 @@ function renderMemberLinkCurrentCard(link) {
         ${getMemberLinkMatchedField(link) ? `<div><span>Matched:</span> Matched on ${escapeHtml(getMemberLinkMatchedField(link))}</div>` : ''}
       </div>
       ${canManageGuildSyncLinks() ? actionButton : ''}
+      ${canManageGuildSyncLinks() && linkRemovalBlocked ? `<p class="member-link-removal-blocked" title="This link cannot be rebuilt, so it cannot be removed.">Unlink disabled: ${escapeHtml(linkRemovalBlockedReason)}.</p>` : ''}
     </div>
   `;
 }
@@ -4964,6 +5024,8 @@ function wireAssociateTicketReportDialog() {
   if (!associateTicketReportDialogOpen) {
     return;
   }
+
+  syncReportSectionStickyHeights();
 
   document.querySelector('#closeAssociateTicketReportButton')?.addEventListener('click', closeAssociateTicketReportDialog);
   document.querySelector('#rerunAssociateTicketReportButton')?.addEventListener('click', () => runAssociateTicketReport());
@@ -9794,14 +9856,20 @@ function renderOpenProfileMenuContents() {
         </div>
         ${renderProfileFileWatcherSection()}
         <div class="profile-user-settings-mount">
-          <button id="openUserSettingsButton" class="profile-user-settings-button" type="button">User Settings</button>
-          <button id="openUserManualButton" class="profile-user-settings-button profile-manual-button" type="button">User Manual</button>
+          <button id="openUserManualButton" class="profile-menu-link" type="button" title="Open the online GuildSync help in your browser">
+            <span class="profile-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+            <span class="profile-menu-label">Help</span>
+          </button>
+          <button id="openUserSettingsButton" class="profile-menu-link" type="button">
+            <span class="profile-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+            <span class="profile-menu-label">User Settings</span>
+          </button>
         </div>
       </div>
-      ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}
+      ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="profile-menu-link user-admin-menu-button" type="button"><span class="profile-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="profile-menu-label">Manage GuildSync Users</span><span id="userAdminMenuCount" class="profile-menu-count"></span></button></section>`:''}
 
       ${renderUserSwitchControls(guildSyncSession.user,userSwitchOptions)}
-      <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
+      <button id="discordLogoutButton" class="profile-menu-link profile-logout-button" type="button"><span class="profile-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></span><span class="profile-menu-label">Logout</span></button>
     </section>
   `;
 

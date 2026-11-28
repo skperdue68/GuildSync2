@@ -30,7 +30,7 @@ wanted without re-reading the prose.
 | --- | --- | --- |
 | `SHOT-START-01` | `getting-started.html` | The sign-in screen before Discord authorisation: Discord button, empty tab bar. |
 | `SHOT-START-02` | `index.html` | Signed-in main window with all six tabs visible: Discord Member Data, Guild Roster, Guild Chat, Bank Deposits / Raffle Tickets, Reports, Admin. |
-| `SHOT-DESKTOP-01` | `desktop-client.html` | Profile menu: name, role, client version, the **Start GuildSync at login** row with its checkbox, and the User Settings button. |
+| `SHOT-DESKTOP-01` | `desktop-client.html` | Profile menu: name, role, client version, the **Start GuildSync at login** and **Minimize to tray** rows, and the **Help** and **User Settings** menu rows. |
 | `SHOT-DESKTOP-02` | `desktop-client.html` | Tray menu on Windows showing Show, Hide, Quit GuildSync. |
 | `SHOT-DESKTOP-03` | `desktop-client.html` | User Settings dialog with the SavedVariables folder field and the per-file watcher switches. |
 | `SHOT-MEMBERS-01` | `members.html` | Guild Roster tab: rank filters and a row with the history button between Notes and Linked. |
@@ -47,6 +47,7 @@ wanted without re-reading the prose.
 | `SHOT-CMD-01` | `commands.html` | Discord's command picker in the guild listing the GuildSync slash commands with their options. |
 | `SHOT-REPORTS-01` | `reports.html` | Reports tab with the report list and one report open. |
 | `SHOT-REPORTS-02` | `reports.html` | Community Highlights report filled in for a completed period. |
+| `SHOT-FAQ-01` | `faq.html` | A banking entry open for editing, with its type field and the ticket count it produces. |
 | `SHOT-TROUBLE-01` | `desktop-client.html`, `troubleshooting.html` | The unsupported-desktop screen with download, minimise and close buttons. |
 
 Two pages reference `SHOT-TROUBLE-01`; one image serves both.

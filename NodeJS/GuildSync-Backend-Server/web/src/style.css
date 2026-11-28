@@ -2846,6 +2846,12 @@ body {
   overflow: auto;
 }
 
+/* Same for the promotion report's tables: the dialog content scrolls, not each table. */
+.report-result-table-shell.associate-report-table-shell {
+  max-height: none;
+  overflow: visible;
+}
+
 .report-result-table {
   width: max-content;
   min-width: 100%;
@@ -2921,9 +2927,12 @@ body {
   min-width: 0;
 }
 
+/* The links report scrolls in the dialog body, so its table shell is a plain block:
+   an inner scroller here would trap the sticky headers and add a second scrollbar. */
 .member-links-table-shell {
-  max-height: 260px;
-  overflow: auto;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
 }
 
 .member-links-table th,
@@ -3372,11 +3381,14 @@ body {
 .member-links-table {
   table-layout: fixed;
   min-width: 920px;
+  /* Fill the pane so the table lines up with the diagnostics and history panels
+     above it; without this it kept its fixed column widths and sat narrower. */
+  width: 100%;
 }
 
 .member-links-table th:nth-child(1),
 .member-links-table td:nth-child(1) {
-  width: 185px;
+  width: 168px;
 }
 
 .member-links-table th:nth-child(2),
@@ -3394,16 +3406,31 @@ body {
   white-space: nowrap;
 }
 
+/* The table is narrow on a small window and uses fixed layout, so the columns are
+   sized including their padding: without border-box the padding ate the whole status
+   and method columns and their headings clipped to "Stat" and "Metho". */
+.member-links-table th,
+.member-links-table td {
+  box-sizing: border-box;
+}
+
+/* Heading words wrap instead of being cut off when the columns are tight; the data
+   cells keep their single line. */
+.member-links-table thead th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .member-links-table .member-links-status-col {
-  width: 82px;
-  min-width: 82px;
-  max-width: 82px;
+  width: 92px;
+  min-width: 92px;
+  max-width: 92px;
 }
 
 .member-links-table .member-links-method-col {
-  width: 74px;
-  min-width: 74px;
-  max-width: 74px;
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
 }
 
 .member-links-table .member-links-action-col {
@@ -3414,9 +3441,9 @@ body {
 }
 
 .member-links-table .member-links-confidence-col {
-  width: 88px;
-  min-width: 88px;
-  max-width: 88px;
+  width: 112px;
+  min-width: 112px;
+  max-width: 112px;
   text-align: right;
 }
 
@@ -3461,8 +3488,13 @@ body {
   border-radius: 12px;
   background: rgba(15, 23, 42, 0.85);
   color: #e5e7eb;
-  max-height: 34vh;
-  overflow: auto;
+}
+
+/* The table sits inside the report content's 22px side padding plus its section border,
+   so the panels are inset the same amount to share the table's edges. */
+.member-links-report-body > .member-link-history-panel {
+  margin-left: 23px;
+  margin-right: 23px;
 }
 
 .member-link-history-header {
@@ -3504,13 +3536,20 @@ body {
 
 .member-link-history-event {
   display: grid;
-  grid-template-columns: 11rem 12rem minmax(0, 1fr) auto;
-  gap: 10px;
+  /* Every column can shrink and wrap, so a narrow window squeezes the rows instead
+     of cutting the score, action and state text short. */
+  grid-template-columns: minmax(5.5rem, 11rem) minmax(5.5rem, 12rem) minmax(0, 1fr) auto;
+  gap: 6px 10px;
   align-items: baseline;
   font-size: 0.82rem;
   padding: 6px 8px;
   border-radius: 8px;
   background: rgba(148, 163, 184, 0.08);
+}
+
+.member-link-history-event > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .member-link-history-when {
@@ -3534,10 +3573,12 @@ body {
 
 @media (max-width: 900px) {
   .member-link-history-event {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
+  .member-link-history-state,
   .member-link-history-actor {
+    grid-column: 1;
     justify-self: start;
   }
 }
@@ -4023,8 +4064,7 @@ body {
 .discord-member-table-shell,
 .bank-deposit-table-shell,
 .eso-roster-table-shell,
-.report-result-table-shell,
-.member-links-table-shell {
+.report-result-table-shell {
   overflow: auto;
   min-width: 0;
 }
@@ -5127,7 +5167,9 @@ body {
 }
 
 .roster-history-match-list,
-.roster-history-event-table-shell,
+/* The links and promotion report shells are excluded with :where() so this selector
+   keeps its original weight and every other dialog scrolls exactly as before. */
+.roster-history-event-table-shell:not(:where(.member-links-table-shell, .associate-report-table-shell)),
 .discord-member-history-dialog .roster-history-match-list,
 .discord-member-history-dialog .roster-history-event-table-shell,
 .roster-rank-history-dialog .roster-history-match-list,
@@ -5268,7 +5310,7 @@ body {
 }
 
 .roster-history-match-list,
-.roster-history-event-table-shell,
+.roster-history-event-table-shell:not(:where(.member-links-table-shell, .associate-report-table-shell)),
 .report-results-table-shell > .table-scroll,
 .member-link-suggestions-list {
   flex: 1 1 0 !important;
@@ -7484,22 +7526,17 @@ body {
 .guild-tool-link:hover,.guild-tool-link:focus-visible {
   background:#1b3055;
   border-color:#466a9e}
+/* Each tool draws its own site mark, so the box only sets the size they share. */
 .guild-tool-icon {
   display:grid;
   place-items:center;
-  width:40px;
-  height:40px;
-  border-radius:10px;
-  flex-shrink:0;
-  font-size:23px;
-  background:#2c60c5;
-  color:white}
-.tool-color-1 {
-  background:#7956ba}
-.tool-color-2 {
-  background:#167d77}
-.tool-color-3 {
-  background:#b47621}
+  width:22px;
+  height:22px;
+  flex-shrink:0}
+.guild-tool-icon svg {
+  display:block;
+  width:100%;
+  height:100%}
 .guild-tool-copy {
   flex:1;
   min-width:0;
@@ -7566,8 +7603,6 @@ body {
   margin-top:0;
   border-top:0;
   padding-top:4px}
-.profile-tools-section>summary>span {
-  display:none}
 .profile-logout-button {
   width:100%;
   margin-top:15px;
@@ -7638,15 +7673,145 @@ body {
   max-height: min(1200px, calc(100vh - 108px), calc(100% - 8px)) !important;
 }
 
-/* The member links tables get most of that height instead of the fixed 260px cap. */
-.member-links-report-dialog .member-links-table-shell {
-  max-height: min(58vh, 720px);
+/* The links report scrolls in one pane under a fixed header: the panels and the
+   table live in the dialog body, so only that body scrolls. The body already scrolls
+   vertically, so all it needs here is horizontal room for the wide table. */
+.member-links-report-body {
+  overflow-x: auto !important;
+}
+
+.member-links-report-content {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+/* Each table's column headers stick to the top of that pane and leave with their own
+   table, so the next table's header takes over only once that table reaches the top.
+   The shells must not scroll on their own or sticky has nothing to track. */
+/* A panel's or section's title row sticks at the top of the pane and its column
+   headers tuck in underneath, so each one reads as a single sticky header until the
+   next arrives. --gs-section-head-h is the measured title height, set per section. */
+.member-links-report-body .member-link-history-header,
+.member-links-report-body .report-result-section-header,
+.associate-ticket-report-dialog .report-result-section-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #101a2e;
+}
+
+.member-links-table thead th,
+.associate-ticket-report-dialog .report-result-table thead th {
+  position: sticky;
+  top: var(--gs-section-head-h, 0px);
+  z-index: 2;
+  background: rgb(17, 34, 70);
+  /* Collapsed table borders make a pinned row of cells jitter by a pixel as it scrolls;
+     separate borders keep it still and give the same look on these tables. */
+  border-collapse: separate;
+  border-spacing: 0;
+  transform: translateZ(0);
+}
+
+.member-links-table,
+.associate-ticket-report-dialog .report-result-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.member-links-report-body .member-link-history-header,
+.member-links-report-body .report-result-section-header,
+.associate-ticket-report-dialog .report-result-section-header {
+  transform: translateZ(0);
+}
+
+/* The pane's top padding sits above a pinned header, and rows scroll through it. Cover
+   that band with the header's own colour so nothing shows above the sticky area. */
+.member-links-report-body .member-link-history-header::before,
+.member-links-report-body .report-result-section-header::before,
+.associate-ticket-report-dialog .report-result-section-header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 30px;
+  background: inherit;
+}
+
+/* Why an existing link cannot be removed from the member link dialog. */
+.member-link-removal-blocked {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: rgba(253, 224, 71, 0.9);
+}
+
+/* The row whose diagnostics or history is open. */
+.member-links-table tr.member-links-report-row-source > td {
+  background: rgba(59, 130, 246, 0.18);
+  box-shadow: inset 0 1px 0 rgba(96, 165, 250, 0.5), inset 0 -1px 0 rgba(96, 165, 250, 0.5);
+}
+
+/* The section is a clipped box for its rounded corners, which also traps sticky, so it
+   stops clipping. The shells themselves are switched off where they are defined. */
+.member-links-report-dialog .member-links-section,
+.associate-ticket-report-dialog .report-result-section {
+  overflow: visible;
+}
+
+.associate-ticket-report-dialog .report-results-content {
+  overflow-x: auto;
 }
 
 /* The User Settings entry is a plain full-width action button, so its label is
    centered like the other buttons in the profile menu. */
 .profile-user-settings-button {
   text-align: center;
+}
+
+/* Help and User Settings read as menu entries, not buttons: an icon and a label that
+   light up on hover, with no border or fill until they are pointed at. */
+.profile-menu-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #e5e7eb;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-menu-link:hover,
+.profile-menu-link:focus-visible {
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.profile-menu-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.profile-menu-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* The admin count sits at the far end of its row, and logout keeps its warning colour. */
+.profile-menu-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: rgba(203, 213, 225, 0.75);
+}
+
+.profile-logout-button {
+  color: #fecaca;
 }
 
 
@@ -7730,10 +7895,4 @@ body {
   width: 15px;
   height: 15px;
   display: block;
-}
-
-/* User manual button in the profile menu; the web client opens the same pages
-   from /manual/ in a new tab. */
-.profile-manual-button {
-  margin-top: 8px;
 }

@@ -8,7 +8,7 @@
 </head>
 <body>
 <header class="manual-top">
-  <a class="manual-brand" href="index.html">GuildSync <span>User manual</span></a>
+  <a class="manual-brand" href="index.html">GuildSync <span>Help</span></a>
   <nav class="manual-nav" aria-label="Manual sections">
     <a href="getting-started.html">Getting started</a>
     <a href="desktop-client.html" aria-current="page">Desktop client</a>
@@ -17,6 +17,7 @@
     <a href="raffles.html">Raffles</a>
     <a href="commands.html">Commands</a>
     <a href="reports.html">Reports</a>
+    <a href="faq.html">FAQ</a>
     <a href="troubleshooting.html">Troubleshooting</a>
   </nav>
 </header>
@@ -49,14 +50,14 @@
   </section>
 
   <section id="tray">
-    <h2>Tray and close to tray</h2>
+    <h2>Tray and minimize to tray</h2>
     <p>Where your desktop provides a tray, GuildSync keeps an icon there with <strong>Show</strong>, <strong>Hide</strong> and <strong>Quit GuildSync</strong>.</p>
     <ul>
       <li><strong>Windows:</strong> click or double-click the icon to restore the window; right-click for the menu.</li>
       <li><strong>macOS:</strong> the menu-bar icon opens the same menu; reopening from the Dock also restores the window.</li>
       <li><strong>Linux:</strong> the icon appears when a StatusNotifier panel host is registered. Without one, GuildSync runs as a normal window and closing quits.</li>
     </ul>
-    <p><strong>Close to tray</strong> is on by default where a tray exists, so closing the window hides it. Turn it off in your profile menu and closing the window quits GuildSync instead.</p>
+    <p><strong>Minimize to tray</strong> is on by default where a tray exists, so closing the window hides it instead of quitting. The switch sits in your profile menu directly under <strong>Start GuildSync at login</strong>, and only appears when the session actually has a tray. Turn it off and closing the window quits GuildSync.</p>
   </section>
 
   <figure class="shot" id="SHOT-DESKTOP-02" data-shot="SHOT-DESKTOP-02">
@@ -78,22 +79,21 @@
 
   <figure class="shot" id="SHOT-DESKTOP-01" data-shot="SHOT-DESKTOP-01">
     <div class="shot-slot"><span class="shot-id">SHOT-DESKTOP-01</span><span>Screenshot slot</span></div>
-    <figcaption><span class="shot-id">SHOT-DESKTOP-01</span> The profile menu: name, role, client version, the Start GuildSync at login row with its checkbox, and the User Settings button.</figcaption>
+    <figcaption><span class="shot-id">SHOT-DESKTOP-01</span> The profile menu: name, role, client version, the Start GuildSync at login and Minimize to tray rows, and the Help and User Settings menu rows.</figcaption>
   </figure>
 
   <section id="profile-menu">
     <h2>Your profile menu</h2>
-    <p>Click your Discord avatar to open it. Alongside your name, role and client version it holds collapsible sections:</p>
+    <p>Click your Discord avatar to open it. Alongside your name, role and client version it holds collapsible sections. Your guild tools are not in here: they open from <strong>Tools</strong> beside the avatar.</p>
     <table>
       <thead><tr><th>Section</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><strong>Guild Tools</strong></td><td>Shortcuts to the tools your role can use.</td></tr>
         <tr><td><strong>SavedVariables &amp; File Watch</strong></td><td>Which add-on files GuildSync uploads, and the folder it watches. This is also where you open <strong>User Settings</strong>.</td></tr>
-        <tr><td><strong>Desktop &amp; Voice</strong></td><td>The global voice-mute shortcut and its separate unmute key.</td></tr>
+        <tr><td><strong>Voice</strong></td><td>The global voice-mute shortcut and its separate unmute key. Only officers the server grants voice control to see this section at all.</td></tr>
         <tr><td><strong>Switch Account</strong></td><td>Administrators can act as another account to check what that person sees, then return.</td></tr>
       </tbody>
     </table>
-    <p>The menu also shows the desktop options, including <strong>Start GuildSync at login</strong>, <strong>Close to tray</strong> and <strong>Log out</strong>. Hovering your avatar shows who is signed in on the server and which client each person is using.</p>
+    <p>Above the sections sit the two desktop switches, <strong>Start GuildSync at login</strong> and <strong>Minimize to tray</strong>, each shown only where the host supports it. At the bottom are <strong>Help</strong>, <strong>User Settings</strong> and <strong>Log out</strong>. Hovering your avatar shows who is signed in on the server and which client each person is using.</p>
   </section>
 
   <section id="files">
@@ -111,7 +111,7 @@
   <section id="hotkeys">
     <h2>Voice mute shortcut</h2>
     <p>Where an administrator has enabled voice mute and chosen the roles it applies to, the desktop client can hold <kbd>Ctrl</kbd>+<kbd>M</kbd> to mute lower-ranked members in your current Discord voice channel. Releasing the keys, or leaving the channel, ends the mute. Moderator mutes are never undone.</p>
-    <p>You can assign a different mute key, plus a second unmute key that ends a mute immediately, in <strong>Desktop &amp; Voice</strong>. Pressing the mute key again restarts the countdown.</p>
+    <p>You can assign a different mute key, plus a second unmute key that ends a mute immediately, in <strong>Voice</strong>. Pressing the mute key again restarts the countdown.</p>
   </section>
 
   <section id="updates">

@@ -1,5 +1,4 @@
 import {createShortcutCapture} from './shortcut-capture.js';
-import {createDesktopControls} from './desktop-controls.js';
 import {wireProfileMenuShell} from './profile-menu-shell.js';
 const minTimeoutSeconds = 3;
 const maxTimeoutSeconds = 120;
@@ -9,9 +8,6 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
   let releasePending=Promise.resolve({ok:true});
   let eligible=false, nativeActive=false, nativeFailed=false, accessTimer=null, accessGeneration=0, accessPending=null;
   const notify = () => changed();
-  // The profile menu mounts only this controller, so the desktop section (tray and
-  // login preferences plus updates) is rendered and wired alongside it.
-  const desktopControls = createDesktopControls({bridge, changed: notify});
   const request = (state, id, callback) => {
     const socket = getSocket();
     if (socket?.connected) socket.emit('guildsync:voice-mute-hotkey', { state, sessionId: id }, callback);
@@ -142,19 +138,20 @@ document.removeEventListener('keyup', captureUp, true);window.removeEventListene
     document.addEventListener('keydown', capture, true);document.addEventListener('keyup', captureUp, true);window.addEventListener('blur',captureBlur);
     notify();
   }
-  function render() {
-    const desktop = desktopControls.render();
-    if(!eligible)return desktop;
+  function renderVoice() {
+    if(!eligible)return '';
     const header = '<div class="profile-section-header"><span>Voice Channel Mute</span></div>';
-    if (!settings.supported) return desktop + `<div id="voiceHotkeySection" class="profile-section">${header}<p class="voice-hotkey-help">Global voice hotkeys are unavailable in this build.</p></div>`;
+    if (!settings.supported) return `<div id="voiceHotkeySection" class="profile-section">${header}<p class="voice-hotkey-help">Global voice hotkeys are unavailable in this build.</p></div>`;
     // Shortcut labels are validated by Go; messages are inserted using textContent below.
     const muteLabel = capturing && captureTarget === 'mute' ? 'Press keys...' : 'Set Mute Key';
     const unmuteLabel = capturing && captureTarget === 'unmute' ? 'Press keys...' : 'Set Unmute Key';
     const off = settings.enabled ? '' : ' disabled';
-    return desktop + `<div id="voiceHotkeySection" class="profile-section">${header}${nativeFailed ? '<p class="voice-hotkey-help">Voice mute is unavailable in this desktop session. Disable and re-enable the hotkey to retry.</p>' : ''}<label class="profile-row voice-hotkey-row"><span>Enable <input id="voiceHotkeyEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}></span><span class="voice-hotkey-key">Mute key <b>${settings.shortcut}</b></span></label><div class="profile-row voice-hotkey-row"><label>Auto-unmute <input id="voiceHotkeyTimeout" type="number" min="${minTimeoutSeconds}" max="${maxTimeoutSeconds}" step="1" value="${settings.timeoutSeconds}"> s</label><span class="voice-hotkey-key">Unmute key <b>${settings.unmuteShortcut}</b></span></div><div class="voice-hotkey-actions"><button id="voiceHotkeyCapture" type="button" class="voice-hotkey-capture-button"${off}>${muteLabel}</button><button id="voiceUnmuteCapture" type="button" class="voice-hotkey-capture-button"${off}>${unmuteLabel}</button></div><p id="voiceHotkeyStatus" class="voice-hotkey-help" role="status"></p><p class="voice-hotkey-help">Press the mute key to mute eligible lower-ranked members; press it again to restart the countdown. The unmute key ends a mute immediately. Server permission is required.</p></div>`;
+    return `<div id="voiceHotkeySection" class="profile-section">${header}${nativeFailed ? '<p class="voice-hotkey-help">Voice mute is unavailable in this desktop session. Disable and re-enable the hotkey to retry.</p>' : ''}<label class="profile-row voice-hotkey-row"><span>Enable <input id="voiceHotkeyEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}></span><span class="voice-hotkey-key">Mute key <b>${settings.shortcut}</b></span></label><div class="profile-row voice-hotkey-row"><label>Auto-unmute <input id="voiceHotkeyTimeout" type="number" min="${minTimeoutSeconds}" max="${maxTimeoutSeconds}" step="1" value="${settings.timeoutSeconds}"> s</label><span class="voice-hotkey-key">Unmute key <b>${settings.unmuteShortcut}</b></span></div><div class="voice-hotkey-actions"><button id="voiceHotkeyCapture" type="button" class="voice-hotkey-capture-button"${off}>${muteLabel}</button><button id="voiceUnmuteCapture" type="button" class="voice-hotkey-capture-button"${off}>${unmuteLabel}</button></div><p id="voiceHotkeyStatus" class="voice-hotkey-help" role="status"></p><p class="voice-hotkey-help">Press the mute key to mute eligible lower-ranked members; press it again to restart the countdown. The unmute key ends a mute immediately. Server permission is required.</p></div>`;
+  }
+  function render() {
+    return renderVoice();
   }
   function wire(menu) {
-    desktopControls.wire(menu);
     menu.querySelector('#voiceHotkeyEnabled')?.addEventListener('change', event => void save(event.target.checked, settings.shortcut));
     menu.querySelector('#voiceHotkeyTimeout')?.addEventListener('change', event => void saveTimeout(event.target.value));
     menu.querySelector('#voiceHotkeyCapture')?.addEventListener('click', () => void beginCapture('mute'));
@@ -164,5 +161,5 @@ document.removeEventListener('keyup', captureUp, true);window.removeEventListene
   }
   function close() { cancelCapture(); }
   function stop() { accessGeneration++;accessPending=null;clearInterval(accessTimer);accessTimer=null;eligible=false;release();cancelCapture();void listener(false);notify(); }
-  return { initialize, connection, refreshAccess, invalidateAccess, render, wire, close, stop };
+  return { initialize, connection, refreshAccess, invalidateAccess, render, renderVoice, wire, close, stop };
 }
