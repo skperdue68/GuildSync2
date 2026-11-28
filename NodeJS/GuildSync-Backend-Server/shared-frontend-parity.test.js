@@ -23,7 +23,6 @@ const readNormalised = (file) => normalise(readFileSync(file, 'utf8'));
 // for them.
 const ONE_SIDED_DESKTOP_MODULES = new Map([
   ['chat-upload.js', 'desktop uploads the local GuildSyncChat export; the web client has no local files'],
-  ['desktop-controls.js', 'Wails window/tray preferences through the desktop bridge'],
   ['desktop-support.js', 'the blocked-desktop screen for an out-of-date desktop build'],
   ['profile-menu-shell.js', 'desktop profile menu chrome wired to the Wails window'],
   ['shortcut-capture.js', 'captures the desktop global mute shortcut'],
