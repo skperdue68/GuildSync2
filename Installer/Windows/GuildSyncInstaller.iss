@@ -1,7 +1,7 @@
 #ifndef MyAppVersion
-#define MyAppVersion "2.1.12-beta"
+#define MyAppVersion "2.2.0"
 #endif
-#define MyAppNumericVersion "2.1.12"
+#define MyAppNumericVersion "2.2.0"
 #ifndef SourceRoot
 #define SourceRoot "payload"
 #endif
@@ -22,7 +22,7 @@ DisableDirPage=no
 DisableWelcomePage=no
 DefaultGroupName=GuildSync
 OutputDir={#OutputRoot}
-OutputBaseFilename=GuildSync-Setup-2.1.12-beta-Windows
+OutputBaseFilename=GuildSync-Setup-2.2.0-Windows
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
