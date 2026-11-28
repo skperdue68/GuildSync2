@@ -3383,7 +3383,7 @@ body {
 
 .member-links-table th:nth-child(1),
 .member-links-table td:nth-child(1) {
-  width: 185px;
+  width: 168px;
 }
 
 .member-links-table th:nth-child(2),
@@ -3401,16 +3401,31 @@ body {
   white-space: nowrap;
 }
 
+/* The table is narrow on a small window and uses fixed layout, so the columns are
+   sized including their padding: without border-box the padding ate the whole status
+   and method columns and their headings clipped to "Stat" and "Metho". */
+.member-links-table th,
+.member-links-table td {
+  box-sizing: border-box;
+}
+
+/* Heading words wrap instead of being cut off when the columns are tight; the data
+   cells keep their single line. */
+.member-links-table thead th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .member-links-table .member-links-status-col {
-  width: 82px;
-  min-width: 82px;
-  max-width: 82px;
+  width: 92px;
+  min-width: 92px;
+  max-width: 92px;
 }
 
 .member-links-table .member-links-method-col {
-  width: 74px;
-  min-width: 74px;
-  max-width: 74px;
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
 }
 
 .member-links-table .member-links-action-col {
@@ -3421,9 +3436,9 @@ body {
 }
 
 .member-links-table .member-links-confidence-col {
-  width: 88px;
-  min-width: 88px;
-  max-width: 88px;
+  width: 112px;
+  min-width: 112px;
+  max-width: 112px;
   text-align: right;
 }
 
