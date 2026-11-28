@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {membershipDMMessage,membershipReplyMessage,membershipDeliveryFailureMessage,membershipDeliveryExplain,discordErrorSummary,createMembershipDMWorker,formatMembershipStatus,CARD_WIDTH_PAD} from './membership-dms.js';
 import {createMemoryDMIntake,membershipIntakeKey} from './membership-dm-intake.js';
+import {Collection} from 'discord.js';
 // Every card carries an invisible width pad in its author line, so assertions read
 // the visible text while the width test inspects the raw payload.
 const unpadded=value=>String(value??'').replace(/\u2800+$/,'');
@@ -32,15 +33,17 @@ test('the forwarding notice is never repeated and a suggested match is optional'
  assert.doesNotMatch(none.content,/\{suggested_link\}/);
 });
 function fixture(request) {
- const sends=[],forwards=[],roles=[],kicks=[],nicknames=[];
- const member={user:{bot:false},displayName:'Member',send:async payload=>{sends.push(payload);return {id:'100'};},
+ const sends=[],forwards=[],roles=[],kicks=[],nicknames=[],receipts=[];
+ const member={user:{bot:false},displayName:'Member',joinedAt:new Date(1000000000000),send:async payload=>{sends.push(payload);return {id:'100'};},
   kick:async reason=>{kicks.push(reason);},setNickname:async(name,reason)=>{nicknames.push([name,reason]);},
-  roles:{add:async id=>roles.push(['add',id]),remove:async id=>roles.push(['remove',id])}};
+  roles:{cache:new Collection(),
+    add:async id=>{roles.push(['add',id]);member.roles.cache.set(id,{id,name:String(id)});},
+    remove:async ids=>{for(const id of [].concat(ids)){roles.push(['remove',id]);member.roles.cache.delete(id);}}}};
  const cache=new Map([['10',member]]);
  const intake=createMemoryDMIntake();
  const guild={id:'1',name:'Guild',members:{cache,fetch:async()=>member}};
- const client={user:{id:'bot'},isReady:()=>true,guilds:{fetch:async()=>guild},channels:{fetch:async()=>({guildId:'1',send:async payload=>{forwards.push(payload);return {id:'200'};}})}};
- return {worker:createMembershipDMWorker({client,guildId:'1',request,log:()=>{},intake}),sends,forwards,roles,member,kicks,nicknames,cache,intake};
+ const client={user:{id:'bot'},isReady:()=>true,guilds:{fetch:async()=>guild},users:{fetch:async id=>({id,send:async payload=>{receipts.push(payload);return {id:'300'};}})},channels:{fetch:async()=>({guildId:'1',send:async payload=>{forwards.push(payload);return {id:'200'};}})}};
+ return {worker:createMembershipDMWorker({client,guildId:'1',request,log:()=>{},intake}),sends,forwards,roles,receipts,member,kicks,nicknames,cache,intake};
 }
 test('worker revalidates immediately before send and saves the confirmed message ID',async()=>{
  const calls=[];let claimed=false;
@@ -440,4 +443,24 @@ test('a test delivery failure is reported to the officer without an officer card
  member.send=async()=>{throw Object.assign(Error('Cannot send messages to this user'),{code:50007});};
  await worker.sendNext();
  assert.deepEqual(forwards,[]);
+});
+
+test('a queued promotion changes roles as it sends, DMs the member and receipts the requester',async()=>{
+ const calls=[];
+ const promotion={id:'promo-1',kind:'promotion',userId:'10',name:'Member',token:'claim',content:'Promoted!',
+  removeRoleIds:['800103448339152956'],addRoleId:'800103404848414720',requesterId:'99'};
+ const {worker,sends,roles,receipts,member}=fixture(async(action,payload)=>{
+  calls.push([action,payload]);
+  if(action==='claim')return calls.filter(([name])=>name==='claim').length===1?{job:promotion,config}:{job:null};
+  return {};
+ });
+ member.roles.cache.set('800103448339152956',{id:'800103448339152956',name:'Associate'});
+ await worker.sendNext();
+ assert.deepEqual(roles,[['remove','800103448339152956'],['add','800103404848414720']]);
+ assert.equal(sends.length,1);assert.equal(sends[0].content,'Promoted!');
+ assert.equal(receipts.length,1);
+ assert.match(receipts[0].embeds[0].toJSON().title,/sent/i);
+ assert.deepEqual(calls.map(([name])=>name),['claim','finish']);
+ assert.equal(calls[1][1].result.status,'sent');
+ assert.equal(calls[1][1].result.messageId,'100');
 });

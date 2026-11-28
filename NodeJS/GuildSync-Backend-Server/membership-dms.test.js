@@ -121,3 +121,49 @@ test('membership DM pacing is configurable and a running campaign adopts a faste
  assert.equal(engine.claim(state,members,30),null);
  assert.equal(state.campaign.nextAt,1140,'a slower window never extends an existing wait');
 });
+
+test('a queued promotion takes the next paced slot instead of landing with a campaign DM',()=>{
+ const {engine,state,advance,members}=fixture();
+ engine.start(state,members,30);
+ assert.equal(engine.queueOutbox(state,{userId:'9',name:'Nine',content:'Hello'}),1);
+ assert.equal(engine.claim(state,members,30),null,'the campaign window is still closed');
+ advance(600);
+ const job=engine.claim(state,members,30);
+ assert.equal(job.kind,'promotion');assert.equal(job.content,'Hello');
+ assert.equal(state.campaign.queue[0].status,'pending','the campaign member waits one slot');
+ engine.finish(state,job.id,job.token,{status:'sent',messageId:'m'});
+ assert.equal(state.outbox[0].status,'sent');
+ assert.ok(state.campaign.nextAt>=10001200,'the next slot is paced after the promotion');
+});
+
+test('promotion DMs queued without a campaign are still spaced apart',()=>{
+ const {engine,state,advance}=fixture();
+ engine.queueOutbox(state,{userId:'9',content:'First'});
+ engine.queueOutbox(state,{userId:'8',content:'Second'});
+ const first=engine.claim(state,[],30);
+ assert.equal(first.content,'First');
+ engine.finish(state,first.id,first.token,{status:'sent',messageId:'m'});
+ assert.equal(engine.claim(state,[],30),null);
+ advance(600);
+ assert.equal(engine.claim(state,[],30).content,'Second');
+});
+
+test('queued promotions drain at the front, one paced slot each, before the campaign continues',()=>{
+ const {engine,state,advance,members}=fixture();
+ engine.start(state,members,30);
+ engine.queueOutbox(state,{userId:'9',content:'First'});
+ engine.queueOutbox(state,{userId:'8',content:'Second'});
+ advance(600);
+ const first=engine.claim(state,members,30);
+ assert.equal(first.content,'First');
+ engine.finish(state,first.id,first.token,{status:'sent',messageId:'m'});
+ assert.equal(engine.claim(state,members,30),null,'the next promotion still waits for the pacing window');
+ advance(600);
+ const second=engine.claim(state,members,30);
+ assert.equal(second.content,'Second');
+ engine.finish(state,second.id,second.token,{status:'sent',messageId:'m'});
+ advance(600);
+ const campaign=engine.claim(state,members,30);
+ assert.equal(campaign.kind,undefined);
+ assert.ok(campaign.userId,'the campaign resumes only after the promotions');
+});

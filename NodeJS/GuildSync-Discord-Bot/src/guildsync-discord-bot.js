@@ -37,6 +37,7 @@ import * as raffle from './commands/raffle.js';
 import * as tickets from './commands/tickets.js';
 import * as trader from './commands/trader.js';
 import * as highlights from './commands/highlights.js';
+import * as promoteSoldier from './commands/promote-soldier.js';
 import * as gsaRaffle from './commands/gsa-raffle.js';
 import { startArchiveAnnouncements } from './archive-announcements.js';
 import { startRaffleAnnouncements } from './raffle-announcements.js';
@@ -209,6 +210,7 @@ const commands = [
   tickets,
   trader,
   highlights,
+  promoteSoldier,
   gsaRaffle.createGsrCommand(),
   gsaRaffle.createGsrAliasCommand(),
   gsaCommand
@@ -353,11 +355,16 @@ client.once(Events.ClientReady, async readyClient => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isChatInputCommand()) {
+  const contextMenu = interaction.isUserContextMenuCommand();
+
+  if (!interaction.isChatInputCommand() && !contextMenu) {
     return;
   }
 
-  await recordGuildMemberActivity(interaction.member, `slash_command:${interaction.commandName}`);
+  await recordGuildMemberActivity(
+    interaction.member,
+    `${contextMenu ? 'user_context_menu' : 'slash_command'}:${interaction.commandName}`
+  );
 
   const command = interaction.client.commands.get(interaction.commandName);
 
@@ -372,7 +379,7 @@ client.on(Events.InteractionCreate, async interaction => {
   try {
     await command.execute(interaction, guildSyncSocket);
   } catch (error) {
-    Log(`Error running /${interaction.commandName}: ${error.message}`);
+    Log(`Error running ${interaction.commandName}: ${error.message}`);
 
     const message = {
       content: 'There was an error running that command.',
