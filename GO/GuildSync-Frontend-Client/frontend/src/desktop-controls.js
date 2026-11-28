@@ -2,9 +2,10 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character =>
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 })[character]);
 
-// Desktop-only profile controls: window/tray behaviour, login item and the
-// in-client update check. Everything that touches the host lives in Go; this
-// module only renders the result and forwards the user's choices.
+// Desktop-only profile controls: the in-client update check. Everything that
+// touches the host lives in Go; this module only renders the result and forwards
+// the user's choices. Tray and login-item choices live with the rows they belong
+// to at the top of the profile menu.
 export function createDesktopControls({ bridge, changed = () => {} }) {
   let prefs = null;
   let update = null;
@@ -33,12 +34,6 @@ export function createDesktopControls({ bridge, changed = () => {} }) {
     }
   }
 
-  async function saveCloseToTray(enabled) {
-    try { prefs = await bridge.SetCloseToTray(enabled); message = ''; }
-    catch (error) { message = String(error); }
-    notify();
-  }
-
   async function checkForUpdates() {
     busy = 'check'; message = 'Checking for updates...'; notify();
     try {
@@ -60,7 +55,6 @@ export function createDesktopControls({ bridge, changed = () => {} }) {
   function render() {
     if (!supported) return '';
     if (!prefs) { void initialize(); return ''; }
-    const trayNote = prefs.trayAvailable ? '' : '<p class="voice-hotkey-help">No system tray is available in this session, so closing quits GuildSync.</p>';
     const available = update?.available === true;
     const updateState = available ? 'Version ' + escapeHtml(update.latest) + ' available' : '';
     const downloadButton = available && update?.assetUrl
@@ -69,7 +63,7 @@ export function createDesktopControls({ bridge, changed = () => {} }) {
     const notesButton = available && update?.pageUrl
       ? '<button id="desktopReleaseNotes" type="button" class="voice-hotkey-capture-button">Release notes</button>'
       : '';
-    return `<div id="desktopControlsSection" class="profile-section"><div class="profile-section-header"><span>Desktop</span></div><label class="profile-row voice-hotkey-row"><span>Close button hides to tray <input id="desktopCloseToTray" type="checkbox" ${prefs.closeToTray ? 'checked' : ''} ${prefs.trayAvailable ? '' : 'disabled'}></span></label>${trayNote}<div class="profile-row voice-hotkey-row"><span>Updates</span><span class="voice-hotkey-keys">${updateState}</span><button id="desktopCheckUpdates" type="button" class="voice-hotkey-capture-button" ${busy ? 'disabled' : ''}>${busy === 'check' ? 'Checking...' : 'Check for updates'}</button></div>${downloadButton}${notesButton}<p id="desktopControlsStatus" class="voice-hotkey-help" role="status"></p></div>`;
+    return `<div id="desktopControlsSection" class="profile-section"><div class="profile-section-header"><span>Updates</span></div><div class="profile-row voice-hotkey-row"><span class="voice-hotkey-keys">${updateState}</span><button id="desktopCheckUpdates" type="button" class="voice-hotkey-capture-button" ${busy ? 'disabled' : ''}>${busy === 'check' ? 'Checking...' : 'Check for updates'}</button></div>${downloadButton}${notesButton}<p id="desktopControlsStatus" class="voice-hotkey-help" role="status"></p></div>`;
   }
 
   async function openNotes() {
@@ -78,7 +72,6 @@ export function createDesktopControls({ bridge, changed = () => {} }) {
   }
 
   function wire(menu) {
-    menu.querySelector('#desktopCloseToTray')?.addEventListener('change', event => void saveCloseToTray(event.target.checked));
     menu.querySelector('#desktopCheckUpdates')?.addEventListener('click', () => void checkForUpdates());
     menu.querySelector('#desktopDownloadUpdate')?.addEventListener('click', () => void downloadUpdate());
     menu.querySelector('#desktopReleaseNotes')?.addEventListener('click', () => void openNotes());

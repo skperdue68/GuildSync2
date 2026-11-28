@@ -102,11 +102,23 @@
   cursor: not-allowed;
 }
 
-/* Destructive and navigational actions in the profile menu. */
+/* The voice section is only there for officers the server grants it to; an empty
+   mount means "nothing to offer", so the summary goes too. */
+.profile-disclosure[data-profile-section="desktop"]:has(> #voiceHotkeyMount:empty) {
+  display: none;
+}
+
+/* Destructive and navigational actions in the profile menu. Logout is a menu row like
+   the rest, so only its colour marks it as the one that ends the session. */
 .discord-profile-menu .profile-logout-button {
-  background: #B91C1C;
-  border-color: #DC2626;
-  color: #FFFFFF;
+  background: transparent;
+  border-color: transparent;
+  color: #FCA5A5;
+}
+
+.discord-profile-menu .profile-logout-button:hover,
+.discord-profile-menu .profile-logout-button:focus-visible {
+  background: rgba(185, 28, 28, 0.18);
 }
 
 .discord-profile-menu .profile-logout-button:hover {

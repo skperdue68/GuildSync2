@@ -164,8 +164,10 @@ const voiceHotkey = createVoiceHotkeyController({
     const menu = document.querySelector('#discordProfileMenu');
     const mount = menu?.querySelector('#voiceHotkeyMount');
     if (!mount) return;
+    const desktopMount = menu.querySelector('#desktopControlsMount');
     const scrollTop = menu.scrollTop;
-    mount.innerHTML = voiceHotkey.render();
+    if (desktopMount) desktopMount.innerHTML = voiceHotkey.renderDesktop();
+    mount.innerHTML = voiceHotkey.renderVoice();
     voiceHotkey.wire(menu);
     menu.scrollTop = scrollTop;
   }
@@ -9708,6 +9710,10 @@ function renderOpenProfileMenuContents() {
         <span class="profile-label">Start GuildSync at login</span>
         <input id="profileStartAtLogin" type="checkbox" aria-label="Start GuildSync when you log in to this computer" />
       </label>
+      <label id="profileMinimizeToTrayRow" class="profile-row profile-start-at-login-row" hidden>
+        <span class="profile-label">Minimize to tray</span>
+        <input id="profileMinimizeToTray" type="checkbox" aria-label="Keep GuildSync in the tray when the window is closed" />
+      </label>
       <div class="profile-section profile-filewatch-section">
         <div class="profile-section-header">
           <span>File Watch</span>
@@ -9726,7 +9732,8 @@ function renderOpenProfileMenuContents() {
         </div>
       </div>
       ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="profile-menu-link user-admin-menu-button" type="button"><span class="profile-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="profile-menu-label">Manage GuildSync Users</span><span id="userAdminMenuCount" class="profile-menu-count"></span></button></section>`:''}
-      <div id="voiceHotkeyMount">${voiceHotkey.render()}</div>
+      <div id="desktopControlsMount">${voiceHotkey.renderDesktop()}</div>
+      <div id="voiceHotkeyMount">${voiceHotkey.renderVoice()}</div>
       ${renderUserSwitchControls(guildSyncSession.user,userSwitchOptions)}
       <button id="discordLogoutButton" class="profile-menu-link profile-logout-button" type="button"><span class="profile-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></span><span class="profile-menu-label">Logout</span></button>
     </section>
@@ -9773,22 +9780,27 @@ function renderOpenProfileMenuContents() {
   menu.querySelector('#profileStartAtLogin')?.addEventListener('change', (event) => {
     void saveStartAtLoginPreference(event.target.checked);
   });
+  menu.querySelector('#profileMinimizeToTray')?.addEventListener('change', (event) => {
+    void saveMinimizeToTrayPreference(event.target.checked);
+  });
   void refreshStartAtLoginPreference();
 }
 
-// "Start GuildSync at login" registers the operating system login item (Windows Run
-// key, macOS LaunchAgent, XDG autostart entry), so the menu row only forwards the
-// choice and shows what the host reports. The web client has no such binding.
-function startAtLoginBridge() {
-  return typeof AppBridge?.GetDesktopPreferences === 'function' && typeof AppBridge?.SetStartAtLogin === 'function'
-    ? AppBridge
-    : null;
+// Both top rows describe host behaviour: "Start GuildSync at login" registers the
+// operating system login item (Windows Run key, macOS LaunchAgent, XDG autostart
+// entry) and "Minimize to tray" decides whether closing the window hides it. The
+// menu only forwards the choice and shows what the host reports; the web client has
+// no such bindings, so both rows stay hidden there.
+function desktopPreferencesBridge() {
+  return typeof AppBridge?.GetDesktopPreferences === 'function' ? AppBridge : null;
 }
 
 async function refreshStartAtLoginPreference() {
   const row = document.querySelector('#profileStartAtLoginRow');
   const input = document.querySelector('#profileStartAtLogin');
-  const bridge = startAtLoginBridge();
+  const trayRow = document.querySelector('#profileMinimizeToTrayRow');
+  const trayInput = document.querySelector('#profileMinimizeToTray');
+  const bridge = desktopPreferencesBridge();
 
   if (!row || !input || !bridge) {
     return;
@@ -9797,21 +9809,45 @@ async function refreshStartAtLoginPreference() {
   try {
     const prefs = await bridge.GetDesktopPreferences();
 
-    if (!prefs?.startAtLoginSupported) {
-      return;
+    if (prefs?.startAtLoginSupported) {
+      input.checked = Boolean(prefs.startAtLogin);
+      row.hidden = false;
     }
 
-    input.checked = Boolean(prefs.startAtLogin);
-    row.hidden = false;
+    // Only offer the tray row where there is a tray to minimize into; without one
+    // closing the window has to keep quitting.
+    if (prefs?.trayAvailable && trayRow && trayInput) {
+      trayInput.checked = Boolean(prefs.closeToTray);
+      trayRow.hidden = false;
+    }
   } catch (error) {
-    // Leave the row hidden when the host cannot answer.
-    logGuildSyncFileWatcher('Start-at-login state could not be read.', formatError(error));
+    // Leave the rows hidden when the host cannot answer.
+    logGuildSyncFileWatcher('Desktop preferences could not be read.', formatError(error));
+  }
+}
+
+async function saveMinimizeToTrayPreference(enabled) {
+  const input = document.querySelector('#profileMinimizeToTray');
+
+  if (!input || typeof AppBridge?.SetCloseToTray !== 'function') {
+    return;
+  }
+
+  input.disabled = true;
+
+  try {
+    await AppBridge.SetCloseToTray(enabled);
+  } catch (error) {
+    input.checked = !enabled;
+    addSystemMessage('minimize-to-tray-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } finally {
+    input.disabled = false;
   }
 }
 
 async function saveStartAtLoginPreference(enabled) {
   const input = document.querySelector('#profileStartAtLogin');
-  const bridge = startAtLoginBridge();
+  const bridge = typeof AppBridge?.SetStartAtLogin === 'function' ? AppBridge : null;
 
   if (!input || !bridge) {
     return;

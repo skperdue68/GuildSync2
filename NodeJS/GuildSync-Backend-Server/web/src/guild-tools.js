@@ -83,7 +83,7 @@ export function decorateProfileMenu(menu, {openExternal, openSections = new Set(
     details.append(summary, element);
   };
   collapse(card.querySelector('.profile-filewatch-section'), 'watch', 'SavedVariables & File Watch');
-  collapse(card.querySelector('#voiceHotkeyMount'), 'desktop', 'Desktop & Voice');
+  collapse(card.querySelector('#voiceHotkeyMount'), 'desktop', 'Voice');
   const switchControl = card.querySelector('#switchGuildSyncAccount');
   collapse(switchControl?.closest('.profile-section'), 'switch', 'Switch Account');
   menu.querySelectorAll('[data-profile-section]').forEach(section => {
