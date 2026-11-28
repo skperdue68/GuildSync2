@@ -1,8 +1,142 @@
-.discord-reminder-dialog { width: min(960px, 92vw); max-height: 88vh; overflow: auto; padding: 24px; border: 1px solid #626879; border-radius: 12px; background: #202430; color: #f4f5f8; }
-.discord-reminder-dialog::backdrop { background: #0009; }
-.discord-reminder-heading { display: flex; justify-content: space-between; align-items: center; }
-.discord-reminder-dialog form { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; }
-.discord-reminder-dialog label { display: flex; align-items: center; gap: 8px; }
-.discord-reminder-dialog input, .discord-reminder-dialog select, .discord-reminder-dialog button { padding: 8px 12px; border-radius: 6px; }
-.discord-reminder-dialog input[type=number] { width: 80px; }
-.discord-reminder-preview { max-height: 35vh; overflow: auto; }
+.discord-reminder-card { display: block; }
+.discord-reminder-card .report-option-copy { width: 100%; min-width: 0; }
+
+.discord-reminder-panel { display: grid; gap: 18px; padding: 4px 2px 6px; }
+
+.discord-reminder-lede { margin: 0; max-width: 82ch; color: #CBD5E1; font-size: 14px; line-height: 1.55; }
+
+.discord-reminder-status {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.14);
+  color: #DBEAFE;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.discord-reminder-status:empty { display: none; }
+.discord-reminder-status.discord-data-error { margin: 0; }
+
+.discord-reminder-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+
+.discord-reminder-fact {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: rgba(8, 18, 42, 0.46);
+}
+
+.discord-reminder-fact span { display: block; color: #93A5C0; font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.discord-reminder-fact strong { display: block; margin: 6px 0 4px; color: #F8FAFC; font-size: 22px; font-weight: 800; line-height: 1.1; }
+.discord-reminder-fact small { display: block; color: #9FB0C9; font-size: 12px; line-height: 1.4; }
+
+.discord-reminder-section { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid rgba(148, 163, 184, 0.16); }
+.discord-reminder-section h4,
+.discord-reminder-danger h4 { margin: 0; color: #E2E8F0; font-size: 12.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.discord-reminder-help,
+.discord-reminder-note { margin: 0; color: #A6B4CD; font-size: 13px; line-height: 1.5; }
+.discord-reminder-note strong { color: #DBEAFE; }
+
+.discord-reminder-empty { margin: 0; padding: 14px; border: 1px dashed rgba(148, 163, 184, 0.26); border-radius: 10px; color: #9FB0C9; font-size: 13px; text-align: center; }
+
+.discord-reminder-inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 0; }
+.discord-reminder-inline-form label { display: grid; gap: 6px; min-width: 0; color: #CBD5E1; font-size: 12px; font-weight: 700; }
+
+.discord-reminder-inline-form input,
+.discord-reminder-inline-form select {
+  min-width: 190px;
+  height: 40px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: 8px;
+  background: rgba(7, 16, 38, 0.72);
+  color: #E5E7EB;
+  font-size: 13px;
+}
+
+.discord-reminder-inline-form input[type="number"] { min-width: 96px; width: 96px; }
+.discord-reminder-inline-form input:focus-visible,
+.discord-reminder-inline-form select:focus-visible { outline: 2px solid rgba(96, 165, 250, 0.6); outline-offset: 1px; }
+.discord-reminder-inline-form small { flex-basis: 100%; color: #94A3B8; font-size: 12px; line-height: 1.4; }
+
+.discord-reminder-panel .clear-discord-filters-button,
+.discord-reminder-panel .refresh-discord-button { height: 40px; flex: 0 0 auto; justify-self: start; }
+.discord-reminder-panel .clear-discord-filters-button { border-color: rgba(148, 163, 184, 0.32); background: rgba(7, 16, 38, 0.58); }
+
+.discord-reminder-table-shell {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+  background: rgba(8, 18, 42, 0.44);
+}
+
+.discord-reminder-panel .discord-member-table { table-layout: auto; font-size: 13px; }
+.discord-reminder-panel .discord-member-table th,
+.discord-reminder-panel .discord-member-table td { padding: 9px 14px; white-space: nowrap; }
+.discord-reminder-panel .discord-member-table td:last-child { width: 1%; }
+.discord-reminder-panel .discord-member-table tbody tr:last-child td { border-bottom: 0; }
+
+.discord-reminder-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: #CBD5E1;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.discord-reminder-badge.is-exported { border-color: rgba(74, 222, 128, 0.36); background: rgba(22, 101, 52, 0.32); color: #BBF7D0; }
+
+.discord-reminder-danger {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(127, 29, 29, 0.2), rgba(127, 29, 29, 0.08));
+}
+
+.discord-reminder-danger-copy { display: grid; gap: 6px; }
+.discord-reminder-danger-copy h4 { color: #FECACA; }
+.discord-reminder-danger-copy p { margin: 0; max-width: 82ch; color: #E7C9C9; font-size: 13px; line-height: 1.5; }
+
+.discord-reminder-danger-button {
+  justify-self: start;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.42);
+  color: #FEE2E2;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.discord-reminder-danger-button:hover:not(:disabled) { background: rgba(153, 27, 27, 0.62); }
+.discord-reminder-danger-button:disabled { opacity: 0.6; cursor: wait; }
+
+.discord-reminder-confirm { display: grid; gap: 10px; padding: 12px; border: 1px solid rgba(248, 113, 113, 0.4); border-radius: 10px; background: rgba(127, 29, 29, 0.26); }
+.discord-reminder-confirm p { margin: 0; color: #FEE2E2; font-size: 13px; line-height: 1.5; }
+.discord-reminder-confirm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+@media (max-width: 720px) {
+  .discord-reminder-inline-form input,
+  .discord-reminder-inline-form select { min-width: 100%; }
+  .discord-reminder-panel .clear-discord-filters-button,
+  .discord-reminder-panel .refresh-discord-button,
+  .discord-reminder-danger-button { width: 100%; }
+  .discord-reminder-panel .discord-member-table th,
+  .discord-reminder-panel .discord-member-table td { white-space: normal; }
+}

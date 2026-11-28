@@ -82,6 +82,7 @@ const PENDING_TRADER_UPLOADS_STORAGE_KEY = 'guildsync-pending-trader-uploads';
 const PENDING_DEPOSIT_MAIL_STORAGE_KEY = 'guildsync-pending-deposit-mail';
 const ESO_STATUS_POLL_INTERVAL_MS = 5000;
 const DEPOSIT_MAIL_AVAILABILITY_POLL_INTERVAL_MS = 30 * 1000;
+const ROSTER_REFRESH_POLL_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
 const PENDING_APPLICATIONS_UPLOADS_STORAGE_KEY = 'guildsync-pending-applications-uploads';
 
@@ -196,6 +197,10 @@ let discordSearchSelectionEnd = null;
 let rosterMembers = [];
 let rosterLastRefreshValue = null;
 let rosterDataLoading = false;
+// The freshness stamp the backend holds, used to decide whether the roster header
+// needs a Refresh button at all.
+let rosterServerRefreshValue = null;
+let rosterRefreshPollTimer = null;
 let rosterAutoRefreshAttempted = false;
 let rosterSearchText = '';
 let rosterSearchSelectionStart = null;
@@ -1185,6 +1190,43 @@ function renderDiscordMemberDataPanel() {
 
 
 
+// Roster imports are pushed to every client, so the header refresh button is only
+// useful after a missed broadcast: show it when the stored roster is newer than the
+// snapshot on screen, and hide it again once that snapshot is loaded.
+function rosterRefreshIsAvailable() {
+  if (!rosterServerRefreshValue) return false;
+  if (!rosterLastRefreshValue) return true;
+  return Date.parse(rosterServerRefreshValue) > Date.parse(rosterLastRefreshValue);
+}
+
+// Polling asks for the timestamp only, so a quiet roster costs one tiny round trip
+// every half hour instead of re-sending every member.
+async function checkRosterRefreshFreshness() {
+  if (!socket?.connected || !isAuthenticatedSession()) return;
+  try {
+    const response = await emitSocketWithAck('guildsync:request-roster-data', { version_only: true }, 15000);
+    if (!response?.ok) return;
+    const next = response.last_refresh || null;
+    if (next === rosterServerRefreshValue) return;
+    rosterServerRefreshValue = next;
+    updateRosterDataView();
+  } catch {}
+}
+
+function startRosterRefreshPolling() {
+  stopRosterRefreshPolling();
+  rosterServerRefreshValue = null;
+  void checkRosterRefreshFreshness();
+  rosterRefreshPollTimer = window.setInterval(checkRosterRefreshFreshness, ROSTER_REFRESH_POLL_INTERVAL_MS);
+}
+
+function stopRosterRefreshPolling() {
+  if (rosterRefreshPollTimer) {
+    clearInterval(rosterRefreshPollTimer);
+    rosterRefreshPollTimer = null;
+  }
+}
+
 function renderEsoRosterPanel() {
   const filteredMembers = getFilteredRosterMembers();
   const allRankNames = getAllRosterRankNames();
@@ -1200,14 +1242,13 @@ function renderEsoRosterPanel() {
         </div>
         <div class="discord-history-header-action" style="flex: 1; display: flex; justify-content: center; align-items: center;">
           <button id="openRosterHistoryButton" class="refresh-discord-button" type="button">Lookup Roster History</button>
-          ${discordReminderControls.canOpen()?'<button id="openDiscordRemindersButton" class="refresh-discord-button" type="button" style="margin-left:12px">Discord Reminders</button>':''}
         </div>
         <div class="discord-data-actions">
           <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatRosterRefreshDate(rosterLastRefreshValue))}</span>
-          <button id="refreshRosterDataButton" class="refresh-discord-button" type="button" ${rosterDataLoading ? 'disabled' : ''}>
+          ${rosterRefreshIsAvailable() ? `<button id="refreshRosterDataButton" class="refresh-discord-button" type="button" ${rosterDataLoading ? 'disabled' : ''}>
             <span class="refresh-discord-icon" aria-hidden="true">↻</span>
             <span>${rosterDataLoading ? 'Refreshing...' : 'Refresh Roster Data'}</span>
-          </button>
+          </button>` : ''}
         </div>
       </div>
 
@@ -2011,12 +2052,13 @@ function renderAdminPanel() {
       <div class="discord-data-header reports-header">
         <div>
           <h2 class="discord-data-title">Admin</h2>
-          <p class="discord-data-subtitle">Raffle bonus settings and administrator configuration.</p>
+          <p class="discord-data-subtitle">Raffle bonus settings, Discord reminders and administrator configuration.</p>
         </div>
       </div>
 
       <div class="reports-scroll-area">
         ${renderRaffleBonusSettings()}
+        ${discordReminderControls.render()}
         ${adminConfigurationPanel.render()}
       </div>
     </div>
@@ -2034,6 +2076,7 @@ function wireReportPanels() {
 
   if (activeGuildSyncTab === 'admin') {
     adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
+    discordReminderControls.wire({root:document.querySelector('.admin-panel'),rerender:renderGuildSyncTabLayout});
     wireRaffleBonusSettings();
     return;
   }
@@ -5340,7 +5383,6 @@ async function submitRosterMemberNote() {
 }
 
 function wireEsoRosterPanel() {
-  discordReminderControls.wire(document.querySelector('.eso-roster-panel'));
   memberHistoryActions.wire(document.querySelector('.eso-roster-panel'));
   const refreshButton = document.querySelector('#refreshRosterDataButton');
   if (refreshButton) {
@@ -5977,6 +6019,7 @@ async function handleRosterDataUpdated(payload = {}) {
   const members = normalizeRosterMembers(payload.members);
   rosterMembers = members;
   rosterLastRefreshValue = payload.last_refresh || new Date().toISOString();
+  rosterServerRefreshValue = rosterLastRefreshValue;
 
   updateRosterDataView();
 
@@ -6002,6 +6045,7 @@ async function refreshRosterDataFromBackend(options = {}) {
 
     rosterMembers = normalizeRosterMembers(response.members);
     rosterLastRefreshValue = response.last_refresh || rosterLastRefreshValue;
+    rosterServerRefreshValue = response.last_refresh || rosterLastRefreshValue || null;
 
     if (!options.silent) {
       addSystemMessage('roster-data-loaded', `Loaded ${rosterMembers.length} roster member${rosterMembers.length === 1 ? '' : 's'}.`, {
@@ -7823,7 +7867,6 @@ function mergeBankingEntries(entries) {
 
 function bindLiveDataActions(root) {
   memberHistoryActions.wire(root);
-  discordReminderControls.wire(root);
   root.querySelectorAll('[data-open-member-link-dialog]').forEach(button => {
     button.addEventListener('click', () => openMemberLinkDialog(button.dataset.openMemberLinkDialog || '', button.dataset.memberLinkValue || ''));
   });
@@ -7850,6 +7893,12 @@ function updateLiveDataView(selector, markup, banking = false, roster = false) {
   syncDataText(panel.querySelector('.discord-data-actions .discord-last-refresh'), next.querySelector('.discord-data-actions .discord-last-refresh'));
   const buttonSelector = banking ? '#refreshBankingDataButton' : roster ? '#refreshRosterDataButton' : '#refreshDiscordDataButton';
   const button = panel.querySelector(buttonSelector), wantedButton = next.querySelector(buttonSelector);
+  // The roster refresh button appears only while newer data exists, so a plain text
+  // sync cannot add or remove it; a full redraw keeps the header honest.
+  if (!button !== !wantedButton) {
+    renderGuildSyncTabLayout();
+    return;
+  }
   if (button && wantedButton) {
     button.disabled = wantedButton.disabled;
     syncDataText(button.lastElementChild, wantedButton.lastElementChild);
@@ -9949,7 +9998,7 @@ function applyUserSwitchProfile(user) {
  if(user.user_switch?.epoch===previous?.user_switch?.epoch && user.user_switch?.revision!=null && Number(user.user_switch.revision)<Number(previous?.user_switch?.revision||0))return;
  if(previous?.discord_user_id===user.discord_user_id && previous?.role===user.role && Boolean(previous?.user_switch?.active)===Boolean(user.user_switch?.active)){handleCurrentAccountProfile(user);return;}
  sessionGeneration++;
- stopESOStatusPolling(); stopDepositMailAvailabilityPolling();
+ stopESOStatusPolling(); stopDepositMailAvailabilityPolling(); stopRosterRefreshPolling();
  window.clearTimeout(depositMailPendingWriteAutoTimer); depositMailPendingWriteAutoTimer=null;
  disconnectSocket(false);
  userAdministrationPanel.reset(); adminConfigurationPanel.clear();
@@ -10494,6 +10543,7 @@ function connectSocket() {
     // state because a reconnect starts a fresh server-side connection record.
     reportedEsoPresence = null;
     connectedSocket.emit('guildsync:presence-request');
+    startRosterRefreshPolling();
   });
 
   onCurrentSocket('guildsync:presence',payload=>setGuildSyncPresence(payload));
@@ -10519,6 +10569,7 @@ function connectSocket() {
     stopVersionCheckTimer();
     stopESOStatusPolling();
     stopDepositMailAvailabilityPolling();
+    stopRosterRefreshPolling();
     setGuildSyncPresence(null);
   });
 
@@ -11425,7 +11476,7 @@ async function sendGuildSyncChatUpload(chatPayload) {
 
 // ESO writes the add-on's delivery results (mailAck) only when it saves
 // SavedVariables: on /reloadui or a normal logout. Reading them here means the
-// database reflects sent/failed mail without opening the Discord Reminders dialog.
+// database reflects sent/failed mail without opening the Admin tab.
 async function handleDiscordReminderSavedVarsModified() {
   if (!isAuthenticatedSession() || !canEditGuildSyncData()) {
     return;
@@ -11530,8 +11581,8 @@ function canManageGuildSyncLinks() {
   return isAuthenticatedSession() && canManageGuildSyncLinksRole(guildSyncSession.user?.role);
 }
 
-// The Discord Reminders button is for guild officers with GuildSync User or Admin
-// access. The backend re-checks both before returning any campaign data.
+// The Admin tab’s Discord Reminders section is for guild officers with GuildSync
+// User or Admin access. The backend re-checks both before returning campaign data.
 async function refreshDiscordReminderAccess(){
   const before=discordReminderControls.canOpen();
   await discordReminderControls.refreshAccess();

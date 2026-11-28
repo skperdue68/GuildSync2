@@ -69,7 +69,7 @@ test('desktop identifies itself at handshake and starts normal work only after a
  const context=vm.createContext({desktopSupport:{blocked:false,receive:()=>false},desktopVersionAccepted:false,desktopVersionHandshakeTimer:null,
   socket:null,guildSyncSession:{socket_url:'https://example.test',token:'test'},GUILDSYNC_APP_VERSION:'1.5.0',
   io:(_url,opts)=>{options=opts;return connection;},getGuildSyncClientPlatform:()=> 'windows',disconnectSocket(){},updateStatusDot(){},
-  window:{setTimeout:()=>1,clearTimeout(){}},sendVersionCheck:()=>checks++,startSupportedDesktopConnection:()=>starts++,
+  window:{setTimeout:()=>1,clearTimeout(){}},sendVersionCheck:()=>checks++,startSupportedDesktopConnection:()=>starts++,startRosterRefreshPolling(){},stopRosterRefreshPolling(){},
   handleCurrentAccountProfile(){},handleMemberLinksUpdated(){},renderDesktopUpdateArea(){},removeSystemMessage(){}});
  vm.runInContext(pick('connectSocket')+'\n'+pick('handleVersionStatus'),context);context.connectSocket();
  handlers.get('connect')();assert.equal(checks,1);assert.equal(starts,0);

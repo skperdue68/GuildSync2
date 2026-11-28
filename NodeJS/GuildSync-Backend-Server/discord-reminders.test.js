@@ -124,17 +124,18 @@ test('socket operations require a reminder officer except for community opt-outs
   assert.equal(response.ok,true);assert.deepEqual(response.recipients,[]);
 });
 
-test('reset clears only the ESO reminder mail tables',async()=>{
+test('reset clears reminder history but keeps opt-outs',async()=>{
  const {db,data}=batchDatabase(),deleted=[];
  const connection=await db.getConnection(),original=connection.execute;
  connection.execute=async(sql,args)=>{
+  if(sql.startsWith('SELECT COUNT(*) AS total FROM guildsync_discord_reminder_members'))return [[{total:3}]];
   if(sql.startsWith('DELETE FROM ')){deleted.push(sql);return [{affectedRows:2}];}
   return original(sql,args);
  };
  const result=await createDiscordReminders(db,{guildId:'123',now:()=>now}).reset();
  assert.deepEqual(deleted,['DELETE FROM guildsync_discord_reminder_requests',
-  'DELETE FROM guildsync_discord_reminder_batches','DELETE FROM guildsync_discord_reminder_members']);
- assert.deepEqual(result,{deletedRequests:2,deletedBatches:2,deletedMembers:2});
+  'DELETE FROM guildsync_discord_reminder_batches','DELETE FROM guildsync_discord_reminder_members WHERE discord_opt_out=0']);
+ assert.deepEqual(result,{deletedRequests:2,deletedBatches:2,deletedMembers:2,keptOptOuts:3});
  assert.equal(data.commits,1);
 });
 test('reset is available to officers and reported over the socket',async()=>{

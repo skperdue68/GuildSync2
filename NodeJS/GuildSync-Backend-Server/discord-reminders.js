@@ -236,13 +236,16 @@ export function createDiscordReminders(db,{guildId='',guildName='',now=()=>new D
     },
     // Clears only the ESO reminder-mail records. Roster links, other saved
     // variables and the Discord membership DM campaign are untouched.
+    // Reset clears reminder history, not consent: a member's "does not use Discord"
+    // answer survives, so tidying up reminder data can never put them back in the pool.
     async reset() {
       return transaction(async c=>{
+        const [optedOut]=await c.execute('SELECT COUNT(*) AS total FROM guildsync_discord_reminder_members WHERE discord_opt_out=1');
         const [requests]=await c.execute('DELETE FROM guildsync_discord_reminder_requests');
         const [batches]=await c.execute('DELETE FROM guildsync_discord_reminder_batches');
-        const [members]=await c.execute('DELETE FROM guildsync_discord_reminder_members');
+        const [members]=await c.execute('DELETE FROM guildsync_discord_reminder_members WHERE discord_opt_out=0');
         return {deletedRequests:Number(requests?.affectedRows||0),deletedBatches:Number(batches?.affectedRows||0),
-          deletedMembers:Number(members?.affectedRows||0)};
+          deletedMembers:Number(members?.affectedRows||0),keptOptOuts:Number(optedOut?.[0]?.total||0)};
       });
     },
     async acknowledge(officerId,acks) {

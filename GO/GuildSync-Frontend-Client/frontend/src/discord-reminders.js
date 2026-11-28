@@ -139,106 +139,192 @@ export async function syncReminderAcks(bridge,request) {
 }
 
 export function createDiscordReminderControls({request,bridge,canEdit,changed}) {
-  let dialog=null,busy=false,officerAccess=false;
-  const canOpen=()=>Boolean(canEdit())&&officerAccess;
+  let overview=null,saved=null,pending=[],message='',messageError=false;
+  let busy=false,loading=false,accessChecked=false,officerAccess=false,confirmReset=false,rerender=null,loadFailed=false;
   const desktop=Boolean(bridge?.WriteDiscordReminderQueue);
-  const message=(text,error=false)=>{
-    const status=dialog?.querySelector('[data-reminder-status]');
-    if(status){status.textContent=text;status.classList.toggle('discord-data-error',error);}
-  };
-  async function task(fn) {
+  const canOpen=()=>Boolean(canEdit())&&officerAccess;
+  const say=(text,error=false)=>{message=String(text||'');messageError=Boolean(error);};
+  const status=()=>`<p class="discord-reminder-status${messageError?' discord-data-error':''}" data-reminder-status role="status">${escape(message)}</p>`;
+  const fact=(label,value,note)=>`<div class="discord-reminder-fact"><span>${escape(label)}</span><strong>${escape(String(value))}</strong><small>${escape(note)}</small></div>`;
+  const intro='Nudges roster members who still have no confirmed Discord link. GuildSync decides who qualifies and prepares the batch; the GuildSyncDiscordReminder add-on sends the in-game mail from your ESO account while you play. Messages use the templates configured inside that add-on.';
+  const card=content=>`<article class="report-option-card discord-reminder-card">
+      <div class="report-option-copy">
+        <h3><button type="button" class="report-section-toggle" data-report-toggle="reminders" aria-expanded="false" aria-controls="discordRemindersContent">Discord Reminders <span aria-hidden="true">▾</span></button></h3>
+        <div id="discordRemindersContent" class="report-section-content" inert>
+          <div class="report-section-inner discord-reminder-panel">${content}</div>
+        </div>
+      </div>
+    </article>`;
+  async function refreshOverview(){
+    overview=checked(await request({action:'preview'}));
+    pending=getPendingReminderWrites();
+  }
+  async function reload(text,error=false){
+    if(desktop)try{saved=checked(await bridge.CollectDiscordReminderSavedVars());}catch(error){say(error.message,true);}
+    await refreshOverview();
+    if(text)say(text,error);
+    rerender?.();
+  }
+  async function load(){
+    if(loading||busy)return;
+    loading=true;loadFailed=false;
+    try{
+      if(!accessChecked){officerAccess=Boolean(checked(await request({action:'access'})).officer);accessChecked=true;}
+      if(!officerAccess)return;
+      if(desktop)try{saved=checked(await bridge.CollectDiscordReminderSavedVars());await syncReminderAcks(bridge,request);}catch(error){say(error.message,true);}
+      await refreshOverview();
+    }catch(error){loadFailed=true;say(error.message,true);}
+    finally{loading=false;rerender?.();}
+  }
+  async function task(root,fn){
     if(busy)return;
     busy=true;
-    const controls=Array.from(dialog?.querySelectorAll('button,input,select')||[]).map(el=>[el,el.disabled]);
-    controls.forEach(([el])=>el.disabled=true);
-    try{await fn();}catch(error){message(error.message,true);}
-    finally{busy=false;controls.forEach(([el,disabled])=>el.disabled=disabled);}
+    const controls=Array.from(root?.querySelectorAll('button,input,select')||[]).map(element=>[element,element.disabled]);
+    controls.forEach(([element])=>element.disabled=true);
+    try{await fn();}catch(error){say(error.message,true);try{await reload();}catch{rerender?.();}}
+    finally{busy=false;controls.forEach(([element,disabled])=>element.disabled=disabled);}
   }
-  async function open() {
-    if(!canOpen())return;
-    dialog?.remove();
-    dialog=document.createElement('dialog');
-    dialog.className='discord-reminder-dialog';
-    dialog.innerHTML='<h2>Discord Reminders</h2><p data-reminder-status role="status">Loading…</p><button data-reminder-close>Close</button>';
-    document.body.append(dialog);dialog.showModal();
-    dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault();});
-    dialog.querySelector('[data-reminder-close]').onclick=()=>{if(!busy)dialog.close();};
-    busy=true;
-    try{
-      let saved=null,setupMessage='';
-      if(desktop){
-        try{saved=checked(await bridge.CollectDiscordReminderSavedVars());await syncReminderAcks(bridge,request);}
-        catch(error){setupMessage=error.message;}
-      }
-      const overview=checked(await request({action:'preview'}));
-      const rows=overview.recipients||[];
-      const batches=overview.batches||[];
-      const pending=getPendingReminderWrites();
-      dialog.innerHTML=`<div class="discord-reminder-heading"><h2>Discord Reminders</h2><button data-reminder-close type="button">Close</button></div>
-        <p>Current roster members without a confirmed Discord link. Recently contacted members, pending requests and “Does not use Discord” members are excluded.</p>
-        <form data-reminder-config><label>Minimum days between reminders <input name="days" type="number" min="1" max="365" step="1" value="${escape(overview.intervalDays)}" required></label> <button type="submit">Save interval</button></form>
-        <p>${rows.length} eligible member${rows.length===1?'':'s'}. Messages use the templates configured inside the ESO add-on.</p>
-        <div class="discord-reminder-preview"><table class="discord-member-table"><thead><tr><th>ESO account</th><th>Guild rank</th><th>Possible Discord match</th></tr></thead><tbody>
-          ${rows.map(row=>`<tr><td>${escape(row.recipient)}</td><td>${escape(row.rank)}</td><td>${escape(row.candidateDiscordName||'None')}</td></tr>`).join('')||'<tr><td colspan="3">No members currently qualify.</td></tr>'}</tbody></table></div>
-        ${desktop?`<form data-reminder-export><label>Sending ESO account <select name="account" required><option value="">Choose account</option>${(saved?.accounts||[]).map(a=>`<option>${escape(a)}</option>`).join('')}</select></label>
-          <label>ESO server <select name="world"><option>NA Megaserver</option><option>EU Megaserver</option></select></label>
-          <button type="submit" ${rows.length && saved?.accounts?.length?'':'disabled'}>Queue reminders</button></form>
-          <form data-reminder-test><label>Test recipient <input name="recipient" placeholder="@YourESOAccount" required pattern="@[^\\s@]{2,63}"></label><button type="submit" ${saved?.accounts?.length?'':'disabled'}>Queue one test mail</button></form>
-          ${pending.length?`<p data-reminder-pending><strong>${pending.length} batch${pending.length===1?'':'es'} queued.</strong> GuildSync writes them to SavedVariables as soon as ESO is closed.</p>`:''}
-          <p>Reminders are written to the add-on only while ESO is closed, so you can queue them at any time. Start ESO afterward and the add-on sends them automatically; exit ESO or /reloadui to save the results.</p>
-          <button data-reminder-sync type="button">Read saved delivery results</button>`:'<p>Use the GuildSync desktop app to write the add-on SavedVariables file. You can manage the reminder interval and roster opt-outs here.</p>'}
-        <h3>Recent batches</h3><div>${batches.map(batch=>`<p>${escape(date(batch.created_at))} · ${escape(batch.sending_account)} · ${escape(batch.world_name)} · ${escape(batch.exported_at?'Exported':'Awaiting export confirmation')}${desktop?` <button type="button" data-reminder-resume="${escape(batch.batch_id)}" data-account="${escape(batch.sending_account)}" data-world="${escape(batch.world_name)}">Retry same batch</button>`:''}</p>`).join('')||'<p>No reminder batches yet.</p>'}</div>
-        <p class="discord-reminder-reset"><button type="button" data-reminder-reset>Reset reminder data</button> Clears every ESO reminder batch, request, send date and opt-out. The Discord membership DM campaign is not affected.</p>
-        <p data-reminder-status role="status"></p>`;
-      dialog.querySelector('[data-reminder-close]').onclick=()=>{if(!busy)dialog.close();};
-      dialog.querySelector('[data-reminder-config]').onsubmit=event=>{event.preventDefault();const days=Number(new FormData(event.currentTarget).get('days'));task(async()=>{checked(await request({action:'configure',intervalDays:days}));await open();});};
-      const exportForm=dialog.querySelector('[data-reminder-export]');
-      if(exportForm)exportForm.onsubmit=event=>{
-        event.preventDefault();const data=new FormData(event.currentTarget),batchId=crypto.randomUUID();
-        task(async()=>{
-          try {const result=await exportReminderBatch({request,bridge,batchId,account:data.get('account'),world:data.get('world')});await changed();await open();message(result.message);}
-          catch(error){await open();message(error.message,true);}
-        });
-      };
-      const testForm=dialog.querySelector('[data-reminder-test]');
-      if(testForm)testForm.onsubmit=event=>{
-        event.preventDefault();const testRecipient=new FormData(event.currentTarget).get('recipient');
-        const selection=new FormData(exportForm),account=selection.get('account'),world=selection.get('world');
-        if(!account){message('Choose the sending ESO account above first.',true);return;}
-        task(async()=>{const result=await exportReminderBatch({request,bridge,batchId:crypto.randomUUID(),account,world,testRecipient});await changed();await open();message(result.message);});
-      };
-      dialog.querySelector('[data-reminder-sync]')?.addEventListener('click',()=>task(async()=>{await syncReminderAcks(bridge,request);await changed();message('Saved delivery results synchronized.');}));
-      dialog.querySelectorAll('[data-reminder-resume]').forEach(button=>button.onclick=()=>task(async()=>{
-        const result=await exportReminderBatch({request,bridge,batchId:button.dataset.reminderResume,account:button.dataset.account,world:button.dataset.world,resume:true});
-        await changed();await open();message(result.message);
-      }));
-      dialog.querySelector('[data-reminder-reset]')?.addEventListener('click',()=>{
-        if(!window.confirm('Reset all ESO reminder data? This clears reminder batches, requests, send dates and opt-outs. The Discord membership DM campaign is not affected. Reminders already written to the add-on are not removed.'))return;
-        task(async()=>{
-          const result=checked(await request({action:'reset'}));
-          clearPendingReminderWrites();
-          await changed();await open();
-          message(`Cleared ${result?.deletedRequests||0} reminder request(s), ${result?.deletedBatches||0} batch(es) and ${result?.deletedMembers||0} member record(s).`);
-        });
+  // The reminder panel is an Admin-tab section, not a modal: it states what the feature
+  // does, who qualifies, what a batch contains and what a reset keeps, so it can be read
+  // top to bottom without knowing the add-on first.
+  const render=()=>{
+    if(!canOpen())return '';
+    const days=overview?.intervalDays??30;
+    const rows=overview?.recipients||[];
+    const batches=overview?.batches||[];
+    const accounts=saved?.accounts||[];
+    // Until the first preview arrives, show the card header and a loading line rather
+    // than empty tables that read as "nobody qualifies".
+    if(!overview)return card(`<p class="discord-reminder-lede">${intro}</p>${status()}${message?'':'<p class="discord-reminder-help">Loading reminder data…</p>'}`);
+    return card(`<p class="discord-reminder-lede">${intro}</p>${status()}
+            <div class="discord-reminder-facts">
+              ${fact('Reminder interval',`${days} day${days===1?'':'s'}`,'Shortest gap between two reminders for the same member.')}
+              ${fact('Ready to receive',rows.length,'Roster members with no confirmed link and no reminder inside the interval.')}
+              ${fact('Recent batches',batches.length,'Batches you prepared, newest first.')}
+            </div>
+            <form data-reminder-config class="discord-reminder-inline-form">
+              <label>Minimum days between reminders
+                <input name="days" type="number" min="1" max="365" step="1" value="${escape(days)}" required>
+              </label>
+              <button class="clear-discord-filters-button" type="submit">Save interval</button>
+              <small>Raising this skips members who were contacted recently; it never shortens an existing wait.</small>
+            </form>
+            <section class="discord-reminder-section">
+              <h4>Members who qualify</h4>
+              <p class="discord-reminder-help">Recently contacted members, members with a pending reminder, “Does not use Discord” members and members with a confirmed link are excluded.</p>
+              ${rows.length?`<div class="discord-reminder-table-shell"><table class="discord-member-table discord-reminder-table">
+                <thead><tr><th>ESO account</th><th>Guild rank</th><th>Possible Discord match</th></tr></thead>
+                <tbody>${rows.map(row=>`<tr><td>${escape(row.recipient)}</td><td>${escape(row.rank||'')}</td><td>${escape(row.candidateDiscordName||'None')}</td></tr>`).join('')}</tbody>
+              </table></div>`:'<p class="discord-reminder-empty">No members currently qualify.</p>'}
+            </section>
+            <section class="discord-reminder-section">
+              <h4>Prepare a batch</h4>
+              ${desktop?`
+                <p class="discord-reminder-help">Choose the account the mail should come from. The add-on only writes while ESO is closed, so you can queue now and start the game afterwards; exit ESO or /reloadui to save the delivery results.</p>
+                <form data-reminder-export class="discord-reminder-inline-form">
+                  <label>Sending ESO account
+                    <select name="account" required><option value="">Choose account</option>${accounts.map(account=>`<option>${escape(account)}</option>`).join('')}</select>
+                  </label>
+                  <label>ESO server
+                    <select name="world"><option>NA Megaserver</option><option>EU Megaserver</option></select>
+                  </label>
+                  <button class="refresh-discord-button" type="submit" ${rows.length&&accounts.length?'':'disabled'}>${rows.length?`Queue ${rows.length} reminder${rows.length===1?'':'s'}`:'Queue reminders'}</button>
+                </form>
+                <form data-reminder-test class="discord-reminder-inline-form">
+                  <label>Test recipient
+                    <input name="recipient" placeholder="@YourESOAccount" pattern="@[^\\s@]{2,63}" required>
+                  </label>
+                  <button class="clear-discord-filters-button" type="submit" ${accounts.length?'':'disabled'}>Queue one test mail</button>
+                  <small>Sends one mail to that account from this server and sending account, so you can check the template.</small>
+                </form>
+                ${pending.length?`<p class="discord-reminder-note"><strong>${pending.length} batch${pending.length===1?'':'es'} queued.</strong> GuildSync writes them to SavedVariables as soon as ESO is closed.</p>`:''}
+                <button class="clear-discord-filters-button" data-reminder-sync type="button">Read saved delivery results</button>
+              `:'<p class="discord-reminder-help">Writing reminder mail needs the GuildSync desktop app, which writes the add-on SavedVariables file. You can still review who qualifies, the interval and past batches here.</p>'}
+            </section>
+            <section class="discord-reminder-section">
+              <h4>Recent batches</h4>
+              ${batches.length?`<div class="discord-reminder-table-shell"><table class="discord-member-table discord-reminder-table discord-reminder-batches">
+                <thead><tr><th>Prepared</th><th>Sending account</th><th>Server</th><th>Status</th>${desktop?'<th></th>':''}</tr></thead>
+                <tbody>${batches.map(batch=>`<tr>
+                  <td>${escape(date(batch.created_at))}</td>
+                  <td>${escape(batch.sending_account)}</td>
+                  <td>${escape(batch.world_name)}</td>
+                  <td><span class="discord-reminder-badge ${batch.exported_at?'is-exported':''}">${escape(batch.exported_at?'Exported':'Waiting for export')}</span></td>
+                  ${desktop?`<td><button class="clear-discord-filters-button" type="button" data-reminder-resume="${escape(batch.batch_id)}" data-account="${escape(batch.sending_account)}" data-world="${escape(batch.world_name)}">Retry</button></td>`:''}
+                </tr>`).join('')}</tbody>
+              </table></div>`:'<p class="discord-reminder-empty">No reminder batches yet.</p>'}
+            </section>
+            <section class="discord-reminder-danger">
+              <div class="discord-reminder-danger-copy">
+                <h4>Reset reminder data</h4>
+                <p>Deletes every reminder batch and request and clears the recorded send dates. Members marked “does not use Discord” keep that answer, and links, roster notes and the Discord membership DM campaign are untouched. Mail already written to the add-on is not recalled.</p>
+              </div>
+              ${confirmReset?`<div class="discord-reminder-confirm" role="alert">
+                <p><strong>Reset all reminder data?</strong> This cannot be undone.</p>
+                <div class="discord-reminder-confirm-actions">
+                  <button class="discord-reminder-danger-button" type="button" data-reminder-reset-confirm>Yes, reset reminder data</button>
+                  <button class="clear-discord-filters-button" type="button" data-reminder-reset-cancel>Cancel</button>
+                </div>
+              </div>`:`<button class="discord-reminder-danger-button" type="button" data-reminder-reset>Reset reminder data</button>`}
+            </section>`);
+  };
+  const wire=({root,rerender:refresh}={})=>{
+    if(refresh)rerender=refresh;
+    if(!root)return;
+    if(!loading&&(!accessChecked||officerAccess&&!overview&&!loadFailed))void load();
+    const panel=root.querySelector('.discord-reminder-panel');
+    if(!panel)return;
+    panel.querySelector('[data-reminder-config]')?.addEventListener('submit',event=>{
+      event.preventDefault();
+      const days=Number(new FormData(event.currentTarget).get('days'));
+      task(panel,async()=>{checked(await request({action:'configure',intervalDays:days}));await reload('Reminder interval saved.');});
+    });
+    const exportForm=panel.querySelector('[data-reminder-export]');
+    exportForm?.addEventListener('submit',event=>{
+      event.preventDefault();
+      const data=new FormData(event.currentTarget);
+      task(panel,async()=>{
+        const result=await exportReminderBatch({request,bridge,batchId:crypto.randomUUID(),account:data.get('account'),world:data.get('world')});
+        await changed();await reload(result.message||'Reminder batch prepared.');
       });
-      message(setupMessage,Boolean(setupMessage));
-    }catch(error){message(error.message,true);}
-    finally{busy=false;}
-  }
+    });
+    panel.querySelector('[data-reminder-test]')?.addEventListener('submit',event=>{
+      event.preventDefault();
+      const testRecipient=new FormData(event.currentTarget).get('recipient');
+      const selection=new FormData(exportForm),account=selection.get('account'),world=selection.get('world');
+      if(!account){say('Choose the sending ESO account above first.',true);rerender?.();return;}
+      task(panel,async()=>{const result=await exportReminderBatch({request,bridge,batchId:crypto.randomUUID(),account,world,testRecipient});await changed();await reload(result.message||'Test mail queued.');});
+    });
+    panel.querySelector('[data-reminder-sync]')?.addEventListener('click',()=>task(panel,async()=>{
+      await syncReminderAcks(bridge,request);await changed();await reload('Saved delivery results synchronized.');
+    }));
+    panel.querySelectorAll('[data-reminder-resume]').forEach(button=>button.addEventListener('click',()=>task(panel,async()=>{
+      const result=await exportReminderBatch({request,bridge,batchId:button.dataset.reminderResume,account:button.dataset.account,world:button.dataset.world,resume:true});
+      await changed();await reload(result.message||'Batch re-exported.');
+    })));
+    panel.querySelector('[data-reminder-reset]')?.addEventListener('click',()=>{confirmReset=true;rerender?.();});
+    panel.querySelector('[data-reminder-reset-cancel]')?.addEventListener('click',()=>{confirmReset=false;rerender?.();});
+    panel.querySelector('[data-reminder-reset-confirm]')?.addEventListener('click',()=>task(panel,async()=>{
+      const result=checked(await request({action:'reset'}));
+      clearPendingReminderWrites();
+      confirmReset=false;
+      await changed();
+      const kept=Number(result?.keptOptOuts||0);
+      await reload(`Cleared ${Number(result?.deletedRequests||0)} reminder request(s) and ${Number(result?.deletedBatches||0)} batch(es), and reset ${Number(result?.deletedMembers||0)} send date record(s).${kept?` Kept ${kept} opt-out${kept===1?'':'s'}.`:''}`);
+    }));
+  };
   if(desktop)startReminderWriteWatcher({bridge,request});
-  return {open,canOpen,resetAccess(){officerAccess=false;},
-    async refreshAccess(){officerAccess=false;if(!canEdit())return false;try{officerAccess=Boolean(checked(await request({action:'access'})).officer);}catch{officerAccess=false;}return officerAccess;},
+  return {render,wire,canOpen,refresh:load,
+    resetAccess(){officerAccess=false;accessChecked=false;overview=null;saved=null;pending=[];message='';messageError=false;confirmReset=false;loading=false;loadFailed=false;},
+    async refreshAccess(){officerAccess=false;accessChecked=true;loadFailed=false;if(!canEdit())return false;try{officerAccess=Boolean(checked(await request({action:'access'})).officer);}catch{officerAccess=false;}return officerAccess;},
     async sync(){
       if(!canOpen()||!desktop)return null;
       const data=await syncReminderAcks(bridge,request);await changed();
+      try{await reload();}catch{rerender?.();}
       const acks=data?.acks||[];
       return {acks:acks.length,sent:acks.filter(ack=>ack.status==='sent').length,
         failed:acks.filter(ack=>ack.status==='failed').length,uncertain:acks.filter(ack=>ack.status==='uncertain').length,
         deferred:Number(data?.deferred||0),cleaned:Number(data?.cleaned||0)};
-    },
-    wire(root){
-      const button=root?.querySelector('#openDiscordRemindersButton');
-      if(button)button.onclick=open;
     }
   };
 }
