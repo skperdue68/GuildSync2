@@ -2894,11 +2894,13 @@ function renderMemberLinksReportDialog() {
 
         ${memberLinksError ? `<div class="discord-data-error member-links-report-error">${escapeHtml(memberLinksError)}</div>` : ''}
 
-        ${memberLinkDiagnostics.pair ? renderMemberLinkDiagnosticsPanel() : ''}
-        ${memberLinkHistory.pair ? renderMemberLinkHistoryPanel() : ''}
+        <div class="report-results-body member-links-report-body">
+          ${memberLinkDiagnostics.pair ? renderMemberLinkDiagnosticsPanel() : ''}
+          ${memberLinkHistory.pair ? renderMemberLinkHistoryPanel() : ''}
 
-        <div class="report-results-content member-links-report-content">
-          ${renderMemberLinksRows()}
+          <div class="report-results-content member-links-report-content">
+            ${renderMemberLinksRows()}
+          </div>
         </div>
       </div>
     </div>
