@@ -7810,6 +7810,17 @@ body {
   height: 18px;
 }
 
+/* The admin count sits at the far end of its row, and logout keeps its warning colour. */
+.profile-menu-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: rgba(203, 213, 225, 0.75);
+}
+
+.profile-logout-button {
+  color: #fecaca;
+}
+
 
 /* Presence tooltip: the client type (desktop / web) reads as a small pill so the
    login name stays on its own line of the row. */

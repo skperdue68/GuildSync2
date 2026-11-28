@@ -9725,10 +9725,10 @@ function renderOpenProfileMenuContents() {
           </button>
         </div>
       </div>
-      ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}
+      ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="profile-menu-link user-admin-menu-button" type="button"><span class="profile-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="profile-menu-label">Manage GuildSync Users</span><span id="userAdminMenuCount" class="profile-menu-count"></span></button></section>`:''}
       <div id="voiceHotkeyMount">${voiceHotkey.render()}</div>
       ${renderUserSwitchControls(guildSyncSession.user,userSwitchOptions)}
-      <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
+      <button id="discordLogoutButton" class="profile-menu-link profile-logout-button" type="button"><span class="profile-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></span><span class="profile-menu-label">Logout</span></button>
     </section>
   `;
 
