@@ -7668,9 +7668,18 @@ body {
   background: rgb(17, 34, 70);
 }
 
+/* Both of these shells carry !important scrolling rules elsewhere, so the stickiness
+   has to be undone at the same weight or the shell stays a scroll container and the
+   headers never stick to the pane. The section is a clipped box for its rounded
+   corners, which also traps sticky, so it stops clipping too. */
 .member-links-report-dialog .member-links-table-shell,
 .associate-ticket-report-dialog .report-result-table-shell {
-  max-height: none;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.member-links-report-dialog .member-links-section,
+.associate-ticket-report-dialog .report-result-section {
   overflow: visible;
 }
 
