@@ -11,6 +11,7 @@
 # in SAVED_VARS_DIR below is moved into the database the first time you sign in, and
 # the database is used from then on.
 
-# Optional: force all deposit mails to this ESO account while testing.
-# Leave blank for normal use.
-GUILDSYNC_DEPOSIT_MAIL_FORCE_RECIPIENT=
+# Obsolete in the desktop client. To override receipt recipients for testing,
+# set GUILDSYNC_DEPOSIT_MAIL_FORCE_RECIPIENT in
+# NodeJS/GuildSync-Backend-Server/.env.
+# GUILDSYNC_DEPOSIT_MAIL_FORCE_RECIPIENT=
