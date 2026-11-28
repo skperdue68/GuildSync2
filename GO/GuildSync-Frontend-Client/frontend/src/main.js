@@ -3387,7 +3387,13 @@ function syncReportStuckHeaders(root = document) {
   root.querySelectorAll('.report-result-section-header').forEach((header) => {
     const scroller = header.closest('.member-links-report-body, .associate-ticket-report-dialog .report-results-content');
     if (!scroller) return;
-    const stuck = header.getBoundingClientRect().top <= scroller.getBoundingClientRect().top + 1;
+    // A sticky title pins at the pane's content edge, which sits below the pane's own
+    // top padding. Comparing against the pane's outer top misses that pin, so the title
+    // would scroll with a transparent background and its rows would show through it.
+    // At the top of the pane every title sits on that same edge, so a pane that has not
+    // scrolled yet cannot have a pinned title; that keeps the section's rounded corner.
+    const paneTop = scroller.getBoundingClientRect().top + (parseFloat(getComputedStyle(scroller).paddingTop) || 0);
+    const stuck = scroller.scrollTop > 0 && header.getBoundingClientRect().top <= paneTop + 1;
     header.classList.toggle('report-sticky-header-stuck', stuck);
   });
 }
