@@ -3381,6 +3381,9 @@ body {
 .member-links-table {
   table-layout: fixed;
   min-width: 920px;
+  /* Fill the pane so the table lines up with the diagnostics and history panels
+     above it; without this it kept its fixed column widths and sat narrower. */
+  width: 100%;
 }
 
 .member-links-table th:nth-child(1),
@@ -3485,6 +3488,13 @@ body {
   border-radius: 12px;
   background: rgba(15, 23, 42, 0.85);
   color: #e5e7eb;
+}
+
+/* The table sits inside the report content's 22px side padding plus its section border,
+   so the panels are inset the same amount to share the table's edges. */
+.member-links-report-body > .member-link-history-panel {
+  margin-left: 23px;
+  margin-right: 23px;
 }
 
 .member-link-history-header {
