@@ -2214,7 +2214,7 @@ function renderAssociatePromotionReportSection(title, subtitle, rows, emptyText)
 
 function renderAssociateTicketReportRows(rows = associateTicketReportRows) {
   return `
-    <div class="roster-history-event-table-shell report-result-table-shell">
+    <div class="roster-history-event-table-shell report-result-table-shell associate-report-table-shell">
       <table class="discord-member-table roster-history-event-table report-result-table">
         <thead>
           <tr>

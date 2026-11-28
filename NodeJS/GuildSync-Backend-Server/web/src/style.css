@@ -2846,6 +2846,12 @@ body {
   overflow: auto;
 }
 
+/* Same for the promotion report's tables: the dialog content scrolls, not each table. */
+.report-result-table-shell.associate-report-table-shell {
+  max-height: none;
+  overflow: visible;
+}
+
 .report-result-table {
   width: max-content;
   min-width: 100%;
@@ -2921,9 +2927,12 @@ body {
   min-width: 0;
 }
 
+/* The links report scrolls in the dialog body, so its table shell is a plain block:
+   an inner scroller here would trap the sticky headers and add a second scrollbar. */
 .member-links-table-shell {
-  max-height: 260px;
-  overflow: auto;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
 }
 
 .member-links-table th,
@@ -4045,8 +4054,7 @@ body {
 .discord-member-table-shell,
 .bank-deposit-table-shell,
 .eso-roster-table-shell,
-.report-result-table-shell,
-.member-links-table-shell {
+.report-result-table-shell {
   overflow: auto;
   min-width: 0;
 }
@@ -5149,7 +5157,9 @@ body {
 }
 
 .roster-history-match-list,
-.roster-history-event-table-shell,
+/* The links and promotion report shells are excluded with :where() so this selector
+   keeps its original weight and every other dialog scrolls exactly as before. */
+.roster-history-event-table-shell:not(:where(.member-links-table-shell, .associate-report-table-shell)),
 .discord-member-history-dialog .roster-history-match-list,
 .discord-member-history-dialog .roster-history-event-table-shell,
 .roster-rank-history-dialog .roster-history-match-list,
@@ -5290,7 +5300,7 @@ body {
 }
 
 .roster-history-match-list,
-.roster-history-event-table-shell,
+.roster-history-event-table-shell:not(:where(.member-links-table-shell, .associate-report-table-shell)),
 .report-results-table-shell > .table-scroll,
 .member-link-suggestions-list {
   flex: 1 1 0 !important;
@@ -7683,16 +7693,8 @@ body {
   background: rgb(17, 34, 70);
 }
 
-/* Both of these shells carry !important scrolling rules elsewhere, so the stickiness
-   has to be undone at the same weight or the shell stays a scroll container and the
-   headers never stick to the pane. The section is a clipped box for its rounded
-   corners, which also traps sticky, so it stops clipping too. */
-.member-links-report-dialog .member-links-table-shell,
-.associate-ticket-report-dialog .report-result-table-shell {
-  max-height: none !important;
-  overflow: visible !important;
-}
-
+/* The section is a clipped box for its rounded corners, which also traps sticky, so it
+   stops clipping. The shells themselves are switched off where they are defined. */
 .member-links-report-dialog .member-links-section,
 .associate-ticket-report-dialog .report-result-section {
   overflow: visible;
