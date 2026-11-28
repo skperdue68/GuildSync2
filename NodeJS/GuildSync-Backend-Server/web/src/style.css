@@ -7713,6 +7713,23 @@ body {
   top: var(--gs-section-head-h, 0px);
   z-index: 2;
   background: rgb(17, 34, 70);
+  /* Collapsed table borders make a pinned row of cells jitter by a pixel as it scrolls;
+     separate borders keep it still and give the same look on these tables. */
+  border-collapse: separate;
+  border-spacing: 0;
+  transform: translateZ(0);
+}
+
+.member-links-table,
+.associate-ticket-report-dialog .report-result-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.member-links-report-body .member-link-history-header,
+.member-links-report-body .report-result-section-header,
+.associate-ticket-report-dialog .report-result-section-header {
+  transform: translateZ(0);
 }
 
 /* The pane's top padding sits above a pinned header, and rows scroll through it. Cover
@@ -7757,6 +7774,37 @@ body {
    centered like the other buttons in the profile menu. */
 .profile-user-settings-button {
   text-align: center;
+}
+
+/* Help sits above User Settings and reads as an online guide rather than another
+   settings row: icon, label, one line saying where it opens, and an external arrow. */
+.profile-help-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+
+.profile-help-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.profile-help-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profile-help-text small {
+  font-weight: 500;
+  font-size: 12px;
+  color: rgba(203, 213, 225, 0.75);
+}
+
+.profile-help-open {
+  margin-left: auto;
+  opacity: 0.7;
 }
 
 

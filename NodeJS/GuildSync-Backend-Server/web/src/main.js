@@ -3738,7 +3738,14 @@ function syncReportSectionStickyHeights(root = document) {
   root.querySelectorAll('.report-result-section').forEach((section) => {
     const header = section.querySelector(':scope > .report-result-section-header');
     if (!header) return;
-    section.style.setProperty('--gs-section-head-h', `${header.offsetHeight}px`);
+    const height = header.offsetHeight;
+    // A dialog that is not laid out yet measures 0; leave the previous value alone and
+    // try again next frame instead of parking the column headers under the title.
+    if (height > 0) {
+      section.style.setProperty('--gs-section-head-h', `${height}px`);
+    } else {
+      requestAnimationFrame(() => syncReportSectionStickyHeights());
+    }
   });
 }
 
@@ -9849,8 +9856,12 @@ function renderOpenProfileMenuContents() {
         </div>
         ${renderProfileFileWatcherSection()}
         <div class="profile-user-settings-mount">
+          <button id="openUserManualButton" class="profile-user-settings-button profile-help-button" type="button" title="Open the online GuildSync help in your browser">
+            <span class="profile-help-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+            <span class="profile-help-text"><strong>Help</strong><small>Online guide — opens in your browser</small></span>
+            <span class="profile-help-open" aria-hidden="true">↗</span>
+          </button>
           <button id="openUserSettingsButton" class="profile-user-settings-button" type="button">User Settings</button>
-          <button id="openUserManualButton" class="profile-user-settings-button profile-manual-button" type="button">User Manual</button>
         </div>
       </div>
       ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}

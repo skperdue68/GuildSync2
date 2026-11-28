@@ -47,6 +47,7 @@ wanted without re-reading the prose.
 | `SHOT-CMD-01` | `commands.html` | Discord's command picker in the guild listing the GuildSync slash commands with their options. |
 | `SHOT-REPORTS-01` | `reports.html` | Reports tab with the report list and one report open. |
 | `SHOT-REPORTS-02` | `reports.html` | Community Highlights report filled in for a completed period. |
+| `SHOT-FAQ-01` | `faq.html` | A banking entry open for editing, with its type field and the ticket count it produces. |
 | `SHOT-TROUBLE-01` | `desktop-client.html`, `troubleshooting.html` | The unsupported-desktop screen with download, minimise and close buttons. |
 
 Two pages reference `SHOT-TROUBLE-01`; one image serves both.
