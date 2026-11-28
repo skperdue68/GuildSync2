@@ -3461,8 +3461,11 @@ body {
   border-radius: 12px;
   background: rgba(15, 23, 42, 0.85);
   color: #e5e7eb;
-  max-height: 34vh;
-  overflow: auto;
+  /* Full height, always: these panels sit in the dialog's scrolling body, and a
+     max-height plus overflow here would clip them and add a second scrollbar. */
+  flex: 0 0 auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .member-link-history-header {
