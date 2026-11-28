@@ -221,6 +221,7 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
               <h4>Prepare a batch</h4>
               ${desktop?`
                 <p class="discord-reminder-help">Choose the account the mail should come from. The add-on only writes while ESO is closed, so you can queue now and start the game afterwards; exit ESO or /reloadui to save the delivery results.</p>
+                ${accounts.length?'':`<p class="discord-reminder-empty">No sending ESO account was found${saved?.filePath?` in ${escape(saved.filePath)}`:''}. Log into ESO once with the GuildSyncDiscordReminder add-on enabled, exit ESO completely, then choose Refresh accounts.${saved?.message?` ${escape(saved.message)}`:''}</p>`}
                 <form data-reminder-export class="discord-reminder-inline-form">
                   <label>Sending ESO account
                     <select name="account" required><option value="">Choose account</option>${accounts.map(account=>`<option>${escape(account)}</option>`).join('')}</select>
@@ -238,6 +239,7 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
                   <small>Sends one mail to that account from this server and sending account, so you can check the template.</small>
                 </form>
                 ${pending.length?`<p class="discord-reminder-note"><strong>${pending.length} batch${pending.length===1?'':'es'} queued.</strong> GuildSync writes them to SavedVariables as soon as ESO is closed.</p>`:''}
+                <button class="clear-discord-filters-button" data-reminder-refresh type="button">Refresh accounts</button>
                 <button class="clear-discord-filters-button" data-reminder-sync type="button">Read saved delivery results</button>
               `:'<p class="discord-reminder-help">Writing reminder mail needs the GuildSync desktop app, which writes the add-on SavedVariables file. You can still review who qualifies, the interval and past batches here.</p>'}
             </section>
@@ -295,6 +297,9 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
       if(!account){say('Choose the sending ESO account above first.',true);rerender?.();return;}
       task(panel,async()=>{const result=await exportReminderBatch({request,bridge,batchId:crypto.randomUUID(),account,world,testRecipient});await changed();await reload(result.message||'Test mail queued.');});
     });
+    panel.querySelector('[data-reminder-refresh]')?.addEventListener('click',()=>task(panel,async()=>{
+      await reload(`Found ${(saved?.accounts||[]).length} sending ESO account${(saved?.accounts||[]).length===1?'':'s'}.`);
+    }));
     panel.querySelector('[data-reminder-sync]')?.addEventListener('click',()=>task(panel,async()=>{
       await syncReminderAcks(bridge,request);await changed();await reload('Saved delivery results synchronized.');
     }));
