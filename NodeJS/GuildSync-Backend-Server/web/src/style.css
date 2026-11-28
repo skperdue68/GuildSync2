@@ -7776,35 +7776,38 @@ body {
   text-align: center;
 }
 
-/* Help sits above User Settings and reads as an online guide rather than another
-   settings row: icon, label, one line saying where it opens, and an external arrow. */
-.profile-help-button {
+/* Help and User Settings read as menu entries, not buttons: an icon and a label that
+   light up on hover, with no border or fill until they are pointed at. */
+.profile-menu-link {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #e5e7eb;
+  font: inherit;
+  font-weight: 600;
   text-align: left;
+  cursor: pointer;
 }
 
-.profile-help-icon svg {
-  width: 20px;
-  height: 20px;
+.profile-menu-link:hover,
+.profile-menu-link:focus-visible {
+  background: rgba(148, 163, 184, 0.14);
 }
 
-.profile-help-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.profile-menu-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  opacity: 0.85;
 }
 
-.profile-help-text small {
-  font-weight: 500;
-  font-size: 12px;
-  color: rgba(203, 213, 225, 0.75);
-}
-
-.profile-help-open {
-  margin-left: auto;
-  opacity: 0.7;
+.profile-menu-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 
@@ -7888,10 +7891,4 @@ body {
   width: 15px;
   height: 15px;
   display: block;
-}
-
-/* User manual button in the profile menu; the web client opens the same pages
-   from /manual/ in a new tab. */
-.profile-manual-button {
-  margin-top: 8px;
 }
