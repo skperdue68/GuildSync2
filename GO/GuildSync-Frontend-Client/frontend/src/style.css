@@ -789,12 +789,8 @@ body {
   text-align: right;
 }
 
-/* Text-only ESO indicator beside Server Ready; it carries no status colour. */
-.eso-running-label {
-  color: rgba(203, 213, 225, 0.72);
-  font-weight: 600;
-  text-align: center;
-}
+/* The ESO indicator sits beside Server Ready and borrows that label's whole type
+   scale from .status-connection-label; nothing here may change its size or weight. */
 
 .status-dot {
   width: 18px;
