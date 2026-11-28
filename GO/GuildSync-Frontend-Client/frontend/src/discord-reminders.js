@@ -320,7 +320,8 @@ export function createDiscordReminderControls({request,bridge,canEdit,changed}) 
     async sync(){
       if(!canOpen()||!desktop)return null;
       const data=await syncReminderAcks(bridge,request);await changed();
-      try{await reload();}catch{rerender?.();}
+      try{await refreshOverview();}catch{}
+      rerender?.();
       const acks=data?.acks||[];
       return {acks:acks.length,sent:acks.filter(ack=>ack.status==='sent').length,
         failed:acks.filter(ack=>ack.status==='failed').length,uncertain:acks.filter(ack=>ack.status==='uncertain').length,
