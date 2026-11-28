@@ -65,7 +65,12 @@ function staticallyReadKeys(component, source) {
   }
  }
  if (component === 'desktop') {
-  for (const match of source.matchAll(/os\.Getenv\(\s*"([A-Z][A-Z0-9_]*)"\s*\)/g)) found.add(match[1]);
+  for (const pattern of [
+   /os\.Getenv\(\s*"([A-Z][A-Z0-9_]*)"\s*\)/g,
+   /getSavedVarsFileNameFromEnv\(\s*"([A-Z][A-Z0-9_]*)"\s*,/g
+  ]) {
+   for (const match of source.matchAll(pattern)) found.add(match[1]);
+  }
  }
  for (const key of systemVariables) found.delete(key);
  return found;
