@@ -3461,11 +3461,6 @@ body {
   border-radius: 12px;
   background: rgba(15, 23, 42, 0.85);
   color: #e5e7eb;
-  /* Full height, always: these panels sit in the dialog's scrolling body, and a
-     max-height plus overflow here would clip them and add a second scrollbar. */
-  flex: 0 0 auto;
-  max-height: none;
-  overflow: visible;
 }
 
 .member-link-history-header {
@@ -3542,21 +3537,7 @@ body {
   justify-self: end;
 }
 
-@media (max-width: 1100px) {
-  .member-link-history-event {
-    grid-template-columns: minmax(4.5rem, 8rem) minmax(6rem, 1fr) auto;
-  }
-
-  .member-link-history-state {
-    grid-column: 1 / -1;
-  }
-
-  .member-link-history-actor {
-    grid-column: 3;
-  }
-}
-
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .member-link-history-event {
     grid-template-columns: 1fr;
   }
@@ -3564,10 +3545,6 @@ body {
   .member-link-history-state,
   .member-link-history-actor {
     grid-column: 1;
-    justify-self: start;
-  }
-
-  .member-link-history-actor {
     justify-self: start;
   }
 }
@@ -7668,33 +7645,21 @@ body {
   max-height: min(1200px, calc(100vh - 108px), calc(100% - 8px)) !important;
 }
 
-/* The links report's panels and table share one scroll pane, so the header, the
-   toolbar, the filters and the close button stay put while the body scrolls. */
+/* The links report scrolls in one pane under a fixed header: the panels and the
+   table live in the dialog body, so only that body scrolls. The body already scrolls
+   vertically, so all it needs here is horizontal room for the wide table. */
 .member-links-report-body {
   overflow-x: auto !important;
-  overflow-y: auto !important;
-}
-
-.member-links-report-dialog {
-  overflow: hidden;
-}
-
-.member-links-report-dialog > .roster-history-header,
-.member-links-report-dialog > .report-results-toolbar,
-.member-links-report-dialog > .member-links-report-filter-row,
-.member-links-report-dialog > .member-links-report-error {
-  flex: 0 0 auto;
 }
 
 .member-links-report-content {
   flex: 0 0 auto;
-  min-height: auto;
   overflow: visible;
 }
 
-/* Column headers stick to the top of the scroll pane. A table's header leaves with
-   its table, so the next table's header only takes over once that table reaches the
-   top. The shells must not scroll on their own or sticky has nothing to track. */
+/* Each table's column headers stick to the top of that pane and leave with their own
+   table, so the next table's header takes over only once that table reaches the top.
+   The shells must not scroll on their own or sticky has nothing to track. */
 .member-links-table thead th,
 .associate-ticket-report-dialog .report-result-table thead th {
   position: sticky;
